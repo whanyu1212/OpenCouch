@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any, cast
 
+from pydantic import BaseModel, Field
+
 from agent.flows.sdk_fallback import (
     can_fallback_to_control_response,
     openai_sdk_fallback_reason,
@@ -54,11 +56,26 @@ class TherapeuticToolMergeResult:
     response_text: str
 
 
+class TherapeuticResponseLLMOutput(BaseModel):
+    response_text: str = Field(
+        description=(
+            "Final user-facing assistant message only. Do not include tool calls, "
+            "JSON, XML tags, internal style names, or implementation traces."
+        )
+    )
+
+
 @dataclass(frozen=True)
 class ResponseLLMText:
     text: str
     sanitized: bool
     raw_text: str
+
+
+@dataclass(frozen=True)
+class TherapeuticResponseLLMRequest:
+    prompt: str
+    system_instruction: str
 
 
 async def run_therapeutic_response_llm_turn(
@@ -72,21 +89,21 @@ async def run_therapeutic_response_llm_turn(
     from agent.runtime.state_ops import apply_state_delta
 
     run_start = time.monotonic()
-    raw_response_text = await llm_client.generate_text(
-        prompt=response_llm_prompt_for_state(
-            state,
-            include_recent_history=include_prompt_history(session),
-        ),
-        system_instruction=therapeutic_system_prompt_for_state(state),
+    request = therapeutic_response_llm_request_for_state(state, session=session)
+    structured_output = await llm_client.generate_structured(
+        prompt=request.prompt,
+        response_schema=TherapeuticResponseLLMOutput,
+        system_instruction=request.system_instruction,
     )
-    response_text = sanitize_response_llm_text(raw_response_text)
+    response_text = response_llm_text_from_structured_output(structured_output)
     diagnostics = {
         **dict(state.get("diagnostics", {}) or {}),
-        "openai_response_llm_override": True,
+        **response_llm_diagnostics(
+            response_text,
+            structured=True,
+            fallback_reason=fallback_reason,
+        ),
     }
-    diagnostics.update(response_llm_sanitization_diagnostics(response_text))
-    if fallback_reason is not None:
-        diagnostics["openai_sdk_fallback_reason"] = fallback_reason
     apply_state_delta(state, {"diagnostics": diagnostics})
     return TherapeuticAgentResult(
         response_text=response_text.text,
@@ -108,13 +125,11 @@ async def run_therapeutic_response_llm_stream(
     from agent.runtime.state_ops import apply_state_delta
 
     run_start = time.monotonic()
+    request = therapeutic_response_llm_request_for_state(state, session=session)
     chunks: list[str] = []
     async for chunk in llm_client.generate_text_stream(
-        prompt=response_llm_prompt_for_state(
-            state,
-            include_recent_history=include_prompt_history(session),
-        ),
-        system_instruction=therapeutic_system_prompt_for_state(state),
+        prompt=request.prompt,
+        system_instruction=request.system_instruction,
     ):
         chunks.append(chunk)
     response_text = sanitize_response_llm_text("".join(chunks))
@@ -122,11 +137,12 @@ async def run_therapeutic_response_llm_stream(
         yield TextRuntimeChunkEvent(text=response_text.text)
     diagnostics = {
         **dict(state.get("diagnostics", {}) or {}),
-        "openai_response_llm_override": True,
+        **response_llm_diagnostics(
+            response_text,
+            structured=False,
+            fallback_reason=fallback_reason,
+        ),
     }
-    diagnostics.update(response_llm_sanitization_diagnostics(response_text))
-    if fallback_reason is not None:
-        diagnostics["openai_sdk_fallback_reason"] = fallback_reason
     apply_state_delta(state, {"diagnostics": diagnostics})
     final_state = await services.finalize_turn(
         state,
@@ -401,6 +417,30 @@ def response_style_from_state(state: Mapping[str, Any]) -> str:
     return "supportive"
 
 
+def therapeutic_response_llm_request_for_state(
+    state: AgentState,
+    *,
+    session: Any | None,
+) -> TherapeuticResponseLLMRequest:
+    return TherapeuticResponseLLMRequest(
+        prompt=response_llm_prompt_for_state(
+            state,
+            include_recent_history=include_prompt_history(session),
+        ),
+        system_instruction=therapeutic_system_prompt_for_state(state),
+    )
+
+
+def normalize_response_llm_text(text: str) -> str:
+    return str(text or "").strip()
+
+
+def response_llm_text_from_structured_output(
+    output: TherapeuticResponseLLMOutput,
+) -> ResponseLLMText:
+    return sanitize_response_llm_text(normalize_response_llm_text(output.response_text))
+
+
 def sanitize_response_llm_text(raw_text: str) -> ResponseLLMText:
     """Strip leading pseudo tool-call text from response-LLM output."""
 
@@ -429,6 +469,23 @@ def response_llm_sanitization_diagnostics(
         "openai_response_llm_raw_text_preview": raw_text[:160],
         "openai_response_llm_raw_text_sha256": sha256(raw_text.encode()).hexdigest(),
     }
+
+
+def response_llm_diagnostics(
+    response_text: ResponseLLMText,
+    *,
+    structured: bool,
+    fallback_reason: str | None = None,
+) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "openai_response_llm_override": True,
+        "openai_response_llm_output_structured": structured,
+        "openai_response_llm_response_text_length": len(response_text.text),
+    }
+    diagnostics.update(response_llm_sanitization_diagnostics(response_text))
+    if fallback_reason is not None:
+        diagnostics["openai_sdk_fallback_reason"] = fallback_reason
+    return diagnostics
 
 
 def _strip_leading_pseudo_tool_call(text: str) -> str:

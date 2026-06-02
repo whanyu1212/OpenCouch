@@ -8,7 +8,10 @@ from typing import Any, cast
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
-from agent.flows.therapeutic import sanitize_response_llm_text
+from agent.flows.therapeutic import (
+    TherapeuticResponseLLMOutput,
+    sanitize_response_llm_text,
+)
 from agent.memory.operations.procedural_profile import aset_proactive_recall
 from agent.memory.types import TurnDispatchDecision
 from agent.runtime import build_initial_state
@@ -76,6 +79,9 @@ class _RecordingResponseLLM(FakeCrossRestartLLM):
         self.stream_chunks = stream_chunks or [text]
         self.prompts: list[str] = []
         self.system_instructions: list[str | None] = []
+        self.text_calls = 0
+        self.stream_calls = 0
+        self.structured_calls = 0
 
     async def generate_text(
         self,
@@ -85,6 +91,7 @@ class _RecordingResponseLLM(FakeCrossRestartLLM):
         use_search: bool = False,
     ) -> str:
         del use_search
+        self.text_calls += 1
         self.prompts.append(prompt)
         self.system_instructions.append(system_instruction)
         return self.text
@@ -95,10 +102,31 @@ class _RecordingResponseLLM(FakeCrossRestartLLM):
         prompt: str,
         system_instruction: str | None = None,
     ) -> AsyncIterator[str]:
+        self.stream_calls += 1
         self.prompts.append(prompt)
         self.system_instructions.append(system_instruction)
         for chunk in self.stream_chunks:
             yield chunk
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[Any],
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> Any:
+        del use_search
+        self.structured_calls += 1
+        self.prompts.append(prompt)
+        self.system_instructions.append(system_instruction)
+        if response_schema is TherapeuticResponseLLMOutput:
+            return response_schema(response_text=self.text)
+        return await super().generate_structured(
+            prompt=prompt,
+            response_schema=response_schema,
+            system_instruction=system_instruction,
+        )
 
 
 class _StaticTriageDecisionLLM(FakeCrossRestartLLM):
@@ -198,8 +226,41 @@ async def test_openai_runtime_runs_safe_therapeutic_turn_and_persists_state() ->
 
 
 @pytest.mark.asyncio
-async def test_response_llm_omits_tool_prompt_and_sanitizes_pseudo_tool_text() -> None:
-    """Response-LLM output should keep tool traces out of user-facing text."""
+async def test_response_llm_uses_structured_contract_and_omits_tool_prompt() -> None:
+    """Response-LLM output should use the structured final-text contract."""
+
+    runtime = _runtime(_StatefulWorkflow(), FakeOpenAISDKRunner("unused sdk reply"))
+    response_llm = _RecordingResponseLLM("I can help you plan the first minute.")
+    context = WorkflowContext(
+        llm_client=FakeCrossRestartLLM(),
+        response_llm=response_llm,
+        memory_store=OpenCouchMemoryStore(),
+        crisis_log_backend=InMemoryCrisisLogBackend(),
+        memory_mode=MemoryMode.LOCAL,
+    )
+
+    state = await runtime.run_turn(
+        cast(Any, _initial_state("Can we make a tiny plan?")),
+        config={"configurable": {"thread_id": "thread-response-llm"}},
+        context=context,
+    )
+
+    assert response_llm.structured_calls == 1
+    assert response_llm.text_calls == 0
+    assert "load_therapeutic_response_skill" not in response_llm.prompts[-1]
+    assert "load_therapeutic_response_skill" not in (
+        response_llm.system_instructions[-1] or ""
+    )
+    assert state["response_text"] == "I can help you plan the first minute."
+    assert state["diagnostics"]["openai_response_llm_output_structured"] is True
+    assert state["diagnostics"]["openai_response_llm_output_sanitized"] is False
+    assert state["diagnostics"]["openai_response_llm_response_text_length"] == 37
+    assert "openai_response_llm_raw_text_sha256" not in state["diagnostics"]
+
+
+@pytest.mark.asyncio
+async def test_response_llm_structured_contract_sanitizes_pseudo_tool_text() -> None:
+    """Structured response text is still sanitized before user exposure."""
 
     runtime = _runtime(_StatefulWorkflow(), FakeOpenAISDKRunner("unused sdk reply"))
     response_llm = _RecordingResponseLLM(
@@ -217,20 +278,19 @@ async def test_response_llm_omits_tool_prompt_and_sanitizes_pseudo_tool_text() -
 
     state = await runtime.run_turn(
         cast(Any, _initial_state("Can we make a tiny plan?")),
-        config={"configurable": {"thread_id": "thread-response-llm"}},
+        config={"configurable": {"thread_id": "thread-response-llm-sanitize"}},
         context=context,
     )
 
-    assert "load_therapeutic_response_skill" not in response_llm.prompts[-1]
-    assert "load_therapeutic_response_skill" not in (
-        response_llm.system_instructions[-1] or ""
-    )
+    assert response_llm.structured_calls == 1
+    assert response_llm.text_calls == 0
     assert state["response_text"] == "I can help you plan the first minute."
+    assert state["diagnostics"]["openai_response_llm_output_structured"] is True
     assert state["diagnostics"]["openai_response_llm_output_sanitized"] is True
     assert "openai_response_llm_raw_text_sha256" in state["diagnostics"]
     assert (
         "load_therapeutic_response_skill"
-        in (state["diagnostics"]["openai_response_llm_raw_text_preview"])
+        in state["diagnostics"]["openai_response_llm_raw_text_preview"]
     )
 
 
@@ -292,8 +352,14 @@ async def test_response_llm_stream_sanitizes_pseudo_tool_text() -> None:
     state_event = next(
         event for event in events if isinstance(event, TextRuntimeStateEvent)
     )
+    assert response_llm.stream_calls == 1
+    assert response_llm.structured_calls == 0
     assert chunks == ["I can help you plan the first minute."]
     assert state_event.state["response_text"] == "I can help you plan the first minute."
+    assert (
+        state_event.state["diagnostics"]["openai_response_llm_output_structured"]
+        is False
+    )
     assert (
         state_event.state["diagnostics"]["openai_response_llm_output_sanitized"] is True
     )

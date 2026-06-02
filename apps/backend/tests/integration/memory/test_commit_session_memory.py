@@ -267,6 +267,11 @@ class _FakeSessionCommitLLM(BaseLLMClient):
                 confidence="high",
             )
 
+        if schema_name == "TherapeuticResponseLLMOutput":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                response_text="Let's slow it down and look at what happened."
+            )
+
         raise RuntimeError(f"_FakeSessionCommitLLM: unexpected schema {schema_name}")
 
 

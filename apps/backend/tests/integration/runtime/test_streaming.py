@@ -128,6 +128,10 @@ class _StreamingResponseLLM(BaseLLMClient):
                     reason="streaming test procedural extraction",
                 ),
             )
+        if schema_name == "TherapeuticResponseLLMOutput":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                response_text="streamed response"
+            )
         raise RuntimeError(f"streaming tests unexpected schema {schema_name}")
 
 
