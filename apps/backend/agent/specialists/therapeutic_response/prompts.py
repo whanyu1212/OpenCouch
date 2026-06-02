@@ -12,13 +12,13 @@ from agent.prompts import (
     load_prompt_source as _load_knowledge_file,
 )
 from agent.state import AgentState
-from agent.specialists.therapeutic_prompt_context import (
+from agent.specialists.therapeutic_response.prompt_context import (
     _format_procedural_rules_block,
     _format_recall_toggle_constraint,
     _format_working_memory,
     _has_episodic_context,
 )
-from agent.specialists.therapeutic_prompt_instructions import (
+from agent.specialists.therapeutic_response.prompt_instructions import (
     _CLARIFYING_INSTRUCTIONS,
     _CLOSING_INSTRUCTIONS,
     _CONTINUITY_FILE,
@@ -27,7 +27,7 @@ from agent.specialists.therapeutic_prompt_instructions import (
     _SUPPORTIVE_INSTRUCTIONS,
     _TECHNIQUE_INSTRUCTIONS,
 )
-from agent.specialists.therapeutic_prompt_sources import (
+from agent.specialists.therapeutic_response.prompt_sources import (
     _knowledge_for_response_style,
 )
 

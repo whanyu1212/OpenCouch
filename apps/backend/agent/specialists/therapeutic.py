@@ -13,7 +13,9 @@ from agent.specialists.common import (
     definition_with_instructions,
 )
 from agent.runtime.context import OpenAITextRunContext
-from agent.specialists.therapeutic_prompts import build_supportive_system_prompt
+from agent.specialists.therapeutic_response.prompts import (
+    build_supportive_system_prompt,
+)
 from agent.state import AgentState
 from agent.tools.grounded import build_grounded_lookup_tools
 from agent.tools.guided_exercise import build_guided_exercise_discovery_tools

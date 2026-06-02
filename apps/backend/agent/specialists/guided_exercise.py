@@ -13,13 +13,13 @@ from agent.specialists.common import (
     build_agent,
     definition_with_instructions,
 )
-from agent.specialists.therapeutic_prompt_instructions import (
+from agent.specialists.therapeutic_response.prompt_instructions import (
     _GUIDED_EXERCISE_INSTRUCTIONS,
 )
-from agent.specialists.therapeutic_prompt_sources import (
+from agent.specialists.therapeutic_response.prompt_sources import (
     _knowledge_for_response_style,
 )
-from agent.specialists.therapeutic_prompts import (
+from agent.specialists.therapeutic_response.prompts import (
     _compose_system_prompt_with_state,
     _read_approach,
 )

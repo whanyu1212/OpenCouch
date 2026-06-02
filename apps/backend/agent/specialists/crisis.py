@@ -14,7 +14,9 @@ from agent.specialists.common import (
     definition_with_instructions,
 )
 from agent.runtime.context import OpenAITextRunContext
-from agent.specialists.therapeutic_prompts import build_clarifying_system_prompt
+from agent.specialists.therapeutic_response.prompts import (
+    build_clarifying_system_prompt,
+)
 from agent.state import AgentState
 from agent.tools.crisis import build_crisis_response_tools
 

@@ -16,7 +16,7 @@ from agent.flows.sdk_fallback import (
 )
 from agent.observability.timing import elapsed_ms
 from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
-from agent.specialists.therapeutic_prompts import (
+from agent.specialists.therapeutic_response.prompts import (
     _format_working_memory,
     build_clarifying_system_prompt,
     build_supportive_system_prompt,
