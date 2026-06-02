@@ -438,12 +438,7 @@ def normalize_response_llm_text(text: str) -> str:
 def response_llm_text_from_structured_output(
     output: TherapeuticResponseLLMOutput,
 ) -> ResponseLLMText:
-    raw_text = output.response_text
-    return ResponseLLMText(
-        text=normalize_response_llm_text(raw_text),
-        sanitized=False,
-        raw_text=raw_text,
-    )
+    return sanitize_response_llm_text(normalize_response_llm_text(output.response_text))
 
 
 def sanitize_response_llm_text(raw_text: str) -> ResponseLLMText:

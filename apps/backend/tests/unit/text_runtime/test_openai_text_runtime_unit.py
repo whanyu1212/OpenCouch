@@ -259,6 +259,42 @@ async def test_response_llm_uses_structured_contract_and_omits_tool_prompt() -> 
 
 
 @pytest.mark.asyncio
+async def test_response_llm_structured_contract_sanitizes_pseudo_tool_text() -> None:
+    """Structured response text is still sanitized before user exposure."""
+
+    runtime = _runtime(_StatefulWorkflow(), FakeOpenAISDKRunner("unused sdk reply"))
+    response_llm = _RecordingResponseLLM(
+        '<tool_call>{"name":"load_therapeutic_response_skill","arguments":'
+        '{"response_style":"supportive"}}</tool_call>I can help you plan '
+        "the first minute."
+    )
+    context = WorkflowContext(
+        llm_client=FakeCrossRestartLLM(),
+        response_llm=response_llm,
+        memory_store=OpenCouchMemoryStore(),
+        crisis_log_backend=InMemoryCrisisLogBackend(),
+        memory_mode=MemoryMode.LOCAL,
+    )
+
+    state = await runtime.run_turn(
+        cast(Any, _initial_state("Can we make a tiny plan?")),
+        config={"configurable": {"thread_id": "thread-response-llm-sanitize"}},
+        context=context,
+    )
+
+    assert response_llm.structured_calls == 1
+    assert response_llm.text_calls == 0
+    assert state["response_text"] == "I can help you plan the first minute."
+    assert state["diagnostics"]["openai_response_llm_output_structured"] is True
+    assert state["diagnostics"]["openai_response_llm_output_sanitized"] is True
+    assert "openai_response_llm_raw_text_sha256" in state["diagnostics"]
+    assert (
+        "load_therapeutic_response_skill"
+        in state["diagnostics"]["openai_response_llm_raw_text_preview"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_triage_clarification_does_not_mutate_decision_route() -> None:
     decision = TurnDispatchDecision(
         route="grounded_lookup",
