@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
@@ -430,6 +432,322 @@ def _with_user_quote_property(properties: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+VoiceToolHandler = Callable[
+    ["VoiceToolDispatchContext", dict[str, object]],
+    Awaitable[object],
+]
+
+
+@dataclass(frozen=True)
+class VoiceToolDispatchContext:
+    runtime: Any
+    tool_context: Any | None
+    thread_id: str
+    user_id: str | None
+
+
+@dataclass(frozen=True)
+class VoiceToolDefinition:
+    name: str
+    handler: VoiceToolHandler
+    requires_context: bool = True
+
+
+async def _handle_wait_for_user(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> dict[str, object]:
+    del dispatch_context, arguments
+    return {
+        "response_text": "",
+        "should_respond": False,
+        "side_effect": "none",
+    }
+
+
+async def _handle_show_memory_status(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    del arguments
+    return await execute_read_only_memory_action(
+        dispatch_context.tool_context,
+        {"type": "status"},
+    )
+
+
+async def _handle_show_saved_memory(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    del arguments
+    return await execute_read_only_memory_action(
+        dispatch_context.tool_context,
+        {"type": "list"},
+    )
+
+
+async def _handle_recall_saved_memory(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> dict[str, object]:
+    return await _execute_recall_saved_memory(dispatch_context.tool_context, arguments)
+
+
+async def _handle_save_response_preference(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    return await execute_memory_tool_action(
+        dispatch_context.tool_context,
+        {
+            "type": "save_preference",
+            "preference_text": str(arguments.get("preference_text") or ""),
+        },
+        side_effect="procedural_profile_update",
+        retry_safe=False,
+    )
+
+
+async def _handle_set_proactive_memory_recall(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    return await execute_memory_tool_action(
+        dispatch_context.tool_context,
+        {
+            "type": "set_recall",
+            "enabled": bool(arguments.get("enabled")),
+        },
+        side_effect="procedural_profile_update",
+        retry_safe=True,
+    )
+
+
+async def _handle_prepare_memory_deletion_by_index(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    return await execute_memory_tool_action(
+        dispatch_context.tool_context,
+        {
+            "type": "forget_by_index",
+            "target_kind": str(arguments.get("target_kind") or ""),
+            "target_index": int(arguments.get("target_index") or 0),
+        },
+        side_effect="pending_deletion",
+        retry_safe=True,
+    )
+
+
+async def _handle_prepare_memory_deletion_by_query(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    return await execute_memory_tool_action(
+        dispatch_context.tool_context,
+        {
+            "type": "forget_by_query",
+            "query": str(arguments.get("query") or ""),
+        },
+        side_effect="pending_deletion",
+        retry_safe=True,
+    )
+
+
+async def _handle_confirm_memory_deletion(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    del arguments
+    return await execute_memory_tool_action(
+        dispatch_context.tool_context,
+        {"type": "confirm_pending"},
+        side_effect="delete_memory",
+        retry_safe=False,
+    )
+
+
+async def _handle_cancel_memory_deletion(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    del arguments
+    return await execute_memory_tool_action(
+        dispatch_context.tool_context,
+        {"type": "cancel_pending"},
+        side_effect="cancel_pending",
+        retry_safe=True,
+    )
+
+
+async def _handle_answer_grounded_lookup(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    return await execute_grounded_lookup_tool(
+        dispatch_context.tool_context,
+        query=str(arguments.get("query") or ""),
+    )
+
+
+async def _handle_lookup_crisis_resources(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    del arguments
+    result = await execute_crisis_resource_lookup_tool(dispatch_context.tool_context)
+    await dispatch_context.runtime.voice.persist_voice_crisis_resource_lookup(
+        thread_id=dispatch_context.thread_id,
+        user_id=dispatch_context.user_id,
+        inferred_location=result.inferred_location,
+        found_resources=result.found_resources,
+        resource_lookup_status=result.resource_lookup_status,
+    )
+    return result
+
+
+async def _handle_get_crisis_support_template(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> dict[str, object]:
+    return await _execute_crisis_support_template(
+        dispatch_context.tool_context, arguments
+    )
+
+
+async def _handle_list_guided_exercise_skills(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    return await execute_guided_exercise_discovery_tool(
+        dispatch_context.tool_context,
+        therapeutic_approach=_optional_string(arguments.get("therapeutic_approach")),
+        channel=_optional_string(arguments.get("channel")),
+    )
+
+
+async def _handle_load_therapeutic_response_skill(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    return await execute_therapeutic_response_skill_tool(
+        dispatch_context.tool_context,
+        response_style=str(arguments.get("response_style") or "supportive"),
+        therapeutic_approach=_optional_string(arguments.get("therapeutic_approach")),
+    )
+
+
+async def _handle_load_guided_exercise_skill(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    return await execute_guided_exercise_skill_tool(
+        dispatch_context.tool_context,
+        exercise_type=str(arguments.get("exercise_type") or ""),
+        runtime_action=str(arguments.get("runtime_action") or ""),
+        current_step_index=_optional_int(arguments.get("current_step_index")),
+    )
+
+
+async def _handle_record_guided_exercise_progress(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    return await execute_guided_exercise_progress_tool(
+        dispatch_context.tool_context,
+        expected_skill_id=str(arguments.get("expected_skill_id") or ""),
+        expected_step_id=str(arguments.get("expected_step_id") or ""),
+        outcome=str(arguments.get("outcome") or "hold"),  # type: ignore[arg-type]
+        user_response_summary=str(arguments.get("user_response_summary") or ""),
+    )
+
+
+_VOICE_TOOL_REGISTRY: dict[str, VoiceToolDefinition] = {
+    "wait_for_user": VoiceToolDefinition(
+        name="wait_for_user",
+        handler=_handle_wait_for_user,
+        requires_context=False,
+    ),
+    "show_memory_status": VoiceToolDefinition(
+        name="show_memory_status",
+        handler=_handle_show_memory_status,
+    ),
+    "show_saved_memory": VoiceToolDefinition(
+        name="show_saved_memory",
+        handler=_handle_show_saved_memory,
+    ),
+    "recall_saved_memory": VoiceToolDefinition(
+        name="recall_saved_memory",
+        handler=_handle_recall_saved_memory,
+    ),
+    "set_proactive_memory_recall": VoiceToolDefinition(
+        name="set_proactive_memory_recall",
+        handler=_handle_set_proactive_memory_recall,
+    ),
+    "save_response_preference": VoiceToolDefinition(
+        name="save_response_preference",
+        handler=_handle_save_response_preference,
+    ),
+    "prepare_memory_deletion_by_index": VoiceToolDefinition(
+        name="prepare_memory_deletion_by_index",
+        handler=_handle_prepare_memory_deletion_by_index,
+    ),
+    "prepare_memory_deletion_by_query": VoiceToolDefinition(
+        name="prepare_memory_deletion_by_query",
+        handler=_handle_prepare_memory_deletion_by_query,
+    ),
+    "confirm_memory_deletion": VoiceToolDefinition(
+        name="confirm_memory_deletion",
+        handler=_handle_confirm_memory_deletion,
+    ),
+    "cancel_memory_deletion": VoiceToolDefinition(
+        name="cancel_memory_deletion",
+        handler=_handle_cancel_memory_deletion,
+    ),
+    "answer_grounded_lookup": VoiceToolDefinition(
+        name="answer_grounded_lookup",
+        handler=_handle_answer_grounded_lookup,
+    ),
+    "lookup_crisis_resources": VoiceToolDefinition(
+        name="lookup_crisis_resources",
+        handler=_handle_lookup_crisis_resources,
+    ),
+    "get_crisis_support_template": VoiceToolDefinition(
+        name="get_crisis_support_template",
+        handler=_handle_get_crisis_support_template,
+    ),
+    "list_guided_exercise_skills": VoiceToolDefinition(
+        name="list_guided_exercise_skills",
+        handler=_handle_list_guided_exercise_skills,
+    ),
+    "load_therapeutic_response_skill": VoiceToolDefinition(
+        name="load_therapeutic_response_skill",
+        handler=_handle_load_therapeutic_response_skill,
+    ),
+    "load_guided_exercise_skill": VoiceToolDefinition(
+        name="load_guided_exercise_skill",
+        handler=_handle_load_guided_exercise_skill,
+    ),
+    "record_guided_exercise_progress": VoiceToolDefinition(
+        name="record_guided_exercise_progress",
+        handler=_handle_record_guided_exercise_progress,
+    ),
+}
+
+
+def _registered_voice_tool_names() -> set[str]:
+    return set(_VOICE_TOOL_REGISTRY)
+
+
+def _normalize_voice_tool_result(result: object) -> dict[str, object]:
+    if isinstance(result, BaseModel):
+        return dict(result.model_dump(mode="json"))
+    if isinstance(result, dict):
+        return dict(result)
+    return {"result": str(result)}
+
+
 async def execute_voice_tool_call(
     *,
     runtime: Any,
@@ -447,12 +765,9 @@ async def execute_voice_tool_call(
     if tool_name not in _SUPPORTED_VOICE_TOOL_NAMES:
         raise ValueError(f"Unsupported voice tool: {tool_name!r}")
 
-    if tool_name == "wait_for_user":
-        return {
-            "response_text": "",
-            "should_respond": False,
-            "side_effect": "none",
-        }
+    definition = _VOICE_TOOL_REGISTRY.get(tool_name)
+    if definition is None:
+        raise AssertionError(f"Unhandled voice tool: {tool_name!r}")
 
     effective_memory_mode = _effective_memory_mode(runtime, memory_mode)
     if effective_memory_mode == "incognito":
@@ -486,130 +801,26 @@ async def execute_voice_tool_call(
             ),
         )
 
-    context = await runtime.voice.build_voice_tool_context(
-        thread_id=thread_id,
-        user_id=user_id,
-        current_user_message=current_user_message,
-        transcript=transcript,
-        llm_client=llm_client,
-    )
-    result: Any
-    if tool_name == "show_memory_status":
-        result = await execute_read_only_memory_action(context, {"type": "status"})
-    elif tool_name == "show_saved_memory":
-        result = await execute_read_only_memory_action(context, {"type": "list"})
-    elif tool_name == "recall_saved_memory":
-        result = await _execute_recall_saved_memory(context, arguments)
-    elif tool_name == "save_response_preference":
-        result = await execute_memory_tool_action(
-            context,
-            {
-                "type": "save_preference",
-                "preference_text": str(arguments.get("preference_text") or ""),
-            },
-            side_effect="procedural_profile_update",
-            retry_safe=False,
-        )
-    elif tool_name == "set_proactive_memory_recall":
-        result = await execute_memory_tool_action(
-            context,
-            {
-                "type": "set_recall",
-                "enabled": bool(arguments.get("enabled")),
-            },
-            side_effect="procedural_profile_update",
-            retry_safe=True,
-        )
-    elif tool_name == "prepare_memory_deletion_by_index":
-        result = await execute_memory_tool_action(
-            context,
-            {
-                "type": "forget_by_index",
-                "target_kind": str(arguments.get("target_kind") or ""),
-                "target_index": int(arguments.get("target_index") or 0),
-            },
-            side_effect="pending_deletion",
-            retry_safe=True,
-        )
-    elif tool_name == "prepare_memory_deletion_by_query":
-        result = await execute_memory_tool_action(
-            context,
-            {
-                "type": "forget_by_query",
-                "query": str(arguments.get("query") or ""),
-            },
-            side_effect="pending_deletion",
-            retry_safe=True,
-        )
-    elif tool_name == "confirm_memory_deletion":
-        result = await execute_memory_tool_action(
-            context,
-            {"type": "confirm_pending"},
-            side_effect="delete_memory",
-            retry_safe=False,
-        )
-    elif tool_name == "cancel_memory_deletion":
-        result = await execute_memory_tool_action(
-            context,
-            {"type": "cancel_pending"},
-            side_effect="cancel_pending",
-            retry_safe=True,
-        )
-    elif tool_name == "answer_grounded_lookup":
-        result = await execute_grounded_lookup_tool(
-            context,
-            query=str(arguments.get("query") or ""),
-        )
-    elif tool_name == "lookup_crisis_resources":
-        result = await execute_crisis_resource_lookup_tool(context)
-        await runtime.voice.persist_voice_crisis_resource_lookup(
+    tool_context = None
+    if definition.requires_context:
+        tool_context = await runtime.voice.build_voice_tool_context(
             thread_id=thread_id,
             user_id=user_id,
-            inferred_location=result.inferred_location,
-            found_resources=result.found_resources,
-            resource_lookup_status=result.resource_lookup_status,
+            current_user_message=current_user_message,
+            transcript=transcript,
+            llm_client=llm_client,
         )
-    elif tool_name == "get_crisis_support_template":
-        result = await _execute_crisis_support_template(context, arguments)
-    elif tool_name == "list_guided_exercise_skills":
-        result = await execute_guided_exercise_discovery_tool(
-            context,
-            therapeutic_approach=_optional_string(
-                arguments.get("therapeutic_approach")
-            ),
-            channel=_optional_string(arguments.get("channel")),
-        )
-    elif tool_name == "load_therapeutic_response_skill":
-        result = await execute_therapeutic_response_skill_tool(
-            context,
-            response_style=str(arguments.get("response_style") or "supportive"),
-            therapeutic_approach=_optional_string(
-                arguments.get("therapeutic_approach")
-            ),
-        )
-    elif tool_name == "load_guided_exercise_skill":
-        result = await execute_guided_exercise_skill_tool(
-            context,
-            exercise_type=str(arguments.get("exercise_type") or ""),
-            runtime_action=str(arguments.get("runtime_action") or ""),
-            current_step_index=_optional_int(arguments.get("current_step_index")),
-        )
-    elif tool_name == "record_guided_exercise_progress":
-        result = await execute_guided_exercise_progress_tool(
-            context,
-            expected_skill_id=str(arguments.get("expected_skill_id") or ""),
-            expected_step_id=str(arguments.get("expected_step_id") or ""),
-            outcome=str(arguments.get("outcome") or "hold"),  # type: ignore[arg-type]
-            user_response_summary=str(arguments.get("user_response_summary") or ""),
-        )
-    else:
-        raise AssertionError(f"Unhandled voice tool: {tool_name!r}")
 
-    if isinstance(result, BaseModel):
-        return dict(result.model_dump(mode="json"))
-    if isinstance(result, dict):
-        return dict(result)
-    return {"result": str(result)}
+    result = await definition.handler(
+        VoiceToolDispatchContext(
+            runtime=runtime,
+            tool_context=tool_context,
+            thread_id=thread_id,
+            user_id=user_id,
+        ),
+        arguments,
+    )
+    return _normalize_voice_tool_result(result)
 
 
 def _optional_string(value: object) -> str | None:
