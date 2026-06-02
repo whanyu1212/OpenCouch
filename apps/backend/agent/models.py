@@ -33,6 +33,29 @@ class ResponseCategory(str, Enum):
 
 SessionAction = Literal["none", "suggest_end_session"]
 
+SessionIntent = Literal[
+    "vent",
+    "understand",
+    "reflect",
+    "work",
+    "regulate",
+    "repair",
+    "close",
+]
+
+GuidancePermission = Literal["unknown", "not_yet", "granted"]
+
+TherapeuticApproach = Literal[
+    "motivational_interviewing",
+    "cbt",
+    "act",
+    "dbt_skills",
+    "grief_support",
+    "interpersonal_therapy",
+    "pfa",
+    "none",
+]
+
 
 class Message(BaseModel):
     """Validated, serializable conversation turn."""

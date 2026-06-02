@@ -9,7 +9,7 @@ from agent.memory.types import (
     SessionIntent as TextSessionIntent,
     TherapeuticApproach as TextTherapeuticApproach,
 )
-from agent.therapeutic_policy import (
+from agent.models import (
     GuidancePermission,
     SessionIntent,
     TherapeuticApproach,

@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from agent.memory.types.primitives import ConfidenceLevel
-from agent.therapeutic_policy import (
+from agent.models import (
     GuidancePermission,
     SessionIntent,
     TherapeuticApproach,
