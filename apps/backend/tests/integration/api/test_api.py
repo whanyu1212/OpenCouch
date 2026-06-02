@@ -67,7 +67,9 @@ class _FakeResponseTierLLM(BaseLLMClient):
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
     ) -> StructuredResponseT:
-        raise AssertionError("structured generation should not be used in this test")
+        if response_schema.__name__ == "TherapeuticResponseLLMOutput":
+            return response_schema(response_text=self.text)  # type: ignore[call-arg,return-value]
+        raise AssertionError("unexpected structured generation in this test")
 
 
 class _FakeAPILLM(BaseLLMClient):
@@ -152,6 +154,11 @@ class _FakeAPILLM(BaseLLMClient):
             return cast(
                 StructuredResponseT,
                 SummarizationResult(arc=None, reason="API contract test session"),
+            )
+
+        if schema_name == "TherapeuticResponseLLMOutput":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                response_text="api fake reply"
             )
 
         raise RuntimeError(f"_FakeAPILLM: unexpected schema {schema_name}")

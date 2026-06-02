@@ -181,6 +181,11 @@ class FakeCrossRestartLLM(BaseLLMClient):
             self.summarization_calls += 1
             return cast(StructuredResponseT, self.summarization_result)
 
+        if schema_name == "TherapeuticResponseLLMOutput":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                response_text="I hear you. Tell me more about what's on your mind."
+            )
+
         raise RuntimeError(f"FakeCrossRestartLLM: unexpected schema {schema_name}")
 
     def _active_flow_action_for_prompt(self, prompt: str) -> str:
