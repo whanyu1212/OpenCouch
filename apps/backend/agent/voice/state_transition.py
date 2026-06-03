@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from agent.models import Channel, CrisisAssessment
+from agent.observability.decorators import trace_event
+from agent.observability.events import VOICE_TURN_STATE_BUILT
 from agent.state import AgentState
 from agent.voice.transcript import voice_turn_to_transcript_entries
 from agent.voice.turn_metadata import VoiceTurnMetadata, infer_voice_turn_metadata
@@ -129,6 +131,17 @@ def build_voice_turn_state(inputs: VoiceTurnStateInputs) -> VoiceTurnStateResult
             voice_tool_calls=voice_tool_calls,
         )
 
+    trace_event(
+        VOICE_TURN_STATE_BUILT,
+        {
+            "voice_runtime": "openai_realtime",
+            "route": metadata.route,
+            "response_style": metadata.response_style,
+            "tool_call_count": len(voice_tool_calls),
+            "resource_lookup_status": state.get("resource_lookup_status"),
+            "crisis_level": getattr(state.get("crisis"), "level", None),
+        },
+    )
     return VoiceTurnStateResult(state=state, metadata=metadata)
 
 

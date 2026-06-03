@@ -3,6 +3,10 @@ from __future__ import annotations
 import pytest
 
 from agent.models import Channel
+from agent.observability.config import TraceConfig
+from agent.observability.context import TraceContext, use_trace_context
+from agent.observability.events import VOICE_TURN_STATE_BUILT
+from agent.observability.recorder import InMemoryTraceRecorder
 from agent.state import AgentState
 from agent.voice.state_transition import VoiceTurnStateInputs, build_voice_turn_state
 
@@ -56,6 +60,48 @@ def test_build_voice_turn_state_appends_transcript_and_increments_turn_count() -
     }
     assert len(result.state["transcript"]) == 3
     assert result.state["transcript"][-1]["content"] == "I found a verified answer."
+
+
+def test_build_voice_turn_state_emits_privacy_safe_trace_event() -> None:
+    recorder = InMemoryTraceRecorder()
+    context = TraceContext(trace_id="trace-voice", config=TraceConfig(enabled=True))
+
+    with use_trace_context(context, recorder):
+        result = build_voice_turn_state(
+            VoiceTurnStateInputs(
+                thread_id="voice-thread",
+                user_id="user-1",
+                user_text="What's the latest guidance?",
+                assistant_text="I found a verified answer.",
+                route=None,
+                response_style=None,
+                tool_calls=[
+                    {
+                        "tool_name": "answer_grounded_lookup",
+                        "output": {"grounded_lookup": {"query": "latest guidance"}},
+                    }
+                ],
+                prior_state=None,
+                initial_state=_initial_state(),
+                prior_turn_count=0,
+            )
+        )
+
+    assert result.metadata.route == "grounded_lookup"
+    assert len(recorder.events) == 1
+    event = recorder.events[0]
+    assert event.name == VOICE_TURN_STATE_BUILT
+    assert event.attributes == {
+        "voice_runtime": "openai_realtime",
+        "route": "grounded_lookup",
+        "response_style": "grounded_lookup",
+        "tool_call_count": 1,
+        "resource_lookup_status": "not_attempted",
+        "crisis_level": None,
+    }
+    assert "user_text" not in event.attributes
+    assert "assistant_text" not in event.attributes
+    assert "transcript" not in event.attributes
 
 
 def test_build_voice_turn_state_resets_stale_crisis_lookup_fields() -> None:

@@ -75,6 +75,28 @@ def test_trace_span_records_error_and_reraises_original_exception() -> None:
     assert span.error_message == "boom"
 
 
+def test_trace_span_can_suppress_error_message() -> None:
+    recorder = InMemoryTraceRecorder()
+    context = TraceContext(trace_id="trace-1", config=TraceConfig(enabled=True))
+
+    @trace_span("test.safe_error", record_error_message=False)
+    def run() -> None:
+        raise RuntimeError("raw user supplied failure detail")
+
+    with (
+        use_trace_context(context, recorder),
+        pytest.raises(RuntimeError, match="raw user supplied failure detail"),
+    ):
+        run()
+
+    assert len(recorder.completed_spans) == 1
+    span = recorder.completed_spans[0]
+    assert span.status == "error"
+    assert span.error_type is None
+    assert span.error_message is None
+    assert span.attributes["error_type"] == "RuntimeError"
+
+
 def test_trace_span_is_noop_without_enabled_context() -> None:
     recorder = InMemoryTraceRecorder()
     context = TraceContext(trace_id="trace-1")

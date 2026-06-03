@@ -3,6 +3,14 @@ from __future__ import annotations
 import pytest
 
 from agent.memory.modes import MemoryMode
+from agent.observability.config import TraceConfig
+from agent.observability.context import TraceContext, use_trace_context
+from agent.observability.events import (
+    VOICE_TOOL_COMPLETED,
+    VOICE_TOOL_DISPATCH,
+    VOICE_TOOL_FAILED,
+)
+from agent.observability.recorder import InMemoryTraceRecorder
 from agent.runtime import PersistentAgentRuntime
 from agent.runtime.context import CrisisResourceToolCallRecord
 from agent.voice.tools import (
@@ -91,6 +99,87 @@ async def test_voice_tool_dispatcher_executes_memory_status() -> None:
     assert output["side_effect"] == "none"
     assert output["retry_safe"] is True
     assert "response_text" in output
+
+
+@pytest.mark.asyncio
+async def test_voice_tool_dispatcher_emits_dispatch_span_and_completion_event() -> None:
+    recorder = InMemoryTraceRecorder()
+    context = TraceContext(trace_id="trace-voice", config=TraceConfig(enabled=True))
+
+    with use_trace_context(context, recorder):
+        output = await execute_voice_tool_call(
+            runtime=_RuntimeThatMustNotBuildContext(),
+            tool_name="show_memory_status",
+            arguments={},
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message="Is memory on?",
+            transcript=[{"role": "user", "content": "Is memory on?"}],
+            llm_client=None,
+            memory_mode="incognito",
+        )
+
+    assert output["memory_mode"] == "incognito"
+    assert len(recorder.completed_spans) == 1
+    span = recorder.completed_spans[0]
+    assert span.name == VOICE_TOOL_DISPATCH
+    assert span.status == "ok"
+    assert span.attributes == {
+        "voice_runtime": "openai_realtime",
+        "tool_name": "show_memory_status",
+        "memory_mode": "incognito",
+    }
+    assert len(recorder.events) == 1
+    event = recorder.events[0]
+    assert event.name == VOICE_TOOL_COMPLETED
+    assert event.span_id == span.span_id
+    assert event.attributes == {
+        "tool_name": "show_memory_status",
+        "status": "completed",
+        "result_type": "incognito_memory_status",
+    }
+    assert "current_user_message" not in event.attributes
+    assert "transcript" not in event.attributes
+
+
+@pytest.mark.asyncio
+async def test_voice_tool_dispatcher_suppresses_raw_failure_messages() -> None:
+    recorder = InMemoryTraceRecorder()
+    context = TraceContext(trace_id="trace-voice", config=TraceConfig(enabled=True))
+    raw_tool_name = "unsupported tool with user supplied detail"
+
+    with (
+        use_trace_context(context, recorder),
+        pytest.raises(ValueError, match="Unsupported voice tool"),
+    ):
+        await execute_voice_tool_call(
+            runtime=_RuntimeThatMustNotBuildContext(),
+            tool_name=raw_tool_name,
+            arguments={},
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message="private user message",
+            transcript=[{"role": "user", "content": "private user message"}],
+            llm_client=None,
+            memory_mode="persistent",
+        )
+
+    assert len(recorder.completed_spans) == 1
+    span = recorder.completed_spans[0]
+    assert span.name == VOICE_TOOL_DISPATCH
+    assert span.status == "error"
+    assert span.error_message is None
+    assert span.attributes["tool_name"] == "unsupported"
+    assert span.attributes["error_type"] == "ValueError"
+    assert len(recorder.events) == 1
+    event = recorder.events[0]
+    assert event.name == VOICE_TOOL_FAILED
+    assert event.attributes == {
+        "tool_name": "unsupported",
+        "error_type": "unsupported_tool",
+    }
+    assert raw_tool_name not in str(span.attributes)
+    assert raw_tool_name not in str(event.attributes)
 
 
 @pytest.mark.asyncio

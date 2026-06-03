@@ -17,6 +17,7 @@ from agent.observability.redaction import sanitize_attributes
 F = TypeVar("F", bound=Callable[..., Any])
 AttrsFactory = Callable[[tuple[Any, ...], dict[str, Any]], Mapping[str, Any] | None]
 ResultAttrsFactory = Callable[[Any], Mapping[str, Any] | None]
+ErrorAttrsFactory = Callable[[BaseException], Mapping[str, Any] | None]
 
 
 @overload
@@ -29,6 +30,8 @@ def trace_span(
     *,
     attrs: Mapping[str, Any] | AttrsFactory | None = None,
     result_attrs: ResultAttrsFactory | None = None,
+    error_attrs: Mapping[str, Any] | ErrorAttrsFactory | None = None,
+    record_error_message: bool = True,
 ) -> Callable[[F], F]: ...
 
 
@@ -37,6 +40,8 @@ def trace_span(
     *,
     attrs: Mapping[str, Any] | AttrsFactory | None = None,
     result_attrs: ResultAttrsFactory | None = None,
+    error_attrs: Mapping[str, Any] | ErrorAttrsFactory | None = None,
+    record_error_message: bool = True,
 ) -> Callable[[F], F]:
     """Decorate a sync or async function with a trace span."""
 
@@ -59,7 +64,12 @@ def trace_span(
                     span.end(status="ok")
                     ended = True
                 except Exception as exc:
-                    span.end(status="error", error=exc)
+                    _end_span_with_error(
+                        span,
+                        exc,
+                        error_attrs=error_attrs,
+                        record_error_message=record_error_message,
+                    )
                     ended = True
                     raise
                 finally:
@@ -87,7 +97,12 @@ def trace_span(
                     )
                     return result
                 except Exception as exc:
-                    span.end(status="error", error=exc)
+                    _end_span_with_error(
+                        span,
+                        exc,
+                        error_attrs=error_attrs,
+                        record_error_message=record_error_message,
+                    )
                     raise
 
             return async_wrapper  # type: ignore[return-value]
@@ -109,7 +124,12 @@ def trace_span(
                 )
                 return result
             except Exception as exc:
-                span.end(status="error", error=exc)
+                _end_span_with_error(
+                    span,
+                    exc,
+                    error_attrs=error_attrs,
+                    record_error_message=record_error_message,
+                )
                 raise
 
         return sync_wrapper  # type: ignore[return-value]
@@ -155,3 +175,34 @@ def _resolve_result_attrs(
         return sanitize_attributes(result_attrs(result))
     except Exception:
         return {}
+
+
+def _resolve_error_attrs(
+    error_attrs: Mapping[str, Any] | ErrorAttrsFactory | None,
+    error: BaseException,
+) -> dict[str, Any]:
+    if error_attrs is None:
+        return {}
+    try:
+        if callable(error_attrs):
+            return sanitize_attributes(error_attrs(error))
+        return sanitize_attributes(error_attrs)
+    except Exception:
+        return {}
+
+
+def _end_span_with_error(
+    span: Any,
+    error: BaseException,
+    *,
+    error_attrs: Mapping[str, Any] | ErrorAttrsFactory | None,
+    record_error_message: bool,
+) -> None:
+    attributes = _resolve_error_attrs(error_attrs, error)
+    if record_error_message:
+        span.end(status="error", error=error, attributes=attributes)
+        return
+
+    span.end(
+        status="error", attributes={"error_type": type(error).__name__, **attributes}
+    )
