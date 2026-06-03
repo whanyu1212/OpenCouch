@@ -25,6 +25,12 @@ from agent.memory.modes import MemoryMode
 from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.memory.store import MemoryStore
 from agent.models import Channel
+from agent.observability.decorators import trace_event, trace_span
+from agent.observability.events import (
+    RUNTIME_VOICE_SESSION,
+    VOICE_CRISIS_RESOURCE_LOOKUP_PERSISTED,
+    VOICE_RESPONSE_FINALIZED,
+)
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.session import turn_count_from_state
 from agent.runtime.session.active_session import ActiveSessionManager
@@ -303,6 +309,14 @@ class VoiceRuntimeFacade:
             state["found_resources"] = [dict(row) for row in found_resources]
             state["resource_lookup_status"] = resource_lookup_status
             await self._state_store.save_state(thread_id, state)
+            trace_event(
+                VOICE_CRISIS_RESOURCE_LOOKUP_PERSISTED,
+                {
+                    "voice_runtime": "openai_realtime",
+                    "resource_lookup_status": resource_lookup_status,
+                    "resource_count": len(found_resources),
+                },
+            )
 
     # ── voice_session_memory_context ─────────────────────────────
 
@@ -347,6 +361,10 @@ class VoiceRuntimeFacade:
 
     # ── record_voice_turn ────────────────────────────────────────
 
+    @trace_span(
+        RUNTIME_VOICE_SESSION,
+        attrs={"voice_runtime": "openai_realtime"},
+    )
     async def record_voice_turn(
         self,
         *,
@@ -427,6 +445,17 @@ class VoiceRuntimeFacade:
                 await self._active_session_manager.clear_active_session_mutation(
                     thread_id,
                     mutation_token,
+                )
+                trace_event(
+                    VOICE_RESPONSE_FINALIZED,
+                    {
+                        "voice_runtime": "openai_realtime",
+                        "route": transition.metadata.route,
+                        "response_style": transition.metadata.response_style,
+                        "memory_mode": self._memory_mode.value,
+                        "resource_lookup_status": state.get("resource_lookup_status"),
+                        "tool_call_count": len(tool_calls or []),
+                    },
                 )
                 return state
 

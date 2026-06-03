@@ -6,6 +6,8 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
+from agent.observability.decorators import trace_event
+from agent.observability.events import REALTIME_SESSION_CONFIG_BUILT
 from agent.voice.config import (
     DEFAULT_INPUT_TRANSCRIPTION_MODEL,
     DEFAULT_REALTIME_MODEL,
@@ -37,6 +39,17 @@ def build_realtime_session_config(
         raise ValueError("memory_mode must be 'incognito' or 'persistent'.")
 
     realtime_voice = _normalize_realtime_voice(assistant_voice)
+    trace_event(
+        REALTIME_SESSION_CONFIG_BUILT,
+        {
+            "voice_runtime": "openai_realtime",
+            "model": DEFAULT_REALTIME_MODEL,
+            "voice": realtime_voice,
+            "memory_mode": normalized_mode,
+            "input_transcription_model": DEFAULT_INPUT_TRANSCRIPTION_MODEL,
+            "tool_choice": DEFAULT_TOOL_CHOICE,
+        },
+    )
 
     return {
         "type": "realtime",

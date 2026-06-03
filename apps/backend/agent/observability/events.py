@@ -4,6 +4,13 @@ from __future__ import annotations
 
 RUNTIME_TEXT_TURN = "runtime.text_turn"
 RUNTIME_VOICE_SESSION = "runtime.voice_session"
+REALTIME_SESSION_CONFIG_BUILT = "realtime.session.config_built"
+VOICE_CRISIS_RESOURCE_LOOKUP_PERSISTED = "voice.crisis_resource_lookup.persisted"
+VOICE_RESPONSE_FINALIZED = "voice.response.finalized"
+VOICE_TOOL_COMPLETED = "voice.tool.completed"
+VOICE_TOOL_DISPATCH = "voice.tool.dispatch"
+VOICE_TOOL_FAILED = "voice.tool.failed"
+VOICE_TURN_STATE_BUILT = "voice.turn.state_built"
 ROUTING_DECISION = "routing.decision"
 MEMORY_READ = "memory.read"
 MEMORY_READ_COMPLETED = "memory.read.completed"

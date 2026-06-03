@@ -9,6 +9,13 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
 
+from agent.observability.decorators import trace_event, trace_span
+from agent.observability.events import (
+    VOICE_TOOL_COMPLETED,
+    VOICE_TOOL_DISPATCH,
+    VOICE_TOOL_FAILED,
+)
+
 from agent.tools.crisis import (
     execute_crisis_resource_lookup_tool,
     execute_crisis_support_template_tool,
@@ -748,6 +755,28 @@ def _normalize_voice_tool_result(result: object) -> dict[str, object]:
     return {"result": str(result)}
 
 
+def _safe_trace_tool_name(tool_name: object) -> str:
+    if isinstance(tool_name, str) and tool_name in _SUPPORTED_VOICE_TOOL_NAMES:
+        return tool_name
+    return "unsupported"
+
+
+def _voice_tool_trace_attrs(
+    _args: tuple[object, ...],
+    kwargs: dict[str, object],
+) -> dict[str, object]:
+    return {
+        "voice_runtime": "openai_realtime",
+        "tool_name": _safe_trace_tool_name(kwargs.get("tool_name")),
+        "memory_mode": kwargs.get("memory_mode"),
+    }
+
+
+@trace_span(
+    VOICE_TOOL_DISPATCH,
+    attrs=_voice_tool_trace_attrs,
+    record_error_message=False,
+)
 async def execute_voice_tool_call(
     *,
     runtime: Any,
@@ -763,23 +792,51 @@ async def execute_voice_tool_call(
     """Execute one app-owned voice function tool call."""
 
     if tool_name not in _SUPPORTED_VOICE_TOOL_NAMES:
+        trace_event(
+            VOICE_TOOL_FAILED,
+            {"tool_name": "unsupported", "error_type": "unsupported_tool"},
+        )
         raise ValueError(f"Unsupported voice tool: {tool_name!r}")
 
     definition = _VOICE_TOOL_REGISTRY.get(tool_name)
     if definition is None:
+        trace_event(
+            VOICE_TOOL_FAILED,
+            {"tool_name": tool_name, "error_type": "unhandled_tool"},
+        )
         raise AssertionError(f"Unhandled voice tool: {tool_name!r}")
 
     effective_memory_mode = _effective_memory_mode(runtime, memory_mode)
     if effective_memory_mode == "incognito":
         if tool_name == "show_memory_status":
+            trace_event(
+                VOICE_TOOL_COMPLETED,
+                {
+                    "tool_name": tool_name,
+                    "status": "completed",
+                    "result_type": "incognito_memory_status",
+                },
+            )
             return _incognito_memory_status_result()
         if tool_name in _PERSISTENT_ONLY_TOOL_NAMES:
+            trace_event(
+                VOICE_TOOL_FAILED,
+                {"tool_name": tool_name, "error_type": "incognito_unavailable"},
+            )
             raise ValueError(f"{tool_name!r} is not available in incognito voice mode.")
 
     if tool_name in _VOICE_MEMORY_MUTATOR_TOOL_NAMES and not _has_owner_or_session_id(
         user_id=user_id,
         thread_id=thread_id,
     ):
+        trace_event(
+            VOICE_TOOL_COMPLETED,
+            {
+                "tool_name": tool_name,
+                "status": "refused",
+                "reason": "owner_or_session_missing",
+            },
+        )
         return _voice_mutator_refusal(
             reason="owner_or_session_missing",
             response_text=(
@@ -793,6 +850,14 @@ async def execute_voice_tool_call(
         current_user_message=current_user_message,
         transcript=transcript,
     ):
+        trace_event(
+            VOICE_TOOL_COMPLETED,
+            {
+                "tool_name": tool_name,
+                "status": "refused",
+                "reason": "user_intent_not_verified",
+            },
+        )
         return _voice_mutator_refusal(
             reason="user_intent_not_verified",
             response_text=(
@@ -811,16 +876,33 @@ async def execute_voice_tool_call(
             llm_client=llm_client,
         )
 
-    result = await definition.handler(
-        VoiceToolDispatchContext(
-            runtime=runtime,
-            tool_context=tool_context,
-            thread_id=thread_id,
-            user_id=user_id,
-        ),
-        arguments,
+    try:
+        result = await definition.handler(
+            VoiceToolDispatchContext(
+                runtime=runtime,
+                tool_context=tool_context,
+                thread_id=thread_id,
+                user_id=user_id,
+            ),
+            arguments,
+        )
+    except Exception as exc:
+        trace_event(
+            VOICE_TOOL_FAILED,
+            {"tool_name": tool_name, "error_type": type(exc).__name__},
+        )
+        raise
+    normalized_result = _normalize_voice_tool_result(result)
+    trace_event(
+        VOICE_TOOL_COMPLETED,
+        {
+            "tool_name": tool_name,
+            "status": "completed",
+            "result_type": type(result).__name__,
+            "result_key_count": len(normalized_result),
+        },
     )
-    return _normalize_voice_tool_result(result)
+    return normalized_result
 
 
 def _optional_string(value: object) -> str | None:
