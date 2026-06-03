@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from agent.memory.modes import MemoryMode
 from agent.memory.retrieval.service import LoadMemoryResult, load_memory_for_turn
+from agent.observability.diagnostics import merge_diagnostics
 from agent.observability.timing import elapsed_ms
 from agent.runtime.workflow_context import PrefetchedTurnMemory, WorkflowContext
 from agent.state import AgentState, resolve_owner_id
@@ -50,10 +51,14 @@ async def build_turn_memory_delta(
         is_first_turn=len(transcript) == 1,
     )
 
-    diagnostics = dict(result.diagnostics)
-    diagnostics["load_memory_speculation_used"] = speculation_status == "used"
-    diagnostics["load_memory_speculation_status"] = speculation_status
-    diagnostics["load_memory_speculation_wait_ms"] = round(speculation_wait_ms, 2)
+    diagnostics = merge_diagnostics(
+        result.diagnostics,
+        {
+            "load_memory_speculation_used": speculation_status == "used",
+            "load_memory_speculation_status": speculation_status,
+            "load_memory_speculation_wait_ms": round(speculation_wait_ms, 2),
+        },
+    )
 
     return {
         "working_memory": list(result.working_memory),

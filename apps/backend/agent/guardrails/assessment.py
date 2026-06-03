@@ -9,6 +9,7 @@ from typing import Any
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
 from agent.guardrails.service import CrisisRiskService
 from agent.models import CrisisAssessment
+from agent.observability.diagnostics import merge_diagnostics
 from agent.observability.routing_trace import append_routing_trace
 from agent.observability.timing import elapsed_ms
 from agent.state import AgentState
@@ -44,11 +45,13 @@ def build_crisis_gate_delta(
     else:
         decision = "normal"
 
-    diagnostics = {
-        "crisis_gate_ms": round(duration_ms, 2),
-        "crisis_classifier_path": classifier_path,
-        "crisis_level": assessment.level,
-        **append_routing_trace(
+    diagnostics = merge_diagnostics(
+        {
+            "crisis_gate_ms": round(duration_ms, 2),
+            "crisis_classifier_path": classifier_path,
+            "crisis_level": assessment.level,
+        },
+        append_routing_trace(
             prior_diagnostics,
             {
                 "stage": "safety",
@@ -58,7 +61,7 @@ def build_crisis_gate_delta(
                 "confidence": assessment.confidence,
             },
         ),
-    }
+    )
 
     delta: dict[str, Any] = {
         "crisis": assessment,

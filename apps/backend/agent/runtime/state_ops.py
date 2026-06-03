@@ -7,6 +7,7 @@ from hashlib import sha256
 from typing import Any, cast
 
 from agent.models import MessageRole
+from agent.observability.diagnostics import diagnostics_from_state, merge_diagnostics
 from agent.runtime.types import TextRuntimeShadowResult, TextRuntimeShadowStatus
 from agent.state import AgentState
 
@@ -63,14 +64,16 @@ def finalize_openai_turn(
         "content": response_text,
         "response_style": response_style,
     }
-    diagnostics = {
-        **dict(state.get("diagnostics", {})),
-        "text_agent_runtime": "openai",
-        "openai_text_runtime_mode": runtime_mode,
-        "openai_selected_agent": selected_agent,
-        "openai_streamed": streamed,
-        "finalize_done_at_monotonic": time.monotonic(),
-    }
+    diagnostics = merge_diagnostics(
+        diagnostics_from_state(state),
+        {
+            "text_agent_runtime": "openai",
+            "openai_text_runtime_mode": runtime_mode,
+            "openai_selected_agent": selected_agent,
+            "openai_streamed": streamed,
+            "finalize_done_at_monotonic": time.monotonic(),
+        },
+    )
     if sdk_duration_ms is not None:
         diagnostics["openai_sdk_ms"] = round(sdk_duration_ms, 2)
 

@@ -8,6 +8,10 @@ from typing import Any
 
 from agent.runtime.turn import state_to_output
 from agent.models import AgentOutput, ChunkEvent
+from agent.observability.diagnostics import (
+    diagnostics_from_state,
+    replace_state_diagnostics,
+)
 from agent.state import AgentState
 
 
@@ -37,16 +41,16 @@ def stamp_turn_total_ms(
     """
 
     end_at = time.monotonic()
-    if "diagnostics" not in state or state["diagnostics"] is None:
-        state["diagnostics"] = {}
-    state["diagnostics"]["turn_total_ms"] = round((end_at - started_at) * 1000, 2)
+    diagnostics = diagnostics_from_state(state)
+    diagnostics["turn_total_ms"] = round((end_at - started_at) * 1000, 2)
 
-    finalize_done_at = state["diagnostics"].pop("finalize_done_at_monotonic", None)
+    finalize_done_at = diagnostics.pop("finalize_done_at_monotonic", None)
     if finalize_done_at is not None:
-        state["diagnostics"]["post_finalize_ms"] = round(
+        diagnostics["post_finalize_ms"] = round(
             (end_at - float(finalize_done_at)) * 1000,
             2,
         )
+    replace_state_diagnostics(state, diagnostics)
 
 
 def response_ready_output(
