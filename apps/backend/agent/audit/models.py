@@ -50,6 +50,10 @@ class CrisisLogRecord(BaseModel):
     tool_calls: list[str] = Field(default_factory=list)
     response_path: CrisisResponsePath = "unknown"
     fallback_reason: str | None = Field(default=None, max_length=200)
+    trace_id: str | None = None
+    trace_session_id: str | None = None
+    trace_turn_id: str | None = None
+    trace_runtime_mode: Literal["text", "voice"] | None = None
     retention_extended_until: str | None = None
     retention_extended_reason: str | None = None
 

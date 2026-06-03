@@ -51,6 +51,10 @@ def _crisis_record(
         resource_count=2,
         tool_calls=["lookup_crisis_resources"],
         fallback_reason="crisis_resource_tool_not_called",
+        trace_id="trace-1",
+        trace_session_id="trace-session-1",
+        trace_turn_id="turn-1",
+        trace_runtime_mode="voice",
     )
 
 
@@ -153,6 +157,10 @@ async def test_postgres_crisis_log_persists_across_close_and_reopen() -> None:
             assert filtered[0].resource_count == 2
             assert filtered[0].tool_calls == ["lookup_crisis_resources"]
             assert filtered[0].fallback_reason == "crisis_resource_tool_not_called"
+            assert filtered[0].trace_id == "trace-1"
+            assert filtered[0].trace_session_id == "trace-session-1"
+            assert filtered[0].trace_turn_id == "turn-1"
+            assert filtered[0].trace_runtime_mode == "voice"
         finally:
             await backend_b.aclose()
     finally:

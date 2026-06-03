@@ -67,6 +67,10 @@ def _crisis_record(
         resource_count=2,
         tool_calls=["lookup_crisis_resources"],
         fallback_reason="crisis_resource_tool_not_called",
+        trace_id="trace-1",
+        trace_session_id="trace-session-1",
+        trace_turn_id="turn-1",
+        trace_runtime_mode="text",
     )
 
 
@@ -198,6 +202,10 @@ async def test_records_preserve_all_fields_round_trip() -> None:
     assert restored.resource_count == 2
     assert restored.tool_calls == ["lookup_crisis_resources"]
     assert restored.fallback_reason == "crisis_resource_tool_not_called"
+    assert restored.trace_id == "trace-1"
+    assert restored.trace_session_id == "trace-session-1"
+    assert restored.trace_turn_id == "turn-1"
+    assert restored.trace_runtime_mode == "text"
     await backend.aclose()
 
 
