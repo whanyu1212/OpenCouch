@@ -9,7 +9,9 @@ from typing import Any
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
 from agent.guardrails.service import CrisisRiskService
 from agent.models import CrisisAssessment
+from agent.observability.decorators import trace_event, trace_span
 from agent.observability.diagnostics import merge_diagnostics
+from agent.observability.events import SAFETY_ASSESS, SAFETY_ASSESS_COMPLETED
 from agent.observability.routing_trace import append_routing_trace
 from agent.observability.timing import elapsed_ms
 from agent.state import AgentState
@@ -82,6 +84,7 @@ def build_crisis_gate_delta(
     return delta
 
 
+@trace_span(SAFETY_ASSESS, attrs={"runtime_mode": "text"})
 async def assess_crisis_gate(
     state: AgentState,
     *,
@@ -96,6 +99,17 @@ async def assess_crisis_gate(
         llm_client=llm_client,
     )
 
+    trace_event(
+        SAFETY_ASSESS_COMPLETED,
+        {
+            "level": result.assessment.level,
+            "needs_crisis_response": result.assessment.needs_crisis_response,
+            "needs_clarification": result.assessment.needs_clarification,
+            "classifier_path": result.classifier_path,
+            "override_kind": result.override_kind,
+            "llm_failure_occurred": result.llm_failure_occurred,
+        },
+    )
     delta = build_crisis_gate_delta(
         result.assessment,
         override_kind=result.override_kind,

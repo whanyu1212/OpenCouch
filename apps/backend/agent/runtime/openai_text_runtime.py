@@ -9,6 +9,12 @@ from typing import Any, cast
 from agents import Runner
 from agent.guardrails.prompts import build_crisis_response_prompt
 from agent.models import Channel, CrisisAssessment, MessageRole
+from agent.observability.decorators import trace_event, trace_span
+from agent.observability.events import (
+    RUNTIME_TEXT_TURN,
+    SDK_OPENAI_CALL,
+    SDK_OPENAI_CALL_COMPLETED,
+)
 from agent.observability.timing import elapsed_ms
 from agent.specialists.roster import build_openai_text_agent_roster
 from agent.specialists.therapeutic import (
@@ -162,6 +168,7 @@ class OpenAITextRuntime:
             load_turn_memory=self._load_turn_memory,
         )
 
+    @trace_span(RUNTIME_TEXT_TURN, attrs={"runtime_mode": "text", "streamed": False})
     async def run_turn(
         self,
         initial_state: AgentTurnInputState,
@@ -196,6 +203,7 @@ class OpenAITextRuntime:
             session=session,
         )
 
+    @trace_span(RUNTIME_TEXT_TURN, attrs={"runtime_mode": "text", "streamed": True})
     async def run_turn_stream(
         self,
         initial_state: AgentTurnInputState,
@@ -718,6 +726,13 @@ class OpenAITextRuntime:
             sdk_duration_ms=sdk_duration_ms,
         )
 
+    @trace_span(
+        SDK_OPENAI_CALL,
+        attrs=lambda args, kwargs: {
+            "model": args[0]._model,
+            "agent_name": getattr(kwargs.get("agent"), "name", None),
+        },
+    )
     async def _run_openai_agent_with(
         self,
         state: AgentState,
@@ -736,6 +751,13 @@ class OpenAITextRuntime:
         )
         text = final_output_text(getattr(result, "final_output", None))
         sdk_duration_ms = elapsed_ms(run_start)
+        trace_event(
+            SDK_OPENAI_CALL_COMPLETED,
+            {
+                "duration_ms": sdk_duration_ms,
+                "response_text_length": len(text),
+            },
+        )
         diagnostics = dict(state.get("diagnostics", {}))
         diagnostics["openai_sdk_ms"] = round(sdk_duration_ms, 2)
         state["diagnostics"] = diagnostics

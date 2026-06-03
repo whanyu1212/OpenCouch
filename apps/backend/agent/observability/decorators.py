@@ -51,14 +51,20 @@ def trace_span(
                     _resolve_attrs(attrs, args, kwargs),
                     parent_span_id=get_current_span_id(),
                 )
+                ended = False
                 try:
                     with use_parent_span(span.span_id):
                         async for item in func(*args, **kwargs):
                             yield item
                     span.end(status="ok")
+                    ended = True
                 except Exception as exc:
                     span.end(status="error", error=exc)
+                    ended = True
                     raise
+                finally:
+                    if not ended:
+                        span.end(status="closed")
 
             return async_generator_wrapper  # type: ignore[return-value]
 
