@@ -31,6 +31,9 @@ from agent.audit.models import (
 from agent.memory.hashing import hash_session_id
 from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
+from agent.observability.context import get_current_trace_context
+from agent.observability.decorators import trace_event
+from agent.observability.events import AUDIT_CRISIS_LOG_APPEND
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +150,12 @@ async def write_crisis_log(
         if not isinstance(diagnostics, Mapping):
             diagnostics = {}
         response_path = _response_path_from_diagnostics(diagnostics)
+        trace_context = get_current_trace_context()
+        enabled_trace_context = (
+            trace_context
+            if trace_context is not None and trace_context.enabled
+            else None
+        )
         record = CrisisLogRecord(
             id=str(uuid4()),
             session_id_opaque=hash_session_id(state.get("session_id")),
@@ -167,8 +176,34 @@ async def write_crisis_log(
                 diagnostics,
                 response_path=response_path,
             ),
+            trace_id=enabled_trace_context.trace_id if enabled_trace_context else None,
+            trace_session_id=(
+                enabled_trace_context.session_id if enabled_trace_context else None
+            ),
+            trace_turn_id=enabled_trace_context.turn_id
+            if enabled_trace_context
+            else None,
+            trace_runtime_mode=(
+                enabled_trace_context.runtime_mode if enabled_trace_context else None
+            ),
         )
         await backend.aappend(record)
+        trace_event(
+            AUDIT_CRISIS_LOG_APPEND,
+            {
+                "audit_recorded": True,
+                "level": record.level,
+                "resource_lookup_status": record.resource_lookup_status,
+                "resource_count": record.resource_count,
+                "response_path": record.response_path,
+                "runtime_mode": (
+                    enabled_trace_context.runtime_mode
+                    if enabled_trace_context
+                    else None
+                ),
+                "trace_correlated": enabled_trace_context is not None,
+            },
+        )
     except Exception:
         logger.error(
             "crisis log failed to write record; audit trail lost for this event",

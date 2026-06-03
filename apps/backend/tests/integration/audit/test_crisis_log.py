@@ -25,6 +25,10 @@ from agent.runtime import run_agent
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
+from agent.observability.config import TraceConfig
+from agent.observability.context import TraceContext, use_trace_context
+from agent.observability.events import AUDIT_CRISIS_LOG_APPEND
+from agent.observability.recorder import InMemoryTraceRecorder
 from agent.audit.models import (
     CrisisClassifierPath,
     CrisisLogPathCounts,
@@ -292,6 +296,109 @@ class TestCrisisLogNode:
         assert record.fallback_reason == "response_llm_override"
         assert record.resource_lookup_status == "no_location"
         assert record.resource_count == 0
+
+    @pytest.mark.asyncio
+    async def test_trace_context_is_written_to_crisis_record_and_safe_event(
+        self,
+    ) -> None:
+        """Trace correlation should not export raw crisis payloads."""
+
+        backend = InMemoryCrisisLogBackend()
+        runtime = _MockRuntime(crisis_log_backend=backend)
+        state = _build_crisis_state(
+            level=2,
+            reason="user said 'I want to end it'",
+            user_id="user-sensitive",
+            session_id="raw-thread-sensitive",
+        )
+        state["resource_lookup_status"] = "found"
+        state["found_resources"] = [{"name": "Sensitive Hotline", "phone": "123"}]
+        state["diagnostics"] = {"openai_crisis_tool_calls": ["lookup_crisis_resources"]}
+        recorder = InMemoryTraceRecorder()
+        trace_context = TraceContext(
+            trace_id="trace-crisis-1",
+            session_id="trace-session-1",
+            turn_id="turn-1",
+            runtime_mode="text",
+            config=TraceConfig(enabled=True),
+        )
+
+        with use_trace_context(trace_context, recorder):
+            await write_crisis_log(state, runtime.context)
+
+        records = await _fetch_all_records(backend)
+        assert len(records) == 1
+        record = records[0]
+        assert record.trace_id == "trace-crisis-1"
+        assert record.trace_session_id == "trace-session-1"
+        assert record.trace_turn_id == "turn-1"
+        assert record.trace_runtime_mode == "text"
+
+        assert len(recorder.events) == 1
+        event = recorder.events[0]
+        assert event.name == AUDIT_CRISIS_LOG_APPEND
+        assert event.attributes == {
+            "audit_recorded": True,
+            "level": 2,
+            "resource_lookup_status": "found",
+            "resource_count": 1,
+            "response_path": "unknown",
+            "runtime_mode": "text",
+            "trace_correlated": True,
+        }
+        assert "user said" not in str(event.attributes)
+        assert "user-sensitive" not in str(event.attributes)
+        assert "raw-thread-sensitive" not in str(event.attributes)
+        assert "reason" not in event.attributes
+
+    @pytest.mark.asyncio
+    async def test_disabled_trace_context_is_not_persisted(
+        self,
+    ) -> None:
+        """Disabled trace contexts should behave like no trace for audit rows."""
+
+        backend = InMemoryCrisisLogBackend()
+        runtime = _MockRuntime(crisis_log_backend=backend)
+        state = _build_crisis_state(level=2)
+        recorder = InMemoryTraceRecorder()
+        trace_context = TraceContext(
+            trace_id="disabled-trace",
+            session_id="disabled-session",
+            turn_id="disabled-turn",
+            runtime_mode="text",
+        )
+
+        with use_trace_context(trace_context, recorder):
+            await write_crisis_log(state, runtime.context)
+
+        records = await _fetch_all_records(backend)
+        assert len(records) == 1
+        record = records[0]
+        assert record.trace_id is None
+        assert record.trace_session_id is None
+        assert record.trace_turn_id is None
+        assert record.trace_runtime_mode is None
+        assert recorder.events == []
+
+    @pytest.mark.asyncio
+    async def test_crisis_record_trace_fields_are_optional_without_context(
+        self,
+    ) -> None:
+        """Audit writes must not require active tracing."""
+
+        backend = InMemoryCrisisLogBackend()
+        runtime = _MockRuntime(crisis_log_backend=backend)
+        state = _build_crisis_state(level=2)
+
+        await write_crisis_log(state, runtime.context)
+
+        records = await _fetch_all_records(backend)
+        assert len(records) == 1
+        record = records[0]
+        assert record.trace_id is None
+        assert record.trace_session_id is None
+        assert record.trace_turn_id is None
+        assert record.trace_runtime_mode is None
 
     @pytest.mark.asyncio
     async def test_session_id_stored_as_opaque_hash(self) -> None:
