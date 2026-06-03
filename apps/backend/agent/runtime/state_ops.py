@@ -7,7 +7,9 @@ from hashlib import sha256
 from typing import Any, cast
 
 from agent.models import MessageRole
+from agent.observability.decorators import trace_event
 from agent.observability.diagnostics import diagnostics_from_state, merge_diagnostics
+from agent.observability.events import RUNTIME_TEXT_TURN_FINALIZED
 from agent.runtime.types import TextRuntimeShadowResult, TextRuntimeShadowStatus
 from agent.state import AgentState
 
@@ -77,6 +79,18 @@ def finalize_openai_turn(
     if sdk_duration_ms is not None:
         diagnostics["openai_sdk_ms"] = round(sdk_duration_ms, 2)
 
+    trace_event(
+        RUNTIME_TEXT_TURN_FINALIZED,
+        {
+            "runtime_mode": runtime_mode,
+            "response_style": response_style,
+            "selected_agent": selected_agent,
+            "streamed": streamed,
+            "sdk_duration_ms": round(sdk_duration_ms, 2)
+            if sdk_duration_ms is not None
+            else None,
+        },
+    )
     route = route_for_runtime_mode(runtime_mode)
     final_values: dict[str, Any] = {
         **dict(state),

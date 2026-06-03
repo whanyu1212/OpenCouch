@@ -137,6 +137,31 @@ async def test_trace_span_records_async_generator_iteration() -> None:
 
 
 @pytest.mark.asyncio
+async def test_trace_span_closes_async_generator_span_on_early_close() -> None:
+    recorder = InMemoryTraceRecorder()
+    context = TraceContext(trace_id="trace-1", config=TraceConfig(enabled=True))
+
+    @trace_span("test.stream.closed")
+    async def stream() -> object:
+        trace_event("stream.started")
+        yield "first"
+        trace_event("stream.unreachable")
+        yield "second"
+
+    with use_trace_context(context, recorder):
+        generator = stream()
+        assert await generator.__anext__() == "first"
+        await generator.aclose()
+
+    assert len(recorder.completed_spans) == 1
+    span = recorder.completed_spans[0]
+    assert span.name == "test.stream.closed"
+    assert span.status == "closed"
+    assert [event.name for event in recorder.events] == ["stream.started"]
+    assert recorder.events[0].span_id == span.span_id
+
+
+@pytest.mark.asyncio
 async def test_trace_span_records_async_generator_errors() -> None:
     recorder = InMemoryTraceRecorder()
     context = TraceContext(trace_id="trace-1", config=TraceConfig(enabled=True))

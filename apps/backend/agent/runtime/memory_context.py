@@ -8,7 +8,13 @@ from typing import Any, Literal
 
 from agent.memory.modes import MemoryMode
 from agent.memory.retrieval.service import LoadMemoryResult, load_memory_for_turn
+from agent.observability.decorators import trace_event, trace_span
 from agent.observability.diagnostics import merge_diagnostics
+from agent.observability.events import (
+    MEMORY_READ,
+    MEMORY_READ_COMPLETED,
+    MEMORY_READ_SKIPPED,
+)
 from agent.observability.timing import elapsed_ms
 from agent.runtime.workflow_context import PrefetchedTurnMemory, WorkflowContext
 from agent.state import AgentState, resolve_owner_id
@@ -23,6 +29,10 @@ MemorySpeculationStatus = Literal[
 ]
 
 
+@trace_span(
+    MEMORY_READ,
+    attrs=lambda args, _kwargs: {"memory_mode": args[1].memory_mode.value},
+)
 async def build_turn_memory_delta(
     state: AgentState,
     context: WorkflowContext,
@@ -30,6 +40,7 @@ async def build_turn_memory_delta(
     """Retrieve durable memory and shape the runner-turn state delta."""
 
     if context.memory_mode == MemoryMode.INCOGNITO:
+        trace_event(MEMORY_READ_SKIPPED, {"reason": "incognito"})
         return {
             "working_memory": [],
             "session_memory": {
@@ -51,6 +62,17 @@ async def build_turn_memory_delta(
         is_first_turn=len(transcript) == 1,
     )
 
+    trace_event(
+        MEMORY_READ_COMPLETED,
+        {
+            "speculation_status": speculation_status,
+            "speculation_used": speculation_status == "used",
+            "speculation_wait_ms": round(speculation_wait_ms, 2),
+            "working_memory_count": len(result.working_memory),
+            "procedural_rule_count": len(result.procedural_rules),
+            "proactive_recall_enabled": result.proactive_recall_enabled,
+        },
+    )
     diagnostics = merge_diagnostics(
         result.diagnostics,
         {
