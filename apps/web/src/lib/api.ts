@@ -115,16 +115,19 @@ export interface MemoryRule {
   added_at?: string;
 }
 
-export interface EndSessionResponse {
+export interface SessionEndResponse {
+  finalized: boolean;
   summary: string | null;
-  detail?: string;
-  themes?: string[];
-  mood_opened?: string;
-  mood_closed?: string;
-  turn_count?: number;
-  open_loops?: string[];
-  resolved_threads?: string[];
+  detail: string;
+  themes: string[];
+  mood_opened: string | null;
+  mood_closed: string | null;
+  turn_count: number | null;
+  open_loops: string[];
+  resolved_threads: string[];
 }
+
+export type EndSessionResponse = SessionEndResponse;
 
 export interface RealtimeVoiceSessionResponse {
   client_secret: string;
@@ -151,11 +154,7 @@ export interface RealtimeVoiceRecordedToolCall {
   error?: string;
 }
 
-export interface RealtimeVoiceEndSessionResponse {
-  finalized: boolean;
-  summary: string | null;
-  detail: string;
-}
+export type RealtimeVoiceEndSessionResponse = SessionEndResponse;
 
 // ── Stream event types ───────────────────────────────────────────────
 
@@ -175,7 +174,17 @@ export interface StreamDoneEvent {
   response: ChatResponse;
 }
 
-export type StreamEvent = StreamStatusEvent | StreamChunkEvent | StreamDoneEvent;
+export interface StreamErrorEvent {
+  type: "error";
+  code: string;
+  message: string;
+}
+
+export type StreamEvent =
+  | StreamStatusEvent
+  | StreamChunkEvent
+  | StreamDoneEvent
+  | StreamErrorEvent;
 
 export interface ChatStreamOptions {
   message: string;
@@ -225,6 +234,114 @@ function memoryModePayload(memoryMode?: ApiMemoryMode): {
   return memoryMode ? { memory_mode: memoryMode } : {};
 }
 
+type ApiErrorDetail = {
+  code?: unknown;
+  message?: unknown;
+};
+
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  detail: unknown;
+
+  constructor({
+    status,
+    message,
+    code,
+    detail,
+  }: {
+    status: number;
+    message: string;
+    code?: string;
+    detail: unknown;
+  }) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+    this.detail = detail;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function extractApiErrorMessage(payload: unknown, fallback: string): {
+  message: string;
+  code?: string;
+  detail: unknown;
+} {
+  if (!isRecord(payload)) {
+    return { message: fallback, detail: payload };
+  }
+
+  const detail = payload.detail;
+  if (typeof detail === "string" && detail.trim()) {
+    return { message: detail, detail };
+  }
+
+  if (Array.isArray(detail) && detail.length > 0) {
+    return { message: `${fallback}: validation failed`, detail };
+  }
+
+  if (isRecord(detail)) {
+    const apiDetail = detail as ApiErrorDetail;
+    const message =
+      typeof apiDetail.message === "string" && apiDetail.message.trim()
+        ? apiDetail.message
+        : fallback;
+    const code =
+      typeof apiDetail.code === "string" && apiDetail.code.trim()
+        ? apiDetail.code
+        : undefined;
+    return { message, code, detail };
+  }
+
+  if (typeof payload.message === "string" && payload.message.trim()) {
+    return { message: payload.message, detail };
+  }
+
+  return { message: fallback, detail };
+}
+
+async function readApiErrorPayload(res: Response): Promise<unknown> {
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    try {
+      return await res.json();
+    } catch {
+      return null;
+    }
+  }
+
+  try {
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+async function apiRequest<T>(
+  url: string,
+  init: RequestInit | undefined,
+  fallbackLabel: string
+): Promise<T> {
+  const res = await fetch(url, init);
+  if (!res.ok) {
+    const fallback = `${fallbackLabel} failed: ${res.status}`;
+    const payload = await readApiErrorPayload(res);
+    const { message, code, detail } = extractApiErrorMessage(payload, fallback);
+    throw new ApiError({
+      status: res.status,
+      message,
+      code,
+      detail,
+    });
+  }
+  return res.json() as Promise<T>;
+}
+
 export async function postChat(
   message: string,
   threadId: string,
@@ -232,19 +349,21 @@ export async function postChat(
   responseModelTier?: ResponseModelTier,
   memoryMode?: ApiMemoryMode
 ): Promise<ChatResponse> {
-  const res = await fetch(`${API_BASE}/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      message,
-      thread_id: threadId,
-      user_id: userId || undefined,
-      response_model_tier: responseModelTier || undefined,
-      ...memoryModePayload(memoryMode),
-    }),
-  });
-  if (!res.ok) throw new Error(`Chat failed: ${res.status}`);
-  return res.json();
+  return apiRequest<ChatResponse>(
+    `${API_BASE}/chat`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message,
+        thread_id: threadId,
+        user_id: userId || undefined,
+        response_model_tier: responseModelTier || undefined,
+        ...memoryModePayload(memoryMode),
+      }),
+    },
+    "Chat"
+  );
 }
 
 export async function getThreads(
@@ -254,9 +373,11 @@ export async function getThreads(
   const params = new URLSearchParams();
   setOptionalParam(params, "limit", limit);
   setOptionalParam(params, "memory_mode", memoryMode);
-  const res = await fetch(`${API_BASE}/threads${querySuffix(params)}`);
-  if (!res.ok) throw new Error(`Threads failed: ${res.status}`);
-  return res.json();
+  return apiRequest<ThreadSummary[]>(
+    `${API_BASE}/threads${querySuffix(params)}`,
+    undefined,
+    "Threads"
+  );
 }
 
 export async function getHistory(
@@ -265,11 +386,11 @@ export async function getHistory(
 ): Promise<Message[]> {
   const params = new URLSearchParams();
   setOptionalParam(params, "memory_mode", memoryMode);
-  const res = await fetch(
-    `${API_BASE}/threads/${threadId}/history${querySuffix(params)}`
+  return apiRequest<Message[]>(
+    `${API_BASE}/threads/${threadId}/history${querySuffix(params)}`,
+    undefined,
+    "History"
   );
-  if (!res.ok) throw new Error(`History failed: ${res.status}`);
-  return res.json();
 }
 
 export async function getThreadSessionStatus(
@@ -278,11 +399,11 @@ export async function getThreadSessionStatus(
 ): Promise<ThreadSessionStatus> {
   const params = new URLSearchParams();
   setOptionalParam(params, "memory_mode", memoryMode);
-  const res = await fetch(
-    `${API_BASE}/threads/${threadId}/session-status${querySuffix(params)}`
+  return apiRequest<ThreadSessionStatus>(
+    `${API_BASE}/threads/${threadId}/session-status${querySuffix(params)}`,
+    undefined,
+    "Session status"
   );
-  if (!res.ok) throw new Error(`Session status failed: ${res.status}`);
-  return res.json();
 }
 
 export type SessionFeedbackLabel = "positive" | "negative" | "skip";
@@ -298,17 +419,19 @@ export async function submitSessionFeedback(
   memoryMode?: ApiMemoryMode,
   modality: SessionFeedbackModality = "text"
 ): Promise<SessionFeedbackResponse> {
-  const res = await fetch(`${API_BASE}/threads/${threadId}/feedback`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      feedback,
-      ...memoryModePayload(memoryMode),
-      modality,
-    }),
-  });
-  if (!res.ok) throw new Error(`Session feedback failed: ${res.status}`);
-  return res.json();
+  return apiRequest<SessionFeedbackResponse>(
+    `${API_BASE}/threads/${threadId}/feedback`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        feedback,
+        ...memoryModePayload(memoryMode),
+        modality,
+      }),
+    },
+    "Session feedback"
+  );
 }
 
 export async function endSession(
@@ -316,16 +439,18 @@ export async function endSession(
   feedback?: SessionFeedbackLabel,
   memoryMode?: ApiMemoryMode
 ): Promise<EndSessionResponse> {
-  const res = await fetch(`${API_BASE}/threads/${threadId}/end`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      feedback: feedback ?? null,
-      ...memoryModePayload(memoryMode),
-    }),
-  });
-  if (!res.ok) throw new Error(`End session failed: ${res.status}`);
-  return res.json();
+  return apiRequest<EndSessionResponse>(
+    `${API_BASE}/threads/${threadId}/end`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        feedback: feedback ?? null,
+        ...memoryModePayload(memoryMode),
+      }),
+    },
+    "End session"
+  );
 }
 
 export async function getMemoryStatus(
@@ -334,9 +459,11 @@ export async function getMemoryStatus(
   memoryMode?: ApiMemoryMode
 ): Promise<MemoryStatus> {
   const params = threadScopedParams({ threadId, userId, memoryMode });
-  const res = await fetch(`${API_BASE}/memory/status?${params}`);
-  if (!res.ok) throw new Error(`Memory status failed: ${res.status}`);
-  return res.json();
+  return apiRequest<MemoryStatus>(
+    `${API_BASE}/memory/status?${params}`,
+    undefined,
+    "Memory status"
+  );
 }
 
 export async function updateMemoryRecall(
@@ -346,13 +473,15 @@ export async function updateMemoryRecall(
   memoryMode?: ApiMemoryMode
 ): Promise<MemoryRecallUpdateResponse> {
   const params = threadScopedParams({ threadId, userId, memoryMode });
-  const res = await fetch(`${API_BASE}/memory/recall?${params}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled }),
-  });
-  if (!res.ok) throw new Error(`Memory recall update failed: ${res.status}`);
-  return res.json();
+  return apiRequest<MemoryRecallUpdateResponse>(
+    `${API_BASE}/memory/recall?${params}`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    },
+    "Memory recall update"
+  );
 }
 
 export async function getMemoryFacts(
@@ -361,9 +490,11 @@ export async function getMemoryFacts(
   memoryMode?: ApiMemoryMode
 ): Promise<MemoryFact[]> {
   const params = threadScopedParams({ threadId, userId, memoryMode });
-  const res = await fetch(`${API_BASE}/memory/facts?${params}`);
-  if (!res.ok) throw new Error(`Memory facts failed: ${res.status}`);
-  return res.json();
+  return apiRequest<MemoryFact[]>(
+    `${API_BASE}/memory/facts?${params}`,
+    undefined,
+    "Memory facts"
+  );
 }
 
 export async function getMemorySessions(
@@ -372,9 +503,11 @@ export async function getMemorySessions(
   memoryMode?: ApiMemoryMode
 ): Promise<MemorySession[]> {
   const params = threadScopedParams({ threadId, userId, memoryMode });
-  const res = await fetch(`${API_BASE}/memory/sessions?${params}`);
-  if (!res.ok) throw new Error(`Memory sessions failed: ${res.status}`);
-  return res.json();
+  return apiRequest<MemorySession[]>(
+    `${API_BASE}/memory/sessions?${params}`,
+    undefined,
+    "Memory sessions"
+  );
 }
 
 export async function getMemoryRules(
@@ -383,9 +516,11 @@ export async function getMemoryRules(
   memoryMode?: ApiMemoryMode
 ): Promise<MemoryRule[]> {
   const params = threadScopedParams({ threadId, userId, memoryMode });
-  const res = await fetch(`${API_BASE}/memory/rules?${params}`);
-  if (!res.ok) throw new Error(`Memory rules failed: ${res.status}`);
-  return res.json();
+  return apiRequest<MemoryRule[]>(
+    `${API_BASE}/memory/rules?${params}`,
+    undefined,
+    "Memory rules"
+  );
 }
 
 // ── Memory deletion ───────────────────────────────────────────────────
@@ -402,11 +537,11 @@ export async function deleteMemoryFact(
   memoryMode?: ApiMemoryMode
 ): Promise<DeleteMemoryResponse> {
   const params = threadScopedParams({ threadId, userId, memoryMode });
-  const res = await fetch(`${API_BASE}/memory/facts/${index}?${params}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) throw new Error(`Delete fact failed: ${res.status}`);
-  return res.json();
+  return apiRequest<DeleteMemoryResponse>(
+    `${API_BASE}/memory/facts/${index}?${params}`,
+    { method: "DELETE" },
+    "Delete fact"
+  );
 }
 
 export async function deleteMemorySession(
@@ -416,11 +551,11 @@ export async function deleteMemorySession(
   memoryMode?: ApiMemoryMode
 ): Promise<DeleteMemoryResponse> {
   const params = threadScopedParams({ threadId, userId, memoryMode });
-  const res = await fetch(`${API_BASE}/memory/sessions/${index}?${params}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) throw new Error(`Delete session failed: ${res.status}`);
-  return res.json();
+  return apiRequest<DeleteMemoryResponse>(
+    `${API_BASE}/memory/sessions/${index}?${params}`,
+    { method: "DELETE" },
+    "Delete session"
+  );
 }
 
 export async function deleteMemoryRule(
@@ -430,11 +565,11 @@ export async function deleteMemoryRule(
   memoryMode?: ApiMemoryMode
 ): Promise<DeleteMemoryResponse> {
   const params = threadScopedParams({ threadId, userId, memoryMode });
-  const res = await fetch(`${API_BASE}/memory/rules/${index}?${params}`, {
-    method: "DELETE",
-  });
-  if (!res.ok) throw new Error(`Delete rule failed: ${res.status}`);
-  return res.json();
+  return apiRequest<DeleteMemoryResponse>(
+    `${API_BASE}/memory/rules/${index}?${params}`,
+    { method: "DELETE" },
+    "Delete rule"
+  );
 }
 
 // ── Thread state (raw agent state dict) ─────────────────────────────
@@ -449,7 +584,17 @@ export async function getThreadState(
     `${API_BASE}/threads/${threadId}/state${querySuffix(params)}`
   );
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Thread state failed: ${res.status}`);
+  if (!res.ok) {
+    const fallback = `Thread state failed: ${res.status}`;
+    const payload = await readApiErrorPayload(res);
+    const { message, code, detail } = extractApiErrorMessage(payload, fallback);
+    throw new ApiError({
+      status: res.status,
+      message,
+      code,
+      detail,
+    });
+  }
   return res.json();
 }
 
@@ -490,7 +635,12 @@ function parseStreamEvent(raw: unknown): StreamEvent {
   }
 
   const event = parsed as Partial<StreamEvent>;
-  if (event.type !== "status" && event.type !== "chunk" && event.type !== "done") {
+  if (
+    event.type !== "status" &&
+    event.type !== "chunk" &&
+    event.type !== "done" &&
+    event.type !== "error"
+  ) {
     throw new Error("Chat stream frame had an unknown event type.");
   }
 
@@ -549,20 +699,20 @@ export async function createRealtimeVoiceSession({
   memoryMode: VoiceMemoryMode;
   assistantVoice?: AssistantVoiceOption;
 }): Promise<RealtimeVoiceSessionResponse> {
-  const res = await fetch(`${API_BASE}/voice/realtime/session`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      thread_id: threadId,
-      user_id: userId || undefined,
-      memory_mode: memoryMode,
-      assistant_voice: assistantVoice || undefined,
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`Realtime voice session failed: ${res.status}`);
-  }
-  return res.json();
+  return apiRequest<RealtimeVoiceSessionResponse>(
+    `${API_BASE}/voice/realtime/session`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        thread_id: threadId,
+        user_id: userId || undefined,
+        memory_mode: memoryMode,
+        assistant_voice: assistantVoice || undefined,
+      }),
+    },
+    "Realtime voice session"
+  );
 }
 
 export async function executeRealtimeVoiceTool({
@@ -582,23 +732,23 @@ export async function executeRealtimeVoiceTool({
   toolName: string;
   arguments?: Record<string, unknown>;
 }): Promise<RealtimeVoiceToolCallResponse> {
-  const res = await fetch(`${API_BASE}/voice/realtime/tools`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      thread_id: threadId,
-      user_id: userId || undefined,
-      current_user_message: currentUserMessage || "",
-      transcript: transcript || [],
-      memory_mode: memoryMode,
-      tool_name: toolName,
-      arguments: args || {},
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`Realtime voice tool failed: ${res.status}`);
-  }
-  return res.json();
+  return apiRequest<RealtimeVoiceToolCallResponse>(
+    `${API_BASE}/voice/realtime/tools`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        thread_id: threadId,
+        user_id: userId || undefined,
+        current_user_message: currentUserMessage || "",
+        transcript: transcript || [],
+        memory_mode: memoryMode,
+        tool_name: toolName,
+        arguments: args || {},
+      }),
+    },
+    "Realtime voice tool"
+  );
 }
 
 export async function recordRealtimeVoiceTurn({
@@ -616,35 +766,35 @@ export async function recordRealtimeVoiceTurn({
   memoryMode: VoiceMemoryMode;
   toolCalls?: RealtimeVoiceRecordedToolCall[];
 }): Promise<RealtimeVoiceTurnRecordResponse> {
-  const res = await fetch(`${API_BASE}/voice/realtime/turn`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      thread_id: threadId,
-      user_id: userId || undefined,
-      user_text: userText,
-      assistant_text: assistantText,
-      memory_mode: memoryMode,
-      tool_calls: toolCalls || [],
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`Realtime voice turn record failed: ${res.status}`);
-  }
-  return res.json();
+  return apiRequest<RealtimeVoiceTurnRecordResponse>(
+    `${API_BASE}/voice/realtime/turn`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        thread_id: threadId,
+        user_id: userId || undefined,
+        user_text: userText,
+        assistant_text: assistantText,
+        memory_mode: memoryMode,
+        tool_calls: toolCalls || [],
+      }),
+    },
+    "Realtime voice turn record"
+  );
 }
 
 export async function endRealtimeVoiceSession(
   threadId: string,
   memoryMode: VoiceMemoryMode
 ): Promise<RealtimeVoiceEndSessionResponse> {
-  const res = await fetch(`${API_BASE}/voice/realtime/end`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ thread_id: threadId, memory_mode: memoryMode }),
-  });
-  if (!res.ok) {
-    throw new Error(`Realtime voice end failed: ${res.status}`);
-  }
-  return res.json();
+  return apiRequest<RealtimeVoiceEndSessionResponse>(
+    `${API_BASE}/voice/realtime/end`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thread_id: threadId, memory_mode: memoryMode }),
+    },
+    "Realtime voice end"
+  );
 }

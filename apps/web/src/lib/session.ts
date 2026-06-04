@@ -7,7 +7,6 @@ import {
   createChatStream,
   getMemoryFacts,
   type AssistantVoiceOption,
-  type ChatResponse,
   type EndSessionResponse,
   type MemoryFact,
   type ResponseModelTier,
@@ -596,8 +595,22 @@ export function startTextChatStream({
         return;
       }
 
+      if (event.type === "error") {
+        done = true;
+        useSessionStore.setState({
+          chatLoading: false,
+          chatStreamingStarted: false,
+          chatStages: [],
+          chatNotice: event.message,
+        });
+        ws.close();
+        return;
+      }
+
+      if (event.type !== "done") return;
+
       done = true;
-      const resp = event.response as ChatResponse;
+      const resp = event.response;
       if (streamingStarted) {
         useSessionStore.getState().updateLastMessage({
           content: resp.response_text,
