@@ -138,6 +138,43 @@ The most reliable dogfood path is `scripts/text_tui.sh`. Compose starts the brow
 <details>
 <summary><b>View commands for Compose, TUI, web, and docs</b></summary>
 
+#### Recommended local browser testing
+
+For day-to-day browser testing, run the backend stack in Compose and run the Next.js app locally for faster hot reload.
+
+```bash
+# Terminal 1, from the repo root: Postgres + API on http://localhost:8080/api.
+docker compose up api postgres
+```
+
+```bash
+# Terminal 2, from the repo root: local frontend with hot reload.
+cd apps/web
+NEXT_PUBLIC_API_URL=http://localhost:8080/api pnpm dev
+```
+
+Compose service names are `api` and `postgres`; there is no `backend` service. The web client defaults to `http://localhost:8000/api`, so set `NEXT_PUBLIC_API_URL=http://localhost:8080/api` whenever the API is running through Compose.
+
+Local URLs:
+
+- API base: [localhost:8080/api](http://localhost:8080/api)
+- API health: [localhost:8080/api/health](http://localhost:8080/api/health)
+- Web UI: [localhost:3000](http://localhost:3000)
+- Postgres: `postgresql://opencouch:opencouch@localhost:5432/opencouch`
+
+If the web UI shows “Connection error. Check that the backend is running on the configured API URL,” stop `pnpm dev` and restart it with the Compose API URL:
+
+```bash
+cd apps/web
+NEXT_PUBLIC_API_URL=http://localhost:8080/api pnpm dev
+```
+
+Optionally persist that setting for local Compose testing:
+
+```bash
+printf 'NEXT_PUBLIC_API_URL=http://localhost:8080/api\n' > apps/web/.env.local
+```
+
 #### Compose stack
 
 `compose.yml` starts the local Postgres + FastAPI backend stack by default. The Next.js web container is still available for full-stack smoke testing, but it is profile-gated because day-to-day frontend work is faster with local `pnpm dev` hot reload.
@@ -166,9 +203,7 @@ docker compose -f compose.yml logs -f api
 docker compose -f compose.yml down
 ```
 
-Local URLs: API at [localhost:8080](http://localhost:8080), health at [localhost:8080/api/health](http://localhost:8080/api/health), and Postgres at `postgresql://opencouch:opencouch@localhost:5432/opencouch`. When the `web` profile is enabled, the web app is at [localhost:3000](http://localhost:3000).
-
-Compose reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local`. Inside Compose, the API uses the in-network Postgres URL automatically and reuses it for all Postgres-backed stores. Compose exposes the API on `8080`; manual backend development usually uses `8000`, which matches the web client's default `NEXT_PUBLIC_API_URL` when not running Compose. To run local Next.js against the Compose API, use `NEXT_PUBLIC_API_URL=http://localhost:8080/api pnpm --dir apps/web dev`.
+Compose reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local`. Inside Compose, the API uses the in-network Postgres URL automatically and reuses it for all Postgres-backed stores. Compose exposes the API on `8080`; manual backend development usually uses `8000`.
 
 #### Text TUI
 
