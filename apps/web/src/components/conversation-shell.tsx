@@ -587,6 +587,7 @@ export function ConversationShell({
       {/* Inner column: top bar + content + composer (pages provide); on
           mobile we add the bottom tab bar via children layout. */}
       <div
+        className="oc-surface-noise"
         style={{
           flex: 1,
           minWidth: 0,

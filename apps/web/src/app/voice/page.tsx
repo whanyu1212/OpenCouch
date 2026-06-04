@@ -811,35 +811,37 @@ export default function VoicePage() {
             <div className="mt-6 flex items-center gap-3">
               <button
                 type="button"
-                className="oc-voice-cta oc-voice-cta--danger"
+                className="oc-voice-cta oc-voice-cta--secondary text-oc-red"
                 onClick={() => void disconnect()}
               >
                 End session
               </button>
             </div>
 
-            <div className="oc-voice-meta" style={{ marginTop: 18 }}>
-              {latestActivity && (
-                <>
-                  <span>
-                    {latestActivity.label} <b>{latestActivity.status}</b>
-                  </span>
-                  <span className="sep">·</span>
-                </>
-              )}
-              <span>
-                mic <b>{voiceCanAcceptSpeech ? "open" : "muted"}</b>
-              </span>
-              <span className="sep">·</span>
-              <span>
-                voice{" "}
-                <b>
-                  {assistantVoiceLabel(
-                    voiceSessionInfo?.assistantVoice || assistantVoiceSelected
-                  )}
-                </b>
-              </span>
-            </div>
+            {ENABLE_VOICE_DEBUG && (
+              <div className="oc-voice-meta" style={{ marginTop: 18 }}>
+                {latestActivity && (
+                  <>
+                    <span>
+                      {latestActivity.label} <b>{latestActivity.status}</b>
+                    </span>
+                    <span className="sep">·</span>
+                  </>
+                )}
+                <span>
+                  mic <b>{voiceCanAcceptSpeech ? "open" : "muted"}</b>
+                </span>
+                <span className="sep">·</span>
+                <span>
+                  voice{" "}
+                  <b>
+                    {assistantVoiceLabel(
+                      voiceSessionInfo?.assistantVoice || assistantVoiceSelected
+                    )}
+                  </b>
+                </span>
+              </div>
+            )}
           </>
         )}
       </div>
