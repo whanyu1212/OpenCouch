@@ -108,6 +108,14 @@ export async function connectRealtimeVoiceSession(
     options.onStatus?.(status);
   };
 
+  const markTransportClosed = () => {
+    options.onAgentSpeaking?.(false);
+    options.onReadyToSpeak?.(false);
+    if (!disconnected) {
+      setStatus("disconnected");
+    }
+  };
+
   const disconnect = async ({
     finalize = true,
   }: { finalize?: boolean } = {}): Promise<void> => {
@@ -156,8 +164,7 @@ export async function connectRealtimeVoiceSession(
         peerConnection?.connectionState === "failed" ||
         peerConnection?.connectionState === "closed"
       ) {
-        options.onAgentSpeaking?.(false);
-        options.onReadyToSpeak?.(false);
+        markTransportClosed();
       }
     };
 
@@ -176,10 +183,7 @@ export async function connectRealtimeVoiceSession(
     dataChannel.addEventListener("error", () => {
       options.onError?.(new Error("Realtime data channel error."));
     });
-    dataChannel.addEventListener("close", () => {
-      options.onAgentSpeaking?.(false);
-      options.onReadyToSpeak?.(false);
-    });
+    dataChannel.addEventListener("close", markTransportClosed);
 
     setStatus("connecting");
     const offer = await peerConnection.createOffer();
