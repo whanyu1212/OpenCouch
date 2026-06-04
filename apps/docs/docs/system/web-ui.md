@@ -67,7 +67,7 @@ The stream protocol is:
 {"type": "status", "stage": "loading memory", "detail": ""}
 {"type": "chunk", "text": "That sounds heavy."}
 {"type": "done", "response": {"response_text": "..."}}
-{"type": "error", "code": "turn_failed", "message": "The turn could not be completed."}
+{"type": "error", "code": "agent_turn_failed", "message": "The turn could not be completed."}
 ```
 
 Malformed stream frames are handled as protocol errors so the UI can
