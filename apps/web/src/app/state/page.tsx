@@ -142,6 +142,15 @@ export default function StateInspectorPage() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
+        <div className="px-6 pt-4">
+          <div className="px-4 py-3 rounded-xl border border-oc-border bg-oc-warm-50 text-[13px] text-oc-text-secondary">
+            <span className="font-semibold text-oc-text-primary">Developer/debug view.</span>{" "}
+            This page shows raw runtime state from <code>/api/threads/&lbrace;thread_id&rbrace;/state</code>,
+            including transcript, safety, memory, routing, and diagnostics fields. Use the typed chat,
+            history, memory, and voice APIs for product workflows.
+          </div>
+        </div>
+
         {error && !state && (
           <div className="px-6 py-5">
             <div className="px-4 py-3 bg-oc-warm-100 border border-oc-border rounded-xl text-[15px] text-oc-text-secondary">

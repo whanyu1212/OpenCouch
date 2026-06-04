@@ -28,11 +28,17 @@ pnpm dev
 ```
 
 Open `http://localhost:3000`. By default the frontend talks to
-`http://localhost:8000`. Override this with `NEXT_PUBLIC_API_URL`
+`http://localhost:8000/api`. Override this with `NEXT_PUBLIC_API_URL`
 in `apps/web/.env.local` when the API lives elsewhere:
 
 ```env
-NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_API_URL=http://localhost:8000/api
+```
+
+When running a local web process against the Compose API, use:
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8080/api
 ```
 
 ## Runtime shape
@@ -41,10 +47,11 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 |---|---|
 | Text chat | WebSocket streaming through `/api/chat/stream`, with REST `/api/chat` available for synchronous turns |
 | Session state | Zustand store persisted to local storage for setup choices such as user id, thread id, memory mode, model tier, and assistant voice |
-| Thread history | REST calls to `/api/threads`, `/api/threads/{thread_id}/history`, and `/api/threads/{thread_id}/state` |
+| Thread history | REST calls to `/api/threads`, `/api/threads/{thread_id}/history`, and `/api/threads/{thread_id}/session-status` |
 | Memory controls | REST calls under `/api/memory/*` for status, recall toggle, list, and deletes |
 | Voice | OpenAI Realtime WebRTC through `/api/voice/realtime/*`, with app-owned tool calls, turn recording, and session finalization |
-| Error handling | Route `error.tsx`, `global-error.tsx`, loading fallback, not-found fallback, and visible REST error notices |
+| Debug state | `/state` calls `/api/threads/{thread_id}/state` for raw developer inspection only |
+| Error handling | Route `error.tsx`, `global-error.tsx`, loading fallback, not-found fallback, structured API errors, and visible REST error notices |
 
 ## Streaming lifecycle
 
@@ -60,10 +67,21 @@ The stream protocol is:
 {"type": "status", "stage": "loading memory", "detail": ""}
 {"type": "chunk", "text": "That sounds heavy."}
 {"type": "done", "response": {"response_text": "..."}}
+{"type": "error", "code": "turn_failed", "message": "The turn could not be completed."}
 ```
 
 Malformed stream frames are handled as protocol errors so the UI can
-surface a retryable failure instead of crashing the page.
+surface a retryable failure instead of crashing the page. Backend
+`error` events are terminal and are surfaced as chat notices.
+
+## Debug boundary
+
+The `/state` route is a developer State Inspector. It displays raw
+runtime state from `/api/threads/{thread_id}/state`, including transcript,
+safety, memory, routing, and diagnostics fields. This helps local
+dogfooding and debugging, but it is not the product API surface. Normal
+UI flows should consume typed chat, history, session-status, memory, and
+voice endpoints.
 
 ## Voice boundary
 
