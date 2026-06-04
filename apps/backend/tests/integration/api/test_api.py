@@ -706,7 +706,16 @@ class TestThreads:
         assert resp.status_code == 200
         assert resp.json() == {"has_active_session": True}
 
-        await client.post("/api/threads/status-thread/end")
+        end_resp = await client.post("/api/threads/status-thread/end")
+        assert end_resp.status_code == 200
+        end_data = end_resp.json()
+        assert end_data["finalized"] in (True, False)
+        assert "summary" in end_data
+        assert "detail" in end_data
+        assert "themes" in end_data
+        assert "open_loops" in end_data
+        assert "resolved_threads" in end_data
+
         resp = await client.get("/api/threads/status-thread/session-status")
         assert resp.status_code == 200
         assert resp.json() == {"has_active_session": False}
@@ -797,10 +806,24 @@ class TestThreads:
 
         assert resp.status_code == 200
         assert resp.json() == {
+            "finalized": False,
             "summary": None,
             "detail": "Incognito session ended without durable finalization.",
+            "themes": [],
+            "mood_opened": None,
+            "mood_closed": None,
+            "turn_count": None,
+            "open_loops": [],
+            "resolved_threads": [],
         }
         assert seen_modes == [ApiMemoryMode.INCOGNITO]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("limit", [0, 101])
+    async def test_list_threads_rejects_invalid_limit(self, client, limit: int) -> None:
+        resp = await client.get("/api/threads", params={"limit": limit})
+
+        assert resp.status_code == 422
 
     @pytest.mark.asyncio
     async def test_get_history_returns_messages(self, client) -> None:
@@ -908,12 +931,13 @@ class TestThreads:
             json={"feedback": "positive"},
         )
         assert resp.status_code == 200
-        # The response shape is unchanged — feedback write status is
-        # NOT surfaced. Summarization may return None (incognito / no
-        # LLM / thin session) which the handler converts to a plain
-        # dict; either shape is accepted.
         data = resp.json()
-        assert "summary" in data or "themes" in data
+        assert "finalized" in data
+        assert "summary" in data
+        assert "detail" in data
+        assert "themes" in data
+        assert "open_loops" in data
+        assert "resolved_threads" in data
 
         # Exactly one feedback record in the store.
         from agent.memory.hashing import hash_session_id
@@ -1251,12 +1275,12 @@ class TestMemory:
 
         assert recall.status_code == 409
         assert delete_fact.status_code == 409
-        assert recall.json()["detail"] == (
-            "Saved-memory controls are unavailable in incognito mode."
-        )
-        assert delete_fact.json()["detail"] == (
-            "Saved-memory controls are unavailable in incognito mode."
-        )
+        expected_detail = {
+            "code": "incognito_memory_mutation_unavailable",
+            "message": "Saved-memory controls are unavailable in incognito mode.",
+        }
+        assert recall.json()["detail"] == expected_detail
+        assert delete_fact.json()["detail"] == expected_detail
 
     @pytest.mark.asyncio
     async def test_update_memory_recall_toggles_owner_state(
@@ -1286,6 +1310,22 @@ class TestMemory:
         )
         assert status.status_code == 200
         assert status.json()["proactive_recall_enabled"] is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/api/memory/facts/0",
+            "/api/memory/sessions/0",
+            "/api/memory/rules/0",
+        ],
+    )
+    async def test_delete_memory_rejects_non_positive_index(
+        self, client, path: str
+    ) -> None:
+        resp = await client.delete(path, params={"thread_id": "invalid-index"})
+
+        assert resp.status_code == 422
 
     @pytest.mark.asyncio
     async def test_delete_fact_404_when_empty(self, client) -> None:
@@ -1399,7 +1439,86 @@ class TestMemory:
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 1
-        assert data[0]["key"] == "fact-active"
+        assert data[0] == {
+            "index": 1,
+            "key": "fact-active",
+            "category": "relationship",
+            "predicate": "KNOWS",
+            "subject": "user",
+            "object": "Sarah",
+            "evidence_quote": "My sister Sarah moved nearby.",
+            "confidence": "high",
+            "created_at": "2026-01-01T00:00:00Z",
+        }
+
+    @pytest.mark.asyncio
+    async def test_list_sessions_returns_typed_rows(self, client, runtime) -> None:
+        await runtime.memory_store.aput(
+            ("session-list-owner", "episodic"),
+            "session-1",
+            {
+                "session_id": "session-list-owner",
+                "summary": "Talked through a stressful week.",
+                "primary_themes": ["stress", "work"],
+                "mood_arc": {"opened": "tense", "closed": "calmer"},
+                "turn_count": 4,
+                "ended_at": "2026-01-02T00:00:00Z",
+            },
+        )
+
+        resp = await client.get(
+            "/api/memory/sessions",
+            params={"thread_id": "session-list-owner"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == [
+            {
+                "index": 1,
+                "key": "session-1",
+                "session_id": "session-list-owner",
+                "summary": "Talked through a stressful week.",
+                "themes": ["stress", "work"],
+                "mood_opened": "tense",
+                "mood_closed": "calmer",
+                "turn_count": 4,
+                "ended_at": "2026-01-02T00:00:00Z",
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_list_rules_returns_typed_rows(self, client, runtime) -> None:
+        await aput_procedural_profile(
+            runtime.memory_store,
+            user_id="rule-list-owner",
+            profile=ProceduralProfile(
+                rules=[
+                    ProceduralRule(
+                        rule="Keep replies concise.",
+                        evidence=["Please be brief."],
+                        confidence="high",
+                        added_at="2026-01-03T00:00:00Z",
+                        source="explicit_user",
+                    )
+                ]
+            ),
+        )
+
+        resp = await client.get(
+            "/api/memory/rules",
+            params={"thread_id": "rule-list-owner"},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == [
+            {
+                "index": 1,
+                "rule": "Keep replies concise.",
+                "evidence": ["Please be brief."],
+                "confidence": "high",
+                "added_at": "2026-01-03T00:00:00Z",
+            }
+        ]
 
     @pytest.mark.asyncio
     async def test_delete_fact_indexes_only_active_semantic_records(

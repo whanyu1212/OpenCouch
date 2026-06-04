@@ -14,8 +14,8 @@ from api.dependencies import get_llm_client, get_runtime_selection
 from api.models import (
     ApiMemoryMode,
     EndSessionRequest,
+    EndSessionResponse,
     MessageResponse,
-    SessionArcResponse,
     SessionFeedbackRequest,
     SessionFeedbackResponse,
     ThreadSessionStatusResponse,
@@ -30,7 +30,7 @@ router = APIRouter(prefix="/threads", tags=["threads"])
 
 @router.get("", response_model=list[ThreadSummaryResponse])
 async def list_threads(
-    limit: int = 20,
+    limit: int = Query(default=20, ge=1, le=100),
     memory_mode: ApiMemoryMode | None = Query(default=None),
 ) -> list[ThreadSummaryResponse]:
     """List persisted threads, most recent first.
@@ -145,12 +145,12 @@ async def get_thread_session_status(
     )
 
 
-@router.post("/{thread_id}/end")
+@router.post("/{thread_id}/end", response_model=EndSessionResponse)
 async def end_session(
     thread_id: str,
     body: EndSessionRequest = Body(default_factory=EndSessionRequest),
     llm_client: BaseLLMClient | None = Depends(get_llm_client),
-) -> SessionArcResponse | dict:
+) -> EndSessionResponse:
     """End the session for a thread and produce an episodic summary.
 
     Triggers the session summarizer which reads the full transcript
@@ -167,9 +167,9 @@ async def end_session(
     and summarization runs unchanged. Feedback write failures are
     best-effort and never block summarization.
 
-    The response shape is unchanged from prior versions: feedback
-    write status is not surfaced. Feedback persistence is orthogonal
-    to summarization.
+    The response always includes a stable finalization envelope.
+    Feedback write status is not surfaced. Feedback persistence is
+    orthogonal to summarization.
 
     Args:
         thread_id: Thread identifier to end.
@@ -191,17 +191,20 @@ async def end_session(
     )
 
     if not result.finalized:
-        return {
-            "summary": None,
-            "detail": result.detail,
-        }
+        return EndSessionResponse(
+            finalized=False,
+            summary=None,
+            detail=result.detail,
+        )
 
     assert result.summary is not None
     assert result.mood_opened is not None
     assert result.mood_closed is not None
     assert result.turn_count is not None
-    return SessionArcResponse(
+    return EndSessionResponse(
+        finalized=True,
         summary=result.summary,
+        detail=result.detail,
         themes=result.themes,
         mood_opened=result.mood_opened,
         mood_closed=result.mood_closed,
