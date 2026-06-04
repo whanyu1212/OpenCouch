@@ -455,11 +455,11 @@ export default function VoicePage() {
     if (!voiceConnected) {
       return "connect when you're ready";
     }
-    if (!voiceReadyToSpeak) {
-      return "please wait - the agent is warming up";
-    }
     if (voiceAgentSpeaking) {
       return "agent speaking...";
+    }
+    if (realtimeVoice.status === "connected") {
+      return "connected - speak naturally";
     }
     return "ready - speak when you want";
   })();
@@ -479,13 +479,6 @@ export default function VoicePage() {
       return {
         title: "Connecting voice",
         detail: "Realtime audio is setting up. The mic opens once the session is ready.",
-      };
-    }
-    if (!voiceReadyToSpeak) {
-      return {
-        title: "Hold on before speaking",
-        detail:
-          "The session is still warming up. Your mic is connected, but the agent is not ready yet.",
       };
     }
     return null;
