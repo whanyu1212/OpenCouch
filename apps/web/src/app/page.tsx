@@ -532,7 +532,7 @@ export default function TextChatPage() {
             </div>
 
             <div className="oc-prompts-grid">
-              {PROMPT_CARDS.slice(0, 4).map((card) => (
+              {PROMPT_CARDS.map((card) => (
                 <button
                   key={card.id}
                   type="button"
