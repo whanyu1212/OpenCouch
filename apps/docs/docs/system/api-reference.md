@@ -33,10 +33,32 @@ long-term memory.
 | Route | Method | Purpose |
 |---|---|---|
 | `/api/threads` | `GET` | List known text threads |
-| `/api/threads/{thread_id}/state` | `GET` | Return raw runtime state for a thread |
+| `/api/threads/{thread_id}/state` | `GET` | **Debug/internal.** Return raw implementation state for a thread |
 | `/api/threads/{thread_id}/history` | `GET` | Return user/assistant transcript turns |
 | `/api/threads/{thread_id}/session-status` | `GET` | Return active-session tracking status |
 | `/api/threads/{thread_id}/end` | `POST` | Finalize a text session and persist session-end memory |
+
+:::caution Debug state endpoint
+`/api/threads/{thread_id}/state` powers the local State Inspector and mirrors the TUI's `/debug state` command. It returns raw runtime implementation state, including transcript, memory, safety, routing, and diagnostics fields. It is useful for development and dogfooding, but product clients should use typed endpoints such as `/history`, `/session-status`, `/memory/*`, and `/chat/stream`.
+:::
+
+Text session finalization returns the same stable envelope shape as voice finalization:
+
+```json
+{
+  "finalized": true,
+  "summary": "Session summary text",
+  "detail": "Session finalized.",
+  "themes": ["stress", "sleep"],
+  "mood_opened": "tense",
+  "mood_closed": "calmer",
+  "turn_count": 4,
+  "open_loops": [],
+  "resolved_threads": []
+}
+```
+
+When no durable summary is produced, `finalized` is `false`, `summary` is `null`, list fields are empty, and `detail` explains why.
 
 ## Memory
 
@@ -50,6 +72,19 @@ long-term memory.
 | `/api/memory/facts/{index}` | `DELETE` | Delete one semantic fact by displayed index |
 | `/api/memory/sessions/{index}` | `DELETE` | Delete one episodic arc by displayed index |
 | `/api/memory/rules/{index}` | `DELETE` | Delete one procedural rule by displayed index |
+
+Memory endpoints are scoped by `thread_id`, optional `user_id`, and optional `memory_mode`. In incognito mode, user-memory reads return empty counts/lists for semantic facts, episodic sessions, and procedural rules. Saved-memory mutation endpoints reject with `409` and a structured detail payload:
+
+```json
+{
+  "detail": {
+    "code": "incognito_memory_mutation_unavailable",
+    "message": "Saved-memory controls are unavailable in incognito mode."
+  }
+}
+```
+
+Audit-oriented counts such as crisis logs and session feedback may still be non-zero because those stores are always-on and privacy-scrubbed in incognito mode.
 
 ## Voice
 
@@ -123,9 +158,11 @@ End-session request:
 }
 ```
 
+Voice end-session responses use the same `finalized`, `summary`, `detail`, and session-arc envelope documented for text sessions.
+
 ## Client contracts
 
-The response schema exposes the user-visible text plus routing
+The text chat response schema exposes the user-visible text plus routing
 metadata:
 
 | Field | Meaning |
@@ -136,3 +173,14 @@ metadata:
 | `therapeutic_approach` | Therapeutic approach overlay when applicable |
 | `crisis` | Normalized crisis assessment |
 | `diagnostics` | Per-turn timings and routing metadata |
+
+The WebSocket stream emits status, chunk, done, and terminal error events:
+
+```json
+{"type": "status", "stage": "loading memory", "detail": ""}
+{"type": "chunk", "text": "That sounds heavy."}
+{"type": "done", "response": {"response_text": "..."}}
+{"type": "error", "code": "agent_turn_failed", "message": "The turn could not be completed."}
+```
+
+Frontend clients should treat `error` as terminal and display `message` to the user.

@@ -63,9 +63,12 @@ async def get_thread_state(
 ) -> dict:
     """Return the raw persisted runtime state for a thread.
 
-    This is the API equivalent of the CLI's ``/debug state``
-    command. Returns the full state dict including diagnostics,
-    routing, memory, crisis assessment, and transcript.
+    This is a local developer/debug endpoint equivalent to the TUI's
+    ``/debug state`` command. It returns implementation-level state,
+    including diagnostics, routing, memory, crisis assessment, and
+    transcript. Product clients should prefer the typed chat, history,
+    session-status, and memory endpoints instead of treating this raw
+    payload as a stable public contract.
 
     Returns 404 if the thread has no persisted state.
 

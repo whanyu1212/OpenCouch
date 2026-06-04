@@ -13,9 +13,10 @@ import cliScreenshot from '@site/static/img/cli-example.png';
 - Python 3.11+ (3.12 recommended)
 - [uv](https://docs.astral.sh/uv/) for backend dependency management
 - pnpm for the web and docs apps
-- An OpenAI API key for LLM-backed runs
+- Docker for the full Compose stack and local Postgres-backed persistence
+- An OpenAI API key for LLM-backed runs and OpenAI Realtime voice
 
-Deterministic CLI mode works without external model keys.
+Deterministic TUI sessions and many local checks work without external model keys.
 
 ## Install
 
@@ -112,14 +113,19 @@ pnpm dev`}
 </TerminalWindow>
 
 Open `http://localhost:3000`. The web app talks to
-`http://localhost:8000` by default. Set `NEXT_PUBLIC_API_URL` in
+`http://localhost:8000/api` by default. Set `NEXT_PUBLIC_API_URL` in
 `apps/web/.env.local` if the API runs somewhere else.
 
 :::info Compose stack uses a different API port
 If you launch the full stack with `docker compose up`, the API is
-exposed on port `8080` instead of `8000`. The Compose web service is
-already wired to the correct in-network URL, so this only matters when
-you're running the API manually alongside Compose.
+exposed on `http://localhost:8080/api` instead of
+`http://localhost:8000/api`. The Compose web service is already wired to
+the correct in-network URL. If you run `pnpm dev` locally while using
+the Compose API, set:
+
+```env
+NEXT_PUBLIC_API_URL=http://localhost:8080/api
+```
 :::
 
 :::warning Web UI is temporarily behind the backend
@@ -186,7 +192,7 @@ Once inside the TUI:
 | `/response-tier <fast\|quality>` | Switch response quality/latency tradeoff |
 | `/verbosity <compact\|verbose>` | Switch turn observability detail |
 | `/trace <on\|off\|once>` | Show or hide routing trace overlay |
-| `/debug state` | Raw runtime state as JSON |
+| `/debug state` | Raw developer/debug runtime state as JSON |
 
 ### Aliases
 
