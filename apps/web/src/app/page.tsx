@@ -533,18 +533,13 @@ export default function TextChatPage() {
 
             <div className="oc-prompts-grid">
               {PROMPT_CARDS.map((card) => (
-                <button
-                  key={card.id}
-                  type="button"
-                  className="oc-prompt-card"
-                  onClick={() => sendMessage(card.prompt)}
-                >
+                <article key={card.id} className="oc-prompt-card">
                   <span className="oc-prompt-icon">{card.icon}</span>
                   <span className="oc-prompt-body">
                     <span className="oc-prompt-title">{card.label}</span>
                     <span className="oc-prompt-desc">{card.description}</span>
                   </span>
-                </button>
+                </article>
               ))}
             </div>
 
