@@ -43,6 +43,7 @@ export default function StateInspectorPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const fetchState = useCallback(async () => {
     setLoading(true);
@@ -172,9 +173,25 @@ export default function StateInspectorPage() {
               <span>keys: <span className="text-oc-text-secondary">{Object.keys(state).length}</span></span>
             </div>
 
+            <div className="px-6 py-3 border-b border-oc-line-2 sticky top-0 bg-oc-bg/95 backdrop-blur z-10">
+              <div className="relative">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="w-4 h-4 text-oc-text-dim absolute left-3 top-1/2 -translate-y-1/2">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="M21 21l-4.3-4.3" />
+                </svg>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search keys..."
+                  className="w-full bg-white border border-oc-border rounded-lg pl-9 pr-3 py-2 text-[13px] font-mono outline-none focus:border-oc-teal-400 focus:ring-1 focus:ring-oc-teal-400/20"
+                />
+              </div>
+            </div>
+
             {/* State sections */}
             <div className="px-6 py-4 space-y-2">
-              {STATE_SECTIONS.map(({ key, label, desc, icon }) => {
+              {STATE_SECTIONS.filter(s => !searchQuery || s.key.toLowerCase().includes(searchQuery.toLowerCase()) || s.label.toLowerCase().includes(searchQuery.toLowerCase())).map(({ key, label, desc, icon }) => {
                 const value = state[key];
                 if (value === undefined) return null;
                 return (
@@ -193,6 +210,7 @@ export default function StateInspectorPage() {
               {Object.keys(state)
                 .filter(
                   (k) =>
+                    (!searchQuery || k.toLowerCase().includes(searchQuery.toLowerCase())) &&
                     !STATE_SECTIONS.some((s) => s.key === k) &&
                     ![
                       "message",

@@ -626,21 +626,23 @@ export default function VoicePage() {
       </header>
       </div>
 
-      {/* Voice stage — fills remaining height; pages use this whether
-          connected or not, swapping content + CTA. */}
-      <div className="oc-voice-stage">
-        <div
-          className={`oc-voice-eyebrow oc-voice-eyebrow--${eyebrowState} ${
-            eyebrowState !== "idle" ? "is-ready" : ""
-          }`}
-        >
-          <span className="dot" />
-          {eyebrowLabel}
-        </div>
+      {/* Main Content Area: split layout on desktop */}
+      <div className="flex flex-col md:flex-row flex-1 min-h-0">
 
-        <VoiceOrb size={280} active={voiceAgentSpeaking} waiting={voiceIsWarming} />
+        {/* Voice stage — left side on desktop */}
+        <div className="oc-voice-stage md:w-3/5 md:border-r border-oc-line-2 flex-shrink-0 md:flex-shrink">
+          <div
+            className={`oc-voice-eyebrow oc-voice-eyebrow--${eyebrowState} ${
+              eyebrowState !== "idle" ? "is-ready" : ""
+            }`}
+          >
+            <span className="dot" />
+            {eyebrowLabel}
+          </div>
 
-        {!voiceConnected ? (
+          <VoiceOrb size={280} active={voiceAgentSpeaking} waiting={voiceIsWarming} />
+
+          {!voiceConnected ? (
           <>
             <h1 className="oc-voice-title">
               Take a breath. <em>Begin when ready.</em>
@@ -844,7 +846,10 @@ export default function VoicePage() {
             )}
           </>
         )}
-      </div>
+        </div>
+
+        {/* Right side on desktop: Transcript & notices */}
+        <div className="flex flex-col flex-1 min-h-0 md:w-2/5 bg-white/40 backdrop-blur-sm">
 
       {/* Memory consolidation note — surfaced inline, not as a card. */}
       {showMemoryConsolidationNote && (
@@ -882,11 +887,10 @@ export default function VoicePage() {
         />
       )}
 
-      {/* Transcript scroller — shown only when there's content; also kept on
-          desktop when connected so the user can review what was said. */}
-      {voiceTranscripts.length > 0 && (
-        <div className="border-t border-oc-line-2 bg-white/40 backdrop-blur-sm">
-          <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-oc-line-2 md:px-6">
+      {/* Transcript scroller */}
+      {voiceTranscripts.length > 0 ? (
+        <div className="flex flex-col flex-1 min-h-0 border-t md:border-t-0 border-oc-line-2">
+          <div className="flex items-center justify-between gap-3 px-4 py-2 border-b border-oc-line-2 md:px-6 shrink-0 bg-oc-bg-card/50">
             <span className="text-[11px] font-mono font-medium uppercase tracking-widest text-oc-text-dim">
               Transcript
             </span>
@@ -896,7 +900,7 @@ export default function VoicePage() {
           </div>
           <div
             ref={transcriptScrollRef}
-            className="max-h-44 overflow-y-auto px-4 py-2.5 space-y-2 md:px-6"
+            className="flex-1 overflow-y-auto px-4 py-4 space-y-3 md:px-6"
           >
             {voiceTranscripts.map((t, i) => (
               <div
@@ -918,6 +922,10 @@ export default function VoicePage() {
               </div>
             ))}
           </div>
+        </div>
+      ) : (
+        <div className="hidden md:flex flex-1 items-center justify-center text-oc-text-dim font-mono text-[12px] p-6 text-center">
+          <p>Transcript will appear here once you connect and speak.</p>
         </div>
       )}
 
@@ -1017,7 +1025,8 @@ export default function VoicePage() {
           </p>
         </details>
       )}
-
+        </div>
+      </div>
     </>
   );
 }

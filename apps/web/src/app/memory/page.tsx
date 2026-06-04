@@ -305,29 +305,56 @@ function MetaRow({ label, value, mono, accent }: { label: string; value: string;
 }
 
 function FactsTab({ facts, onDelete }: { facts: MemoryFact[]; onDelete: (index: number) => Promise<void> }) {
+  const [filter, setFilter] = useState<string | null>(null);
+
   if (facts.length === 0) return <Empty label="No semantic facts stored yet." />;
+
+  const categories = Array.from(new Set(facts.map(f => f.category))).filter(Boolean);
+  const filteredFacts = filter ? facts.filter(f => f.category === filter) : facts;
+
   return (
-    <div className="space-y-3 max-w-2xl">
-      {facts.map((f, i) => (
-        <div key={i} className="group bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1 min-w-0">
-              <p className="text-[15px] text-oc-text leading-relaxed italic">
-                &ldquo;{String(f.evidence_quote)}&rdquo;
-              </p>
-              <div className="flex flex-wrap gap-2 mt-3">
-                <Tag>{f.category}</Tag>
-                <Tag>{f.subject} → {f.predicate} → {f.object}</Tag>
-                <Tag muted>{f.confidence}</Tag>
+    <div className="space-y-4 max-w-2xl">
+      {categories.length > 1 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          <button
+            onClick={() => setFilter(null)}
+            className={`px-3 py-1.5 rounded-full text-[12px] font-medium transition-colors ${!filter ? "bg-oc-ink-2 text-white" : "bg-oc-warm-100 text-oc-text-secondary hover:bg-oc-warm-200"}`}
+          >
+            All
+          </button>
+          {categories.map(cat => (
+            <button
+              key={cat}
+              onClick={() => setFilter(cat)}
+              className={`px-3 py-1.5 rounded-full text-[12px] font-medium transition-colors ${filter === cat ? "bg-oc-ink-2 text-white" : "bg-oc-warm-100 text-oc-text-secondary hover:bg-oc-warm-200"}`}
+            >
+              {cat.replace(/_/g, " ")}
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="space-y-3">
+        {filteredFacts.map((f, i) => (
+          <div key={i} className="group bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <p className="text-[15px] text-oc-text leading-relaxed italic">
+                  &ldquo;{String(f.evidence_quote)}&rdquo;
+                </p>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <Tag>{f.category}</Tag>
+                  <Tag>{f.subject} → {f.predicate} → {f.object}</Tag>
+                  <Tag muted>{f.confidence}</Tag>
+                </div>
+              </div>
+              <div className="flex flex-col items-end gap-2 shrink-0">
+                <DeleteButton onDelete={() => onDelete(f.index)} label="fact" />
+                <span className="text-[11px] font-mono text-oc-text-dim mt-auto pt-2">#{f.index}</span>
               </div>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-[11px] font-mono text-oc-text-dim">#{f.index}</span>
-              <DeleteButton onDelete={() => onDelete(f.index)} label="fact" />
-            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
@@ -335,22 +362,39 @@ function FactsTab({ facts, onDelete }: { facts: MemoryFact[]; onDelete: (index: 
 function SessionsTab({ sessions, onDelete }: { sessions: MemorySession[]; onDelete: (index: number) => Promise<void> }) {
   if (sessions.length === 0) return <Empty label="No episodic session arcs yet." />;
   return (
-    <div className="space-y-3 max-w-2xl">
+    <div className="space-y-4 max-w-2xl relative">
+      {/* Add a subtle timeline vertical line on the left */}
+      <div className="absolute left-6 top-4 bottom-4 w-px bg-oc-line-2 z-0 hidden sm:block" />
       {sessions.map((s, i) => (
-        <div key={i} className="group bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1 min-w-0">
-              <p className="text-[15px] text-oc-text leading-relaxed">{s.summary}</p>
-              <div className="flex flex-wrap gap-2 mt-3">
-                {s.themes.map((t) => (
-                  <Tag key={t}>{t}</Tag>
-                ))}
-                <Tag muted>{s.mood_opened} → {s.mood_closed}</Tag>
-                <Tag muted>{s.turn_count} turns</Tag>
-                <Tag muted>{s.ended_at.slice(0, 10)}</Tag>
+        <div key={i} className="group relative z-10 flex gap-4">
+          <div className="hidden sm:flex flex-col items-center mt-2 shrink-0 w-12">
+            <div className="w-3 h-3 rounded-full bg-oc-warm-200 border-2 border-white shadow-sm" />
+          </div>
+          <div className="flex-1 bg-white border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[12px] font-mono font-medium text-oc-text-secondary">
+                    {s.ended_at.slice(0, 10)}
+                  </span>
+                  <span className="text-[12px] text-oc-text-dim px-2 py-0.5 rounded-full bg-oc-warm-50 border border-oc-warm-200">
+                    {s.turn_count} turns
+                  </span>
+                </div>
+                <p className="text-[15px] text-oc-ink-2 leading-relaxed">{s.summary}</p>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-gradient-to-r from-oc-warm-50 to-oc-teal-50 border border-oc-line-2 rounded-md text-[11px] font-mono text-oc-text-secondary">
+                    <span>{s.mood_opened}</span>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-50"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    <span>{s.mood_closed}</span>
+                  </div>
+                  {s.themes.map((t) => (
+                    <Tag key={t} muted>{t}</Tag>
+                  ))}
+                </div>
               </div>
+              <DeleteButton onDelete={() => onDelete(s.index)} label="session" />
             </div>
-            <DeleteButton onDelete={() => onDelete(s.index)} label="session" />
           </div>
         </div>
       ))}
@@ -361,23 +405,37 @@ function SessionsTab({ sessions, onDelete }: { sessions: MemorySession[]; onDele
 function RulesTab({ rules, onDelete }: { rules: MemoryRule[]; onDelete: (index: number) => Promise<void> }) {
   if (rules.length === 0) return <Empty label="No procedural style rules yet." />;
   return (
-    <div className="space-y-3 max-w-2xl">
+    <div className="space-y-4 max-w-2xl">
       {rules.map((r, i) => (
-        <div key={i} className="group bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
+        <div key={i} className="group bg-oc-teal-50 border border-oc-teal-200/60 rounded-xl p-5 hover:border-oc-teal-300/80 transition-colors shadow-sm relative overflow-hidden">
+          {/* Subtle accent bar */}
+          <div className="absolute left-0 top-0 bottom-0 w-1 bg-oc-teal-400 opacity-50" />
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
-              <p className="text-[15px] text-oc-text">{r.rule}</p>
-              <div className="flex flex-wrap gap-2 mt-3">
-                <Tag muted>{r.confidence}</Tag>
-                {r.added_at ? <Tag muted>{r.added_at.slice(0, 10)}</Tag> : null}
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-oc-teal-700/70">
+                  Style Rule
+                </span>
+                <span className="text-oc-text-dim">·</span>
+                <span className="text-[11px] font-mono text-oc-teal-700/60">
+                  {r.confidence} confidence
+                </span>
               </div>
+              <p className="text-[15px] font-medium text-oc-teal-900 leading-relaxed mb-3">
+                {r.rule}
+              </p>
               {r.evidence.length > 0 ? (
-                <p className="text-[13px] text-oc-text-muted mt-2.5 italic font-mono leading-relaxed">
-                  evidence: {r.evidence.join("; ")}
-                </p>
+                <div className="mt-3 pt-3 border-t border-oc-teal-200/40">
+                  <p className="text-[12px] text-oc-teal-800/70 italic font-mono leading-relaxed">
+                    Based on: &quot;{r.evidence.join('&quot;, &quot;')}&quot;
+                  </p>
+                </div>
               ) : null}
             </div>
-            <DeleteButton onDelete={() => onDelete(r.index)} label="rule" />
+            <div className="flex flex-col items-end gap-2 shrink-0">
+              <DeleteButton onDelete={() => onDelete(r.index)} label="rule" />
+              {r.added_at ? <span className="text-[10px] font-mono text-oc-teal-700/50 mt-auto pt-2">{r.added_at.slice(0, 10)}</span> : null}
+            </div>
           </div>
         </div>
       ))}
