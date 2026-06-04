@@ -168,6 +168,7 @@ export function CommandActionsProvider({ children }: { children: ReactNode }) {
     memoryFacts.length,
     setMemoryFacts,
     threadId,
+    sessionMode,
     userId,
   ]);
 
@@ -255,7 +256,7 @@ export function CommandActionsProvider({ children }: { children: ReactNode }) {
       await updateMemoryRecall(enabled, threadId, userId || undefined, sessionMode);
       bumpMemoryRefreshVersion();
     },
-    [bumpMemoryRefreshVersion, isIncognito, threadId, userId]
+    [bumpMemoryRefreshVersion, isIncognito, sessionMode, threadId, userId]
   );
 
   const actions = useMemo<CommandAction[]>(
