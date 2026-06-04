@@ -58,6 +58,7 @@ services:
       - "8080:8080"
 
   web:
+    profiles: ["web"]
     build:
       context: .
       dockerfile: apps/web/Dockerfile

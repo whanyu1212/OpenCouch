@@ -15,31 +15,30 @@ FastAPI for the backend contract.
 
 ## Local development
 
-Run the backend and frontend in separate terminals:
+For day-to-day web work, run the Compose backend stack and the frontend dev server separately:
 
 ```bash
-# Terminal 1: FastAPI backend
-cd apps/backend
-.venv/bin/python -m uvicorn main:app --port 8000 --reload
+# Terminal 1: Postgres + FastAPI backend on http://localhost:8080/api
+./scripts/dev_api_stack.sh
 
-# Terminal 2: Next.js frontend
+# Terminal 2: Next.js frontend with hot reload
 cd apps/web
-pnpm dev
+NEXT_PUBLIC_API_URL=http://localhost:8080/api pnpm dev
 ```
 
-Open `http://localhost:3000`. By default the frontend talks to
-`http://localhost:8000/api`. Override this with `NEXT_PUBLIC_API_URL`
-in `apps/web/.env.local` when the API lives elsewhere:
+Open `http://localhost:3000`.
 
-```env
-NEXT_PUBLIC_API_URL=http://localhost:8000/api
+The web service is also available in Compose for production-built smoke
+tests:
+
+```bash
+./scripts/dev_full_stack.sh
+# or: docker compose --profile web up
 ```
 
-When running a local web process against the Compose API, use:
-
-```env
-NEXT_PUBLIC_API_URL=http://localhost:8080/api
-```
+If you run the backend manually on port `8000`, the frontend default
+`NEXT_PUBLIC_API_URL=http://localhost:8000/api` works without extra
+configuration.
 
 ## Runtime shape
 

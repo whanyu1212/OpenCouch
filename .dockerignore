@@ -1,5 +1,6 @@
 .git
 .github
+.cache
 .docusaurus
 .mypy_cache
 .pytest_cache
@@ -20,6 +21,9 @@ skills
 **/.coverage
 **/.store
 **/.next
+**/build
+**/dist
+**/coverage
 **/tsconfig.tsbuildinfo
 **/.env
 **/.env.local

@@ -100,31 +100,39 @@ script wrapper:
 
 ## Run the Web App
 
-Start the backend and frontend in separate terminals:
+For day-to-day web development, start Postgres + the backend API with Compose and run the frontend locally for hot reload:
 
-<TerminalWindow title="bash — API server">
-{`cd apps/backend
-.venv/bin/python -m uvicorn main:app --port 8000 --reload`}
+<TerminalWindow title="bash — backend stack">
+{`./scripts/dev_api_stack.sh`}
 </TerminalWindow>
 
-<TerminalWindow title="bash — web UI">
+<TerminalWindow title="bash — local web UI">
 {`cd apps/web
-pnpm dev`}
+NEXT_PUBLIC_API_URL=http://localhost:8080/api pnpm dev`}
 </TerminalWindow>
 
-Open `http://localhost:3000`. The web app talks to
-`http://localhost:8000/api` by default. Set `NEXT_PUBLIC_API_URL` in
-`apps/web/.env.local` if the API runs somewhere else.
+Open `http://localhost:3000`. The Compose API is exposed at
+`http://localhost:8080/api`.
 
-:::info Compose stack uses a different API port
-If you launch the full stack with `docker compose up`, the API is
-exposed on `http://localhost:8080/api` instead of
-`http://localhost:8000/api`. The Compose web service is already wired to
-the correct in-network URL. If you run `pnpm dev` locally while using
-the Compose API, set:
+:::tip Full-stack Compose smoke test
+The `web` service remains available in Compose but is profile-gated.
+Use it when you want a production-built web smoke test instead of
+Next.js hot reload:
 
-```env
-NEXT_PUBLIC_API_URL=http://localhost:8080/api
+```bash
+./scripts/dev_full_stack.sh
+# or: docker compose --profile web up
+```
+:::
+
+:::info Fully manual backend mode
+If you run the backend directly from `apps/backend`, use port `8000`.
+The web app defaults to `http://localhost:8000/api`, so this path does
+not need `NEXT_PUBLIC_API_URL`.
+
+```bash
+cd apps/backend
+.venv/bin/python -m uvicorn main:app --port 8000 --reload
 ```
 :::
 

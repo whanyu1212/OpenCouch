@@ -140,20 +140,24 @@ The most reliable dogfood path is `scripts/text_tui.sh`. Compose starts the brow
 
 #### Compose stack
 
-`compose.yml` is the one-command stack for Postgres, the FastAPI backend, and the Next.js web app. It builds the web container in production mode; use the manual web stack below when you want Next.js hot reload.
+`compose.yml` starts the local Postgres + FastAPI backend stack by default. The Next.js web container is still available for full-stack smoke testing, but it is profile-gated because day-to-day frontend work is faster with local `pnpm dev` hot reload.
 
 ```bash
-# Start the full stack with logs attached.
-docker compose -f compose.yml up
+# Start the daily backend stack: Postgres + API.
+./scripts/dev_api_stack.sh
+# Equivalent raw Compose command:
+docker compose -f compose.yml up postgres api
 
-# Start in the background.
-docker compose -f compose.yml up -d
+# Start the daily backend stack in the background.
+docker compose -f compose.yml up -d postgres api
 
-# Rebuild images, then start.
-docker compose -f compose.yml up --build
+# Start the full stack, including production-built web.
+./scripts/dev_full_stack.sh
+# Equivalent raw Compose command:
+docker compose -f compose.yml --profile web up
 
-# Rebuild only the web container after frontend edits.
-docker compose -f compose.yml up --build web
+# Rebuild images, then start the full stack.
+docker compose -f compose.yml --profile web up --build
 
 # Follow API logs after background start.
 docker compose -f compose.yml logs -f api
@@ -162,9 +166,9 @@ docker compose -f compose.yml logs -f api
 docker compose -f compose.yml down
 ```
 
-Local URLs: web at [localhost:3000](http://localhost:3000), API at [localhost:8080](http://localhost:8080), health at [localhost:8080/api/health](http://localhost:8080/api/health), and Postgres at `postgresql://opencouch:opencouch@localhost:5432/opencouch`.
+Local URLs: API at [localhost:8080](http://localhost:8080), health at [localhost:8080/api/health](http://localhost:8080/api/health), and Postgres at `postgresql://opencouch:opencouch@localhost:5432/opencouch`. When the `web` profile is enabled, the web app is at [localhost:3000](http://localhost:3000).
 
-Compose reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local`. Inside Compose, the API uses the in-network Postgres URL automatically and reuses it for all Postgres-backed stores. Compose exposes the API on `8080`; manual backend development usually uses `8000`, which matches the web client's default `NEXT_PUBLIC_API_URL` when not running Compose.
+Compose reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local`. Inside Compose, the API uses the in-network Postgres URL automatically and reuses it for all Postgres-backed stores. Compose exposes the API on `8080`; manual backend development usually uses `8000`, which matches the web client's default `NEXT_PUBLIC_API_URL` when not running Compose. To run local Next.js against the Compose API, use `NEXT_PUBLIC_API_URL=http://localhost:8080/api pnpm --dir apps/web dev`.
 
 #### Text TUI
 
@@ -187,7 +191,7 @@ The old text CLI/REPL entrypoints are deprecated; use the TUI commands above for
 
 #### Manual web stack
 
-Use this when you want each process in its own terminal. The manual stack uses port `8000` for the API because the web client defaults to `http://localhost:8000/api`.
+Use this when you want each process in its own terminal. The fully manual stack uses port `8000` for the API because the web client defaults to `http://localhost:8000/api`.
 
 ```bash
 # Terminal 1: API server.
@@ -195,6 +199,16 @@ cd apps/backend && uv run uvicorn main:app --port 8000 --reload
 
 # Terminal 2: frontend, from the repo root.
 pnpm install && pnpm --dir apps/web dev
+```
+
+For the recommended mixed workflow, run Postgres + API in Compose and run the frontend locally:
+
+```bash
+# Terminal 1: Postgres + API on http://localhost:8080/api.
+./scripts/dev_api_stack.sh
+
+# Terminal 2: local frontend with hot reload.
+NEXT_PUBLIC_API_URL=http://localhost:8080/api pnpm --dir apps/web dev
 ```
 
 #### Documentation site
