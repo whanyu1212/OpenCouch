@@ -10,7 +10,7 @@
 [![Next.js 16](https://img.shields.io/badge/Next.js-16-000000?style=flat-square&logo=nextdotjs&logoColor=white)](https://nextjs.org)
 [![OpenAI Agents SDK](https://img.shields.io/badge/OpenAI_Agents_SDK-runtime-10B981?style=flat-square)](apps/backend/agent/README.md)
 [![FastAPI](https://img.shields.io/badge/FastAPI-API-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Tests](https://img.shields.io/badge/tests-1120%20passing-success?style=flat-square)](apps/backend/tests)
+[![Tests](https://img.shields.io/badge/tests-1100%2B-success?style=flat-square)](apps/backend/tests)
 [![License: AGPL-3.0](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
 
 [**Documentation**](https://whanyu1212.github.io/OpenCouch/) · [**Changelog**](CHANGELOG.md) · [**Roadmap**](#roadmap) · [**Architecture**](#architecture)
@@ -22,7 +22,7 @@
 > OpenCouch is a supportive companion for self-reflection and wellness exercises — not a substitute for professional mental health care or medical advice. If you are in crisis, contact local emergency services or a regional crisis line.
 
 > [!NOTE]
-> **Project status — pre-beta, active rebuild.** The web UI is temporarily broken while the app shell catches up with the backend refactor; voice has been removed and will be rebuilt from scratch. For local dogfooding, run [`scripts/text_repl.sh`](scripts/text_repl.sh). Expect moving APIs and documentation that may lag the code.
+> **Project status — pre-beta, active stabilization.** The backend runtime, memory, safety, voice, and observability paths are actively evolving. Web chat, text TUI, and OpenAI Realtime voice backend modules exist, but product UX and documentation may lag the code during stabilization. For local text dogfooding, run [`scripts/text_tui.sh`](scripts/text_tui.sh).
 
 ---
 
@@ -52,7 +52,7 @@ OpenCouch is a chat companion for day-to-day emotional support, self-reflection,
 - **Structured coping flows** — 13 multi-turn guided exercises (grounding, breathing, thought work, values) with consent and step-state tracking, instead of free-form advice.
 - **Designed for ongoing use** — the product surface is intentionally narrow (emotional support and reflection), not a general task assistant.
 
-Voice support is intentionally absent during the current runtime cleanup and will be rebuilt from scratch after the text agent architecture settles. The project is pre-beta; a closed beta is planned.
+Voice support is being rebuilt on the OpenAI Realtime path. The backend has active Realtime voice runtime modules and test coverage, while the product voice UX remains pre-beta and dogfood-oriented. The project is pre-beta; a closed beta is planned.
 
 ## Key features
 
@@ -60,8 +60,8 @@ Voice support is intentionally absent during the current runtime cleanup and wil
 - **Safety routing on every turn.** Pre-response safety classification with a durable crisis-audit log; specialist crisis agent takes over when triggered.
 - **13 state-tracked guided exercises.** Multi-turn flows for grounding, box breathing, thought work, values reflection, and related coping skills — with consent and step-state preserved across turns.
 - **Postgres-first persistence.** Thread state, long-term memory, active sessions, crisis log, and feedback all live in Postgres; SQLite fallback for lightweight local runs.
-- **Multiple surfaces.** Web chat (Next.js) and text CLI (`scripts/text_repl.sh`), both backed by the same FastAPI runtime.
-- **1120 backend tests + tracing.** Unit, integration, and live-provider suites; Opik and LangSmith tracing wired for regression review.
+- **Multiple surfaces.** Web chat (Next.js) and text TUI (`scripts/text_tui.sh`), both backed by the same FastAPI runtime.
+- **1100+ backend tests + tracing.** Unit, integration, voice, audit, observability, and live-provider suites; vendor-neutral tracing supports state diagnostics, structured logging, and OpenTelemetry/OTLP export.
 
 ## Screenshots
 
@@ -71,31 +71,37 @@ Voice support is intentionally absent during the current runtime cleanup and wil
     <td width="50%" align="center" valign="top"><img src="apps/docs/static/img/readme/chat.png" width="100%" alt="OpenCouch web chat" /><br/><sub>Web chat</sub></td>
   </tr>
   <tr>
-    <td width="50%" align="center" valign="top" colspan="2"><img src="apps/docs/static/img/readme/cli-example.png" width="50%" alt="OpenCouch CLI session" /><br/><sub>Text CLI</sub></td>
+    <td width="50%" align="center" valign="top" colspan="2"><img src="apps/docs/static/img/readme/cli-example.png" width="50%" alt="OpenCouch text TUI session" /><br/><sub>Text TUI</sub></td>
   </tr>
 </table>
 
-<sub>Voice mode screenshot omitted while voice is being rebuilt from scratch.</sub>
+<sub>Voice UX screenshots are omitted while the OpenAI Realtime voice path remains dogfood/pre-beta.</sub>
 
 ---
 
 ## Quick start
 
-The fastest path to a working chat session — clone, set an API key, run one script:
+The fastest persistent dogfood path — clone, set an API key, start local Postgres, then launch the text TUI:
 
 ```bash
 git clone https://github.com/whanyu1212/OpenCouch.git
 cd OpenCouch
-echo "OPENAI_API_KEY=sk-..." > apps/backend/.env
-./scripts/text_repl.sh
+cat > apps/backend/.env <<'EOF'
+OPENAI_API_KEY=sk-...
+OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch
+EOF
+docker compose -f compose.yml up -d postgres --wait
+./scripts/text_tui.sh --mode auto --memory-mode persistent --user-id dogfood
 ```
 
-This starts a Dockerized Postgres and drops you into the text agent CLI. No web stack, no manual env wiring. For the full browser experience, see the [Compose section](#local-run-commands) below.
+For a no-key deterministic smoke test, run `./scripts/text_tui.sh --mode deterministic --memory-mode guest`. For the full browser experience, see the [Compose section](#local-run-commands) below.
 
 ### Prerequisites
-- Docker Desktop running for the Compose stack.
-- `uv` and `pnpm` for manual backend/web development.
-- Provider keys only for real model runs. Deterministic CLI and many local checks can run without external API keys.
+- Docker Desktop with Docker Compose v2 for `compose.yml` and local Postgres persistence.
+- An OpenAI API key in `.env` or `apps/backend/.env` for real model runs and OpenAI Realtime voice. Deterministic TUI sessions and many local checks can run without external API keys.
+- `uv` for manual backend/TUI development outside Docker.
+- Node.js 22+ with Corepack/`pnpm` for manual web or docs development outside Docker.
+- Optional: an OTLP collector endpoint if you want to export OpenTelemetry traces locally.
 
 ### Environment
 
@@ -104,18 +110,21 @@ OpenCouch loads local environment files from the repo root and `apps/backend` (`
 <details>
 <summary><b>View Environment Setup Details</b></summary>
 
-For local persistence, the recommended path is the Dockerized Postgres service from `compose.yml`. Backend services default to that stack configuration when `OPENCOUCH_PERSISTENCE_BACKEND` is unset inside Compose.
+For local persistence, the recommended path is the Dockerized Postgres service from `compose.yml`. The Compose API service sets `OPENCOUCH_PERSISTENCE_BACKEND=postgres` and shares one `OPENCOUCH_MEMORY_DATABASE_URL` for memory, thread state, active sessions, crisis audit, and feedback.
 
 ```env
-# Text model provider. Defaults to openai when unset.
+# Text/voice model provider. Defaults to openai when unset.
 LLM_PROVIDER=openai
 OPENAI_API_KEY=...
 
 # Local persistence backend for memory, checkpoints, audit, feedback,
 # and active-session state.
-# The Docker Compose stack defaults to these values automatically.
+# Compose sets these automatically for the API container.
 OPENCOUCH_PERSISTENCE_BACKEND=postgres
 OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@postgres:5432/opencouch
+
+# For manual host-side backend/TUI runs against the Compose database, use:
+# OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch
 ```
 
 </details>
@@ -124,12 +133,14 @@ Keep real `.env` files local and out of version control.
 
 ### Local run commands
 
-The most reliable dogfood path is `scripts/text_repl.sh` for text. Compose starts the browser stack: Postgres, backend API, and web.
+The most reliable dogfood path is `scripts/text_tui.sh`. Compose starts the browser stack: Postgres, backend API, and web; you can also start only Postgres when using the TUI with persistent memory.
 
 <details>
-<summary><b>View commands for Compose, CLI, web, and docs</b></summary>
+<summary><b>View commands for Compose, TUI, web, and docs</b></summary>
 
 #### Compose stack
+
+`compose.yml` is the one-command stack for Postgres, the FastAPI backend, and the Next.js web app. It builds the web container in production mode; use the manual web stack below when you want Next.js hot reload.
 
 ```bash
 # Start the full stack with logs attached.
@@ -153,21 +164,26 @@ docker compose -f compose.yml down
 
 Local URLs: web at [localhost:3000](http://localhost:3000), API at [localhost:8080](http://localhost:8080), health at [localhost:8080/api/health](http://localhost:8080/api/health), and Postgres at `postgresql://opencouch:opencouch@localhost:5432/opencouch`.
 
-Compose reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local`. Inside Compose, API uses the in-network Postgres URL automatically.
+Compose reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local`. Inside Compose, the API uses the in-network Postgres URL automatically and reuses it for all Postgres-backed stores. Compose exposes the API on `8080`; manual backend development usually uses `8000`, which matches the web client's default `NEXT_PUBLIC_API_URL` when not running Compose.
 
-#### Text CLI
+#### Text TUI
 
 ```bash
-# Preferred persistent dogfood command.
-./scripts/text_repl.sh --mode auto --memory-mode persistent --user-id dogfood --response-model-tier quality
+# Start Dockerized Postgres for persistent local dogfooding.
+docker compose -f compose.yml up -d postgres --wait
 
-# Raw backend CLI commands.
+# Preferred TUI command for persistent dogfooding.
+./scripts/text_tui.sh --mode auto --memory-mode persistent --user-id dogfood --response-model-tier quality
+
+# Deterministic guest-mode TUI command; no provider key required.
+./scripts/text_tui.sh --mode deterministic --memory-mode guest --thread-id scratch
+
+# Raw backend TUI command.
 cd apps/backend
-uv run python -m opencouch_cli --mode deterministic --memory-mode guest --thread-id scratch
-uv run python -m opencouch_cli --mode auto --memory-mode persistent --user-id alice --thread-id s1
+uv run python -m opencouch_tui --mode auto --memory-mode persistent --user-id alice --thread-id s1
 ```
 
-`scripts/text_repl.sh` starts Dockerized Postgres first and forwards flags to `opencouch_cli`.
+The old text CLI/REPL entrypoints are deprecated; use the TUI commands above for local dogfooding.
 
 #### Manual web stack
 
@@ -198,7 +214,7 @@ See [`apps/backend/README.md`](apps/backend/README.md) for backend-specific comm
 
 ## Architecture
 
-OpenCouch owns the product state machine (thread locks, routing policy, memory lifecycle, audit, persistence). The OpenAI Agents SDK Runner owns the model/tool execution loop and the model-visible conversation history. Every turn runs safety routing before response generation; memory writes happen in two phases — per-turn extraction and a session-end commit.
+OpenCouch owns the product state machine (thread locks, routing policy, memory lifecycle, audit, persistence, and observability). The OpenAI Agents SDK Runner owns the text model/tool execution loop and the model-visible conversation history. The OpenAI Realtime voice path shares app-owned memory, crisis resources, guided exercises, audit, and session finalization seams. Every turn runs safety routing before response generation; memory writes happen in two phases — per-turn extraction and a session-end commit.
 
 ```mermaid
 flowchart LR
@@ -207,7 +223,7 @@ flowchart LR
     classDef sdk fill:#10B9811A,stroke:#10B981,stroke-width:2px
     classDef store fill:#7C3AED1A,stroke:#7C3AED,stroke-width:2px
 
-    SURF["**Surfaces**<br/>Web · CLI · API"]:::surf
+    SURF["**Surfaces**<br/>Web · TUI · API"]:::surf
     APP["**OpenCouch runtime**<br/>safety routing · state · memory<br/>audit · session lifecycle"]:::app
     SDK["**Agents SDK Runner**<br/>therapeutic · crisis · exercise<br/>tools · model calls · tracing"]:::sdk
     STORE[("**Postgres**<br/>state · memory · sessions<br/>crisis log · feedback")]:::store
@@ -217,9 +233,10 @@ flowchart LR
     APP <--> STORE
 ```
 
-**Interfaces:** Next.js web chat · text CLI · FastAPI REST + WebSocket.
+**Interfaces:** Next.js web chat · text TUI · FastAPI REST + WebSocket · OpenAI Realtime voice backend.
 **Agent roster:** therapeutic (default), crisis (safety hand-off), guided-exercise (multi-turn skills).
-**Tools exposed to the SDK:** memory ops · grounded lookup · crisis resources · guided-exercise skills.
+**Tools exposed to the SDK/runtime:** memory ops · grounded lookup · crisis resources · guided-exercise skills.
+**Observability:** vendor-neutral spans/events across text, memory, voice, safety, audit, and tools, with state diagnostics, structured logging, and OpenTelemetry exporters.
 
 For the full runtime diagram, tool dispatch flow, and SDK/app state boundary, see [`apps/docs` → Architecture](https://whanyu1212.github.io/OpenCouch/) and [`apps/backend/agent/README.md`](apps/backend/agent/README.md).
 
@@ -238,17 +255,19 @@ OpenCouch/
 │   ├── backend/                # Python backend (FastAPI, OpenAI Agents SDK)
 │   │   ├── agent/              # Runtime agents, tools, state, memory, and services
 │   │   │   ├── runtime/        # OpenAI text runtime, SDK sessions, persistence lifecycle
+│   │   │   ├── voice/          # OpenAI Realtime voice runtime, tools, and turn finalization
+│   │   │   ├── observability/  # Vendor-neutral tracing, diagnostics, logging, and OTel export
 │   │   │   ├── specialists/    # Therapeutic, crisis, and guided-exercise agent roles
-│   │   │   ├── tools/          # Tool implementations exposed to the SDK runner
+│   │   │   ├── tools/          # Tool implementations exposed to the SDK/runtime
 │   │   │   ├── memory/         # Memory retrieval, write policy, embeddings, stores
 │   │   ├── llm/                # LLM adapter protocol and OpenAI client
-│   │   ├── opencouch_cli/      # Interactive terminal CLI
+│   │   ├── opencouch_tui/      # Preferred interactive terminal TUI
 │   │   ├── api/                # FastAPI REST + WebSocket routes
-│   │   └── tests/              # 1120 pytest unit/integration tests
+│   │   └── tests/              # 1100+ pytest unit/integration tests
 │   ├── web/                    # Next.js chat application
 │   └── docs/                   # Docusaurus documentation site
 ├── eval/                       # Trajectory runners and evaluation datasets
-├── scripts/                    # Local dogfooding scripts (text_repl.sh, voice_agent.sh)
+├── scripts/                    # Local dogfooding and utility scripts (text_tui.sh, voice_realtime_dogfood.md)
 └── compose.yml                 # Local Postgres + API + web stack
 ```
 </details>
@@ -282,27 +301,16 @@ uv run pre-commit run --all-files
 
 ### Observability
 
-For local development trace review, add Opik credentials to `.env` before running the CLI or API:
+OpenCouch uses a vendor-neutral tracing layer for privacy-safe spans and events across text, memory, voice, tools, safety routing, and crisis audit. Available exporters include bounded state diagnostics, structured logging, and OpenTelemetry/OTLP.
 
 ```env
-OPIK_API_KEY=...
-OPIK_WORKSPACE=...
-OPIK_PROJECT_NAME=opencouch-dev
+# Standard OpenTelemetry configuration for OTLP export.
+OTEL_SERVICE_NAME=opencouch-agent
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318
+OTEL_RESOURCE_ATTRIBUTES=deployment.environment=local
 ```
 
-LangSmith / LangChain tracing can be enabled as a secondary backend:
-
-```env
-LANGSMITH_TRACING=true
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_API_KEY=...
-LANGSMITH_PROJECT=opencouch-dev
-
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
-LANGCHAIN_API_KEY=...
-LANGCHAIN_PROJECT=opencouch-dev
-```
+Vendor-specific LLM observability adapters are intentionally deferred until a first target is selected. The current default is to keep instrumentation app-owned and export through the neutral recorder/exporter layer.
 
 ---
 
@@ -347,13 +355,15 @@ OpenCouch is pre-beta and currently focused on stabilizing the core chat, memory
 | ✅ **Shipped** | **Core product** | Web chat, threading, persistent/incognito sessions, memory inspection, and session feedback |
 | ✅ **Shipped** | **Guided support** | 13 state-tracked coping exercises for grounding, breathing, thought work, values reflection, and related flows |
 | ✅ **Shipped** | **Runtime & API** | FastAPI REST/WebSocket backend, OpenAI Agents SDK text runtime, Postgres-backed state/session persistence, crisis audit, and feedback storage |
+| ✅ **Shipped** | **Observability** | Vendor-neutral tracing across runtime, memory, voice, tools, safety/audit, with state diagnostics, structured logging, and OpenTelemetry export |
 | 🔜 **Next** | **Product stabilization** | Closed beta readiness, onboarding polish, reliability improvements, clearer session lifecycle, and feedback-driven UX fixes |
-| 🔜 **Next** | **Voice rebuild** | Rebuild voice from scratch after the text runtime cleanup, without carrying the legacy LiveKit worker forward |
+| 🔜 **Next** | **Voice UX stabilization** | Continue hardening the OpenAI Realtime voice path for dogfood and beta readiness, without reintroducing the legacy LiveKit worker |
 | 🔜 **Next** | **Memory quality** | Background fact consolidation, dormant/obsolete memory handling, better review controls, and undo support |
 | 🔜 **Next** | **Safety & evaluation** | Broader eval coverage, clinician-informed review of safety behavior, and stronger regression monitoring |
 | 🧭 **Later** | **Mobile** | Native iOS app once the web and backend voice paths are stable |
 | 🧭 **Later** | **More channels** | WhatsApp and Discord adapters after the core messaging abstraction is stable |
 | 🧭 **Later** | **Graph memory** | Graphiti + Neo4j exploration for entity-relationship reasoning |
+| 🧭 **Later** | **Vendor observability adapters** | Optional Opik, Arize, LangSmith, or similar adapters after choosing a first integration target |
 | 🧭 **Later** | **Acoustic safety** | Paralinguistic crisis signals such as prosody, flatness, or distress markers |
 | ⏳ **Awaiting expert** | **Clinical review** | Expert clinician audit of knowledge files, prompts, guided exercises, and safety logic |
 
