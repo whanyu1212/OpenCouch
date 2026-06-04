@@ -263,6 +263,24 @@ class SessionArcResponse(BaseModel):
     resolved_threads: list[str]
 
 
+class SessionEndResponse(BaseModel):
+    """Stable session finalization response shared by text and voice endpoints."""
+
+    finalized: bool
+    summary: str | None = None
+    detail: str
+    themes: list[str] = Field(default_factory=list)
+    mood_opened: str | None = None
+    mood_closed: str | None = None
+    turn_count: int | None = None
+    open_loops: list[str] = Field(default_factory=list)
+    resolved_threads: list[str] = Field(default_factory=list)
+
+
+class EndSessionResponse(SessionEndResponse):
+    """POST /api/threads/{thread_id}/end response body."""
+
+
 class VoiceRealtimeSessionResponse(BaseModel):
     """POST /api/voice/realtime/session response body."""
 
@@ -287,18 +305,8 @@ class VoiceTurnRecordResponse(BaseModel):
     message_count: int
 
 
-class VoiceEndSessionResponse(BaseModel):
+class VoiceEndSessionResponse(SessionEndResponse):
     """POST /api/voice/realtime/end response body."""
-
-    finalized: bool
-    summary: str | None = None
-    detail: str
-    themes: list[str] = Field(default_factory=list)
-    mood_opened: str | None = None
-    mood_closed: str | None = None
-    turn_count: int | None = None
-    open_loops: list[str] = Field(default_factory=list)
-    resolved_threads: list[str] = Field(default_factory=list)
 
 
 class SessionFeedbackResponse(BaseModel):
@@ -341,6 +349,44 @@ class MemoryRecallUpdateResponse(BaseModel):
     owner_id: str
     proactive_recall_enabled: bool
     detail: str
+
+
+class MemoryFactResponse(BaseModel):
+    """One semantic fact row returned by GET /api/memory/facts."""
+
+    index: int
+    key: str
+    category: str = ""
+    predicate: str = ""
+    subject: str = ""
+    object: str = ""
+    evidence_quote: str = ""
+    confidence: str = ""
+    created_at: str = ""
+
+
+class MemorySessionResponse(BaseModel):
+    """One episodic session row returned by GET /api/memory/sessions."""
+
+    index: int
+    key: str
+    session_id: str = ""
+    summary: str = ""
+    themes: list[str] = Field(default_factory=list)
+    mood_opened: str = ""
+    mood_closed: str = ""
+    turn_count: int = 0
+    ended_at: str = ""
+
+
+class MemoryRuleResponse(BaseModel):
+    """One procedural rule row returned by GET /api/memory/rules."""
+
+    index: int
+    rule: str
+    evidence: list[str] = Field(default_factory=list)
+    confidence: str = ""
+    added_at: str = ""
 
 
 class DeleteResponse(BaseModel):

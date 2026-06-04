@@ -19,7 +19,7 @@ CLI-only until a frontend with a proper confirmation flow exists.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Path, Query
 
 from agent.memory.operations.reconciliation import filter_active_semantic_records
 from agent.memory.operations.procedural_profile import (
@@ -33,17 +33,24 @@ from api.dependencies import ApiRuntimeSelection, get_runtime_selection
 from api.models import (
     ApiMemoryMode,
     DeleteResponse,
+    MemoryFactResponse,
     MemoryRecallUpdateRequest,
     MemoryRecallUpdateResponse,
+    MemoryRuleResponse,
+    MemorySessionResponse,
     MemoryStatusResponse,
 )
 
 router = APIRouter(prefix="/memory", tags=["memory"])
 
 _INCOGNITO_MEMORY_MUTATION_STATUS = 409
-_INCOGNITO_MEMORY_MUTATION_DETAIL = (
+_INCOGNITO_MEMORY_MUTATION_MESSAGE = (
     "Saved-memory controls are unavailable in incognito mode."
 )
+_INCOGNITO_MEMORY_MUTATION_DETAIL = {
+    "code": "incognito_memory_mutation_unavailable",
+    "message": _INCOGNITO_MEMORY_MUTATION_MESSAGE,
+}
 
 
 def _resolve_owner_id(
@@ -202,7 +209,7 @@ async def update_memory_recall(
     )
 
 
-@router.get("/facts")
+@router.get("/facts", response_model=list[MemoryFactResponse])
 async def list_facts(
     thread_id: str = Query(description="Thread to scope the listing to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
@@ -210,7 +217,7 @@ async def list_facts(
         default=None,
         description="Optional runtime selector for memory facts.",
     ),
-) -> list[dict]:
+) -> list[MemoryFactResponse]:
     """List all semantic facts for this owner.
 
     Args:
@@ -244,7 +251,7 @@ async def list_facts(
     ]
 
 
-@router.get("/sessions")
+@router.get("/sessions", response_model=list[MemorySessionResponse])
 async def list_sessions(
     thread_id: str = Query(description="Thread to scope the listing to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
@@ -252,7 +259,7 @@ async def list_sessions(
         default=None,
         description="Optional runtime selector for memory sessions.",
     ),
-) -> list[dict]:
+) -> list[MemorySessionResponse]:
     """List all episodic session arcs for this owner.
 
     Args:
@@ -288,7 +295,7 @@ async def list_sessions(
     ]
 
 
-@router.get("/rules")
+@router.get("/rules", response_model=list[MemoryRuleResponse])
 async def list_rules(
     thread_id: str = Query(description="Thread to scope the listing to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
@@ -296,7 +303,7 @@ async def list_rules(
         default=None,
         description="Optional runtime selector for memory rules.",
     ),
-) -> list[dict]:
+) -> list[MemoryRuleResponse]:
     """List all procedural rules for this owner.
 
     Args:
@@ -329,7 +336,7 @@ async def list_rules(
 
 @router.delete("/facts/{index}", response_model=DeleteResponse)
 async def delete_fact(
-    index: int,
+    index: int = Path(ge=1),
     thread_id: str = Query(description="Thread to scope the deletion to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
     memory_mode: ApiMemoryMode | None = Query(
@@ -381,7 +388,7 @@ async def delete_fact(
 
 @router.delete("/sessions/{index}", response_model=DeleteResponse)
 async def delete_session(
-    index: int,
+    index: int = Path(ge=1),
     thread_id: str = Query(description="Thread to scope the deletion to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
     memory_mode: ApiMemoryMode | None = Query(
@@ -428,7 +435,7 @@ async def delete_session(
 
 @router.delete("/rules/{index}", response_model=DeleteResponse)
 async def delete_rule(
-    index: int,
+    index: int = Path(ge=1),
     thread_id: str = Query(description="Thread to scope the deletion to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
     memory_mode: ApiMemoryMode | None = Query(
