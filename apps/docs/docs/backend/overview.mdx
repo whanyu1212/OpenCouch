@@ -88,6 +88,32 @@ text and `agent/voice/` plus `api/routes/voice.py` for voice.**
 
 ---
 
+## Provider adapter layer
+
+The runtime never calls a model provider directly. It depends on the
+abstract `BaseLLMClient` (`llm/base.py`), which defines three methods:
+`generate_text`, `generate_text_stream`, and `generate_structured`. A single
+factory, `create_llm_client(provider)` (`llm/factory.py`), returns the
+concrete client for the normalized provider name (`OpenAILLMClient` for
+`openai`) and raises on an unsupported provider. Swapping or adding a provider
+means implementing `BaseLLMClient` and extending the factory — no runtime or
+flow code changes.
+
+This is the **control-plane LLM**: crisis classification, structured outputs,
+and the response-LLM fallback path all go through it. It is distinct from the
+OpenAI Agents SDK runner that drives ordinary response generation — the
+[execution flows](/docs/agent/flows) use the SDK for replies and fall back to
+this control LLM only when an SDK turn fails for a recoverable infrastructure
+reason.
+
+| File | Purpose |
+|---|---|
+| `llm/base.py` | `BaseLLMClient` ABC — the provider-agnostic interface |
+| `llm/factory.py` | `create_llm_client(provider)` — provider selection |
+| `llm/openai_client.py` | `OpenAILLMClient` — the OpenAI implementation |
+
+---
+
 ## Prompt layers
 
 <PromptLayersVisual />

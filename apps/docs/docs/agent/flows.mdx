@@ -1,0 +1,167 @@
+---
+title: Execution Flows
+sidebar_label: Execution Flows
+sidebar_position: 4
+---
+
+# Execution Flows
+
+The [Agent Graph](/docs/agent/graph) page describes the **topology** — how
+the app-owned `TextTurnGraph` resolves one typed route plan per turn. This
+page describes the **execution layer** underneath it: the code in
+`agent/flows/` that actually runs once a route is chosen.
+
+There is no separate graph engine. The "graph" is a deterministic,
+app-owned router (`agent/runtime/text_turn_graph.py`) that produces a
+`TextRoutePlan`, and the runtime calls the matching flow. Each flow then
+delegates natural-language generation to an OpenAI Agents SDK specialist,
+merges any tool results back into state, and finalizes the turn.
+
+## From route plan to flow
+
+For each turn the runtime resolves a `TextRoutePlan` whose `kind` is one of
+`crisis_response`, `crisis_clarification`, `grounded_lookup`,
+`guided_exercise`, `memory_control`, or `therapeutic`. `_execute_route_plan`
+(and `_stream_route_plan`) in `agent/runtime/openai_text_runtime.py` switch
+on that `kind` and call the corresponding flow:
+
+| Route plan `kind` | Flow entry point | Module |
+|---|---|---|
+| `crisis_response`, `crisis_clarification` | `run_crisis_turn` | `agent/flows/crisis.py` |
+| `grounded_lookup` | `run_grounded_lookup_turn` | `agent/flows/grounded_lookup.py` |
+| `guided_exercise` | `run_guided_exercise_turn` | `agent/flows/guided_exercise/executor.py` |
+| `therapeutic`, `memory_control` | `run_therapeutic_turn` | `agent/flows/therapeutic.py` |
+
+`memory_control` has no flow of its own — it is produced by the therapeutic
+flow when the TherapeuticAgent calls a memory tool, which re-routes the turn
+(see [Therapeutic flow](#therapeutic-flow-default) below).
+
+## The shared flow shape
+
+Every flow has the same skeleton. It receives a `TextRuntimeServices`
+object — a frozen dataclass (`agent/runtime/services.py`) that binds a narrow
+set of callbacks (`runner`, `build_agent`, `run_openai_agent_with`,
+`finalize_turn`, `load_turn_memory`, …) to runtime methods. Flows are
+therefore runtime-agnostic functions that call back through this interface
+rather than reaching into the runtime directly.
+
+A flow then:
+
+1. Builds a run context and the SDK agent for its branch.
+2. Runs the SDK agent (or, when a response-LLM override is configured, a
+   plain control LLM) with a branch-specific input prompt.
+3. Merges the result — response text plus any tool results — into `state`
+   via `apply_state_delta(state, delta)` (`agent/runtime/state_ops.py`).
+   Reducer keys such as `diagnostics` shallow-merge; other keys replace.
+4. Calls `services.finalize_turn(...)`, which stamps `response_text`,
+   `runtime_mode`, `response_style`, `selected_agent`, and `sdk_duration_ms`,
+   and returns the final `AgentState` the caller persists.
+
+## Crisis flow
+
+`run_crisis_turn` (`agent/flows/crisis.py`) executes the crisis branch. The
+crisis gate runs first in the pipeline, so by the time this flow runs the
+turn is already classified as `crisis_response` or `crisis_clarification`.
+
+- **`crisis_response`** forces a `lookup_crisis_resources` tool call and
+  answers from verified resources. If the model does **not** call the tool,
+  the flow synthesizes a resource-lookup result with the app-owned
+  `build_crisis_resource_lookup_delta`, then re-runs the SDK agent with
+  resource tools disabled to produce the final reply. It records a crisis
+  audit entry via `record_crisis_outcome(...)`.
+- **`crisis_clarification`** produces a brief `clarifying` reply without
+  forcing a resource lookup.
+
+Crisis does **not** use the shared SDK fallback described below — its
+recovery is the tool-not-called re-run plus a separate response-LLM override
+path. A raw SDK exception in the crisis branch propagates.
+
+## Therapeutic flow (default)
+
+`run_therapeutic_turn` (`agent/flows/therapeutic.py`) is the default branch.
+It runs the TherapeuticAgent, which may call memory, grounded-lookup, or
+response-style skill tools during the turn. After the SDK run,
+`merge_therapeutic_tool_results` inspects which tools were actually called
+and can **re-route the turn mid-flight**:
+
+- any grounded-lookup tool call → `route = "grounded_lookup"`;
+- otherwise any memory tool call → `route = "memory_control"`;
+- otherwise a normal therapeutic reply with the selected response style.
+
+This is why there is no standalone `memory_control` module: the therapeutic
+flow is its executor.
+
+The flow also sanitizes control-LLM output: weaker models sometimes emit
+pseudo tool-call text (`<tool_call>…</tool_call>` blocks or leaked
+`load_therapeutic_response_skill({…})` calls), which `sanitize_response_llm_text`
+strips before the reply is returned.
+
+## Grounded-lookup flow
+
+`run_grounded_lookup_turn` (`agent/flows/grounded_lookup.py`) forces a single
+`answer_grounded_lookup` tool call and answers **only** from the tool result's
+`response_text` — it explicitly instructs the model not to make ungrounded
+factual claims. If the tool produces no result, the flow falls back to the
+app-owned `build_grounded_lookup_delta`. A genuinely empty grounded response
+is treated as a hard error.
+
+## Guided-exercise flow
+
+The `guided_exercise/` subpackage splits its work across four files. The
+actual exercise step selection and progression live in
+`agent/skills/guided_exercises/engine/`, not here — these modules are the
+runtime adapter around that engine:
+
+| Module | Responsibility |
+|---|---|
+| `routing.py` | **Whether/when** to run an exercise. A pre-dispatch gate that loads memory, inspects exercise lifecycle (`start` / `continue` / `resume` / `preserve`), and decides via keyword heuristics whether the turn should enter the guided-exercise route. |
+| `executor.py` | **Run the turn.** `run_guided_exercise_turn` delegates to the skill engine's `run_turn`, applies the resulting delta, stamps diagnostics, and finalizes (streaming drains skill-engine chunks through an `asyncio.Queue`). |
+| `adapters.py` | **How prose is generated.** Bridges the engine (which expects a `BaseLLMClient`) to the SDK runner, so exercise prose still flows through the SDK and its tools. Falls back to re-running the original prompt if the forced skill tool is skipped. |
+| `tool_instruction.py` | **Force the skill tool.** Rewrites the engine's prompt into a forced `load_guided_exercise_skill` tool instruction and detects whether the tool was actually called. |
+
+Routing decisions here are heuristic keyword/phrase matching, not
+LLM-based — they only gate *entry* into the exercise route; the engine owns
+what happens inside it.
+
+## SDK fallback (cross-cutting resilience)
+
+`agent/flows/sdk_fallback.py` is a small shared module — no route of its own —
+that the **therapeutic** and **grounded-lookup** flows use to recover from a
+failed OpenAI Agents SDK turn. It classifies whether a failure is recoverable:
+
+- `openai_sdk_fallback_reason(exc)` returns `"missing_openai_api_key"`
+  (authentication / missing-key errors), `"openai_api_connection_error"`
+  (network-level connection failures), or `None` for everything else.
+- `can_fallback_to_control_response(exc, context)` returns `True` only when a
+  control LLM is configured **and** the reason is non-`None`.
+
+The recovery pattern is identical in both flows:
+
+```python
+try:
+    # run the SDK agent
+except Exception as exc:
+    if not can_fallback_to_control_response(exc, context):
+        raise
+    # else: serve the turn from the plain control LLM,
+    # tagging diagnostics["openai_sdk_fallback_reason"]
+```
+
+The intent is narrow on purpose: only **infrastructure/config** failures
+(missing key, connection error) are swapped to the control LLM. Model-logic
+errors, tool errors, and other exceptions are treated as fatal and propagate,
+so failures that should surface are not silently masked.
+
+## Key files
+
+| File | Purpose |
+|---|---|
+| `agent/runtime/text_turn_graph.py` | App-owned router; resolves the `TextRoutePlan` per turn |
+| `agent/runtime/openai_text_runtime.py` | `_execute_route_plan` / `_stream_route_plan` dispatch into flows; `_services()` builds `TextRuntimeServices` |
+| `agent/runtime/services.py` | `TextRuntimeServices` — the narrow callback interface flows use |
+| `agent/runtime/state_ops.py` | `apply_state_delta`, `finalize_openai_turn` |
+| `agent/flows/crisis.py` | Crisis execution path + crisis-audit write |
+| `agent/flows/therapeutic.py` | Therapeutic (default) path; tool-merge + mid-turn re-route; output sanitization |
+| `agent/flows/grounded_lookup.py` | Grounded factual-lookup path |
+| `agent/flows/sdk_fallback.py` | Recoverable-failure classifier shared by therapeutic + grounded |
+| `agent/flows/guided_exercise/` | Guided-exercise routing, executor, SDK adapter, and forced-tool instruction |

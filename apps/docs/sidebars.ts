@@ -31,6 +31,7 @@ const sidebars: SidebarsConfig = {
             'agent/graph',
             'agent/state',
             'agent/tools',
+            'agent/flows',
           ],
         },
         'agent/routing-classifiers',
