@@ -25,7 +25,7 @@ const sidebars: SidebarsConfig = {
       items: [
         {
           type: 'category',
-          label: 'Agent Graph',
+          label: 'Agent Runtime',
           collapsed: false,
           items: [
             'agent/graph',

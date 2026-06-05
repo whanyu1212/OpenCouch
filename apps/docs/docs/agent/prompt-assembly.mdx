@@ -28,7 +28,7 @@ runtime by the OpenAI text runtime.
 |---|---|---|---|
 | **Core** | Who is this system? What are the hard rules? | `core_identity.md`, `policy/boundaries.md`, `policy/privacy.md` (collected as `CORE_SOURCES` in `prompts/__init__.py`) | Never changes |
 | **Response style** | What response shape is this turn? | `response_styles/*.md` — support, reflection, psychoeducation, guided_exercise, closing, crisis_response, safety_check | Selected by agent-owned skill/tool context |
-| **Therapeutic approach** | What therapeutic framework overlay? | `therapeutic_approaches/*.md` — motivational_interviewing, cbt, cbt_arc, act, dbt_skills, grief_support, interpersonal_therapy, pfa | Per turn, selected by runtime state and skill context |
+| **Therapeutic approach** | What therapeutic framework overlay? | Seven selectable approaches under `therapeutic_approaches/` — motivational_interviewing, cbt (loads `cbt.md` + `cbt_arc.md`), act, dbt_skills, grief_support, interpersonal_therapy, pfa | Per turn, selected by runtime state and skill context |
 | **Instructions** | How should it respond on this turn specifically? | `agent/specialists/therapeutic_response/prompt_instructions.py`, `agent/specialists/guided_exercise.py`, and `agent/guardrails/prompts.py` | Per response style |
 | **Working memory** | What does it know about the user? | Semantic + episodic entries from the load-memory stage | Re-retrieved each turn |
 | **Procedural rules** | What style rules apply? | Rules from `ProceduralProfile`, injected as suffix | Loaded each turn |
@@ -76,7 +76,7 @@ than a full crisis response.
 | `agent/prompts/sources/core_identity.md` | Assistant role, product stance, voice, tone, pacing, directness, and core boundaries |
 | `agent/prompts/sources/policy/` | Safety + privacy + crisis policy (3 files) |
 | `agent/prompts/sources/response_styles/` | One file per response style (7 files) |
-| `agent/prompts/sources/therapeutic_approaches/` | 8 therapeutic-approach knowledge files, dynamically loaded per turn |
+| `agent/prompts/sources/therapeutic_approaches/` | 8 knowledge files across 7 selectable approaches (CBT loads both `cbt.md` and `cbt_arc.md`), dynamically loaded per turn |
 | `agent/prompts/sources/session_stages.md` | Stage-aware response guidance (not yet wired into the runtime) |
 | `agent/prompts/sources/cross_session_continuity.md` | First-turn catch-up framing |
 | `agent/runtime/memory_context.py` | Populates `working_memory` and `procedural_profile.procedural_rules` |
