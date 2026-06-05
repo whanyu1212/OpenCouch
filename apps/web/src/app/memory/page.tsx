@@ -18,6 +18,14 @@ import {
 import { useSessionStore } from "@/lib/session";
 import { CouchLogo } from "@/components/logo";
 import { SessionPill } from "@/components/conversation-shell";
+import { Card } from "@/components/ui/card";
+import { Chip } from "@/components/ui/chip";
+import {
+  memoryKind,
+  memoryKindName,
+  moodDotClass,
+  formatCategory,
+} from "@/components/ui/memory-kinds";
 
 type Tab = "overview" | "facts" | "sessions" | "rules";
 
@@ -210,6 +218,7 @@ export default function MemoryPage() {
                 status={status}
                 updatingRecall={updatingRecall}
                 onRecallChange={handleRecallChange}
+                onSelectTab={setTab}
               />
             )}
             {tab === "facts" && <FactsTab facts={facts} onDelete={handleDeleteFact} />}
@@ -227,27 +236,31 @@ function OverviewTab({
   status,
   updatingRecall,
   onRecallChange,
+  onSelectTab,
 }: {
   status: MemoryStatus;
   updatingRecall: boolean;
   onRecallChange: (enabled: boolean) => Promise<void>;
+  onSelectTab: (tab: Tab) => void;
 }) {
   const recallEnabled = status.proactive_recall_enabled;
 
   return (
     <div className="space-y-5 max-w-lg">
-      {/* Count cards */}
+      {/* Count cards — color + icon identity, clickable to jump to the tab */}
       <div className="grid grid-cols-3 gap-3">
         {Object.entries(status.counts).map(([kind, count]) => (
-          <div key={kind} className="bg-oc-bg-card border border-oc-border rounded-xl p-5 text-center">
-            <p className="text-3xl font-display text-oc-teal-700 tabular-nums">{count}</p>
-            <p className="text-[12px] text-oc-text-muted mt-1.5 font-mono uppercase tracking-wider">{kind}</p>
-          </div>
+          <CountCard
+            key={kind}
+            kind={kind}
+            count={count}
+            onSelect={onSelectTab}
+          />
         ))}
       </div>
 
       {/* Config card */}
-      <div className="bg-oc-bg-card border border-oc-border rounded-xl divide-y divide-oc-border">
+      <Card variant="surface" className="divide-y divide-oc-border">
         <MetaRow label="Mode" value={status.memory_mode} />
         <MetaRow label="Owner" value={status.owner_id} mono />
         <MetaRow label="Crisis log" value={String(status.crisis_log_count)} />
@@ -260,9 +273,9 @@ function OverviewTab({
           value={recallEnabled ? "On" : "Off"}
           accent={recallEnabled}
         />
-      </div>
+      </Card>
 
-      <div className="bg-oc-bg-card border border-oc-border rounded-xl p-5">
+      <Card variant="surface" className="p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[15px] font-medium text-oc-text">
@@ -288,7 +301,65 @@ function OverviewTab({
             {updatingRecall ? "saving..." : recallEnabled ? "on" : "off"}
           </button>
         </div>
+      </Card>
+    </div>
+  );
+}
+
+function CountCard({
+  kind,
+  count,
+  onSelect,
+}: {
+  kind: string;
+  count: number;
+  onSelect: (tab: Tab) => void;
+}) {
+  const identity = memoryKind(kind);
+  // Canonical kind names (facts/sessions/rules) double as tab keys.
+  const tab = memoryKindName(kind);
+
+  const inner = (
+    <>
+      {identity && (
+        <span
+          className={`absolute inset-x-0 top-0 h-1 ${identity.rail} opacity-70`}
+          aria-hidden="true"
+        />
+      )}
+      <div className="flex items-center justify-center gap-2">
+        {identity && (
+          <span
+            className={`inline-flex h-6 w-6 items-center justify-center rounded-md border ${identity.accent.bg} ${identity.accent.text} ${identity.accent.border}`}
+          >
+            {identity.icon}
+          </span>
+        )}
+        <p className="text-3xl font-display text-oc-teal-700 tabular-nums">
+          {count}
+        </p>
       </div>
+      <p className="text-[12px] text-oc-text-muted mt-1.5 font-mono uppercase tracking-wider">
+        {identity?.label ?? kind}
+      </p>
+    </>
+  );
+
+  if (tab) {
+    return (
+      <button
+        type="button"
+        onClick={() => onSelect(tab)}
+        className="group relative overflow-hidden bg-oc-bg-card border border-oc-border rounded-xl p-5 text-center transition-colors hover:border-oc-border-strong"
+      >
+        {inner}
+      </button>
+    );
+  }
+
+  return (
+    <div className="relative overflow-hidden bg-oc-bg-card border border-oc-border rounded-xl p-5 text-center">
+      {inner}
     </div>
   );
 }
@@ -316,46 +387,93 @@ function FactsTab({ facts, onDelete }: { facts: MemoryFact[]; onDelete: (index: 
     <div className="space-y-4 max-w-2xl">
       {categories.length > 1 && (
         <div className="flex flex-wrap gap-2 mb-2">
-          <button
-            onClick={() => setFilter(null)}
-            className={`px-3 py-1.5 rounded-full text-[12px] font-medium transition-colors ${!filter ? "bg-oc-ink-2 text-white" : "bg-oc-warm-100 text-oc-text-secondary hover:bg-oc-warm-200"}`}
-          >
+          <FilterPill active={!filter} onClick={() => setFilter(null)}>
             All
-          </button>
+          </FilterPill>
           {categories.map(cat => (
-            <button
+            <FilterPill
               key={cat}
+              active={filter === cat}
               onClick={() => setFilter(cat)}
-              className={`px-3 py-1.5 rounded-full text-[12px] font-medium transition-colors ${filter === cat ? "bg-oc-ink-2 text-white" : "bg-oc-warm-100 text-oc-text-secondary hover:bg-oc-warm-200"}`}
             >
-              {cat.replace(/_/g, " ")}
-            </button>
+              {formatCategory(cat)}
+            </FilterPill>
           ))}
         </div>
       )}
       <div className="space-y-3">
-        {filteredFacts.map((f, i) => (
-          <div key={i} className="group bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors shadow-sm">
-            <div className="flex items-start justify-between gap-4">
-              <div className="flex-1 min-w-0">
-                <p className="text-[15px] text-oc-text leading-relaxed italic">
-                  &ldquo;{String(f.evidence_quote)}&rdquo;
-                </p>
-                <div className="flex flex-wrap gap-2 mt-3">
-                  <Tag>{f.category}</Tag>
-                  <Tag>{f.subject} → {f.predicate} → {f.object}</Tag>
-                  <Tag muted>{f.confidence}</Tag>
-                </div>
-              </div>
-              <div className="flex flex-col items-end gap-2 shrink-0">
-                <DeleteButton onDelete={() => onDelete(f.index)} label="fact" />
-                <span className="text-[11px] font-mono text-oc-text-dim mt-auto pt-2">#{f.index}</span>
-              </div>
-            </div>
-          </div>
+        {filteredFacts.map((f) => (
+          <FactCard key={f.index} fact={f} onDelete={() => onDelete(f.index)} />
         ))}
       </div>
     </div>
+  );
+}
+
+function FactCard({
+  fact,
+  onDelete,
+}: {
+  fact: MemoryFact;
+  onDelete: () => Promise<void>;
+}) {
+  // Lead with the human-readable summary; keep the raw quote as quiet support.
+  // The SPO triple is internal knowledge-graph shape and is intentionally not shown.
+  const summary =
+    fact.subject && fact.object
+      ? `${fact.subject} ${fact.predicate.replace(/_/g, " ")} ${fact.object}`
+      : fact.evidence_quote;
+  const showQuote =
+    Boolean(fact.evidence_quote) && fact.evidence_quote !== summary;
+
+  return (
+    <Card variant="elevated" interactive className="group p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <p className="text-[15px] text-oc-text leading-relaxed">{summary}</p>
+          {showQuote && (
+            <p className="mt-2 text-[13px] text-oc-text-muted leading-relaxed italic">
+              &ldquo;{fact.evidence_quote}&rdquo;
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2 mt-3">
+            <Chip tone="category" category={fact.category}>
+              {formatCategory(fact.category)}
+            </Chip>
+            <Chip tone="muted">{fact.confidence}</Chip>
+          </div>
+        </div>
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <DeleteButton onDelete={onDelete} label="fact" />
+          <span className="text-[11px] font-mono text-oc-text-dim mt-auto pt-2">
+            #{fact.index}
+          </span>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function FilterPill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors ${
+        active
+          ? "bg-oc-teal-600 text-white border-oc-teal-600"
+          : "bg-oc-warm-100 text-oc-text-secondary border-transparent hover:bg-oc-warm-200"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -368,9 +486,12 @@ function SessionsTab({ sessions, onDelete }: { sessions: MemorySession[]; onDele
       {sessions.map((s, i) => (
         <div key={i} className="group relative z-10 flex gap-4">
           <div className="hidden sm:flex flex-col items-center mt-2 shrink-0 w-12">
-            <div className="w-3 h-3 rounded-full bg-oc-warm-200 border-2 border-white shadow-sm" />
+            <div
+              className={`w-3 h-3 rounded-full border-2 border-white shadow-sm ${moodDotClass(s.mood_closed)}`}
+              title={`closed: ${s.mood_closed}`}
+            />
           </div>
-          <div className="flex-1 bg-white border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors shadow-sm">
+          <Card variant="elevated" interactive className="flex-1 p-5">
             <div className="flex items-start justify-between gap-4">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-2">
@@ -389,13 +510,13 @@ function SessionsTab({ sessions, onDelete }: { sessions: MemorySession[]; onDele
                     <span>{s.mood_closed}</span>
                   </div>
                   {s.themes.map((t) => (
-                    <Tag key={t} muted>{t}</Tag>
+                    <Chip key={t} tone="muted">{t}</Chip>
                   ))}
                 </div>
               </div>
               <DeleteButton onDelete={() => onDelete(s.index)} label="session" />
             </div>
-          </div>
+          </Card>
         </div>
       ))}
     </div>
@@ -407,7 +528,7 @@ function RulesTab({ rules, onDelete }: { rules: MemoryRule[]; onDelete: (index: 
   return (
     <div className="space-y-4 max-w-2xl">
       {rules.map((r, i) => (
-        <div key={i} className="group bg-oc-teal-50 border border-oc-teal-200/60 rounded-xl p-5 hover:border-oc-teal-300/80 transition-colors shadow-sm relative overflow-hidden">
+        <Card key={i} variant="accent" interactive className="group p-5 relative overflow-hidden">
           {/* Subtle accent bar */}
           <div className="absolute left-0 top-0 bottom-0 w-1 bg-oc-teal-400 opacity-50" />
           <div className="flex items-start justify-between gap-4">
@@ -437,7 +558,7 @@ function RulesTab({ rules, onDelete }: { rules: MemoryRule[]; onDelete: (index: 
               {r.added_at ? <span className="text-[10px] font-mono text-oc-teal-700/50 mt-auto pt-2">{r.added_at.slice(0, 10)}</span> : null}
             </div>
           </div>
-        </div>
+        </Card>
       ))}
     </div>
   );
@@ -475,18 +596,6 @@ function DeleteButton({ onDelete, label }: { onDelete: () => Promise<void>; labe
     >
       {deleting ? "…" : confirming ? "confirm?" : "forget"}
     </button>
-  );
-}
-
-function Tag({ children, muted }: { children: React.ReactNode; muted?: boolean }) {
-  return (
-    <span className={`text-[11px] font-mono font-medium px-2 py-0.5 rounded-md border ${
-      muted
-        ? "bg-oc-warm-100 text-oc-warm-600 border-oc-warm-200"
-        : "bg-oc-teal-50 text-oc-teal-700 border-oc-teal-200/60"
-    }`}>
-      {children}
-    </span>
   );
 }
 

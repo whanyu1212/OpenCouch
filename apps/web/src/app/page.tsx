@@ -572,21 +572,31 @@ export default function TextChatPage() {
         ) : (
           <div className="oc-chat-inner">
             <div className="space-y-4">
-              {messages.map((msg, i) => (
+              {messages.map((msg, i) => {
+                const groupedWithPrev = i > 0 && messages[i - 1].role === msg.role;
+                return (
                 <div
                   key={i}
                   className="animate-slideUp"
                   style={{ animationDelay: `${Math.min(i * 30, 200)}ms` }}
                 >
                   {msg.role === "user" ? (
-                    <div className="oc-bubble oc-bubble--user">
+                    <div
+                      className={`oc-bubble oc-bubble--user${groupedWithPrev ? " oc-bubble--grouped" : ""}`}
+                    >
                       <div className="oc-bubble-body">{msg.content}</div>
                     </div>
                   ) : (
-                    <div className="oc-bubble">
-                      <div className="oc-bubble-mark">
-                        <CouchLogo variant="mono" className="w-3.5 h-3.5" />
-                      </div>
+                    <div
+                      className={`oc-bubble${groupedWithPrev ? " oc-bubble--grouped" : ""}`}
+                    >
+                      {groupedWithPrev ? (
+                        <div className="oc-bubble-mark--spacer" aria-hidden="true" />
+                      ) : (
+                        <div className="oc-bubble-mark">
+                          <CouchLogo variant="mono" className="w-3.5 h-3.5" />
+                        </div>
+                      )}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="oc-bubble-body">{msg.content}</div>
                         {msg.responseStyle && <StateStrip msg={msg} />}
@@ -603,7 +613,8 @@ export default function TextChatPage() {
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
 
               {isLoading && !chatStreamingStarted && (
                 <div
@@ -615,55 +626,31 @@ export default function TextChatPage() {
                   <div className="oc-bubble-mark">
                     <CouchLogo variant="mono" className="w-3.5 h-3.5" />
                   </div>
-                  <div
-                    className="oc-bubble-body"
-                    style={{ minWidth: 180 }}
-                  >
-                    {stages.length > 0 && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 6 }}>
-                        {stages.map((s, i) => (
-                          <div
-                            key={i}
-                            className="animate-fadeIn"
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
-                              fontFamily: "var(--font-mono)",
-                              fontSize: 12,
-                              color: "var(--color-oc-muted)",
-                            }}
-                          >
-                            <svg
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2.4"
-                              className="w-3.5 h-3.5"
-                              style={{ color: "var(--color-oc-green)" }}
-                            >
-                              <polyline points="20 6 9 17 4 12" />
-                            </svg>
-                            <span>{s}</span>
-                          </div>
-                        ))}
+                  <div className="oc-bubble-body" style={{ minWidth: 180 }}>
+                    <div className="oc-thinking">
+                      {stages.length > 0 && (
+                        <div className="oc-thinking-stages">
+                          {stages.map((s, i) => (
+                            <div key={i} className="oc-thinking-stage animate-fadeIn">
+                              <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.4"
+                              >
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                              <span>{s}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="oc-thinking-status">
+                        <span className="oc-thinking-breath">
+                          <span />
+                        </span>
+                        <span>{stages.length === 0 ? "starting…" : "processing…"}</span>
                       </div>
-                    )}
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        fontFamily: "var(--font-mono)",
-                        fontSize: 12,
-                        color: "var(--color-oc-cta)",
-                      }}
-                    >
-                      <span className="relative flex h-3.5 w-3.5 items-center justify-center shrink-0">
-                        <span className="animate-ping absolute inline-flex h-2.5 w-2.5 rounded-full bg-oc-cta opacity-50" />
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-oc-cta" />
-                      </span>
-                      <span>{stages.length === 0 ? "starting…" : "processing…"}</span>
                     </div>
                   </div>
                 </div>

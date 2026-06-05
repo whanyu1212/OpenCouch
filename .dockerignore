@@ -29,5 +29,12 @@ skills
 **/.env.local
 **/*.pyc
 
+# macOS AppleDouble sidecar files — created on external/non-HFS volumes.
+# BuildKit's context sender fails to xattr these ("operation not permitted").
+._*
+**/._*
+.DS_Store
+**/.DS_Store
+
 apps/docs
 eval
