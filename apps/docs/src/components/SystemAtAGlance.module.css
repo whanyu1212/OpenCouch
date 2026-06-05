@@ -17,11 +17,11 @@
 }
 
 html[data-theme='dark'] .wrapper {
-  --oc-bg-main: #0f172a;
-  --oc-bg-card: #1e293b;
-  --oc-border: #334155;
-  --oc-text-main: #f8fafc;
-  --oc-text-muted: #94a3b8;
+  --oc-bg-main: #101a18;
+  --oc-bg-card: #16211f;
+  --oc-border: rgba(178, 218, 211, 0.14);
+  --oc-text-main: #edf7f4;
+  --oc-text-muted: #8da09a;
 }
 
 /* Ambient glow orb behind the wrapper */
@@ -36,6 +36,10 @@ html[data-theme='dark'] .wrapper {
   pointer-events: none;
   z-index: 0;
   animation: rotateOrb 20s linear infinite;
+}
+
+html[data-theme='dark'] .wrapper::after {
+  display: none;
 }
 
 @keyframes rotateOrb {
@@ -291,11 +295,11 @@ html[data-theme='dark'] .wrapper {
 
 /* Active Details Card */
 .activeCard {
-  background: var(--oc-bg-main);
+  background: color-mix(in srgb, var(--oc-bg-main) 92%, var(--theme-color) 8%);
   border: 1px solid var(--theme-color);
   border-radius: 12px;
   padding: 1.5rem;
-  box-shadow: 0 8px 32px color-mix(in srgb, var(--theme-color) 10%, transparent);
+  box-shadow: 0 8px 26px color-mix(in srgb, var(--theme-color) 8%, transparent);
 }
 
 .cardHeader {

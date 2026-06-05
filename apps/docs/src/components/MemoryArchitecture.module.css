@@ -5,8 +5,8 @@
 .root {
   margin: 1.5rem 0;
   padding: 1.25rem;
-  background: #0a0a0a;
-  border: 1px solid #222;
+  background: var(--oc-surface-1);
+  border: 1px solid var(--oc-border);
   border-radius: 14px;
   overflow: hidden;
 }
@@ -24,7 +24,7 @@
   gap: 48px;
   padding-bottom: 16px;
   margin-bottom: 16px;
-  border-bottom: 1px solid #1e1e1e;
+  border-bottom: 1px solid var(--oc-border);
 }
 
 [data-theme='light'] .flowHeader {
@@ -43,7 +43,7 @@
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.12em;
-  color: #2dd4bf;
+  color: var(--oc-accent);
 }
 
 [data-theme='light'] .dirLabel {
@@ -52,11 +52,11 @@
 
 .dirArrow {
   font-size: 14px;
-  color: #52525b;
+  color: var(--oc-text-muted);
 }
 
 .dirSub {
-  color: #52525b;
+  color: var(--oc-text-muted);
   font-weight: 400;
 }
 
@@ -69,10 +69,10 @@
 }
 
 .layerCard {
-  border: 1px solid #222;
+  border: 1px solid var(--oc-border);
   border-radius: 10px;
   overflow: hidden;
-  background: #0d0d0d;
+  background: var(--oc-surface-2);
   transition: border-color 0.2s ease;
 }
 
@@ -113,7 +113,7 @@
 }
 
 .layerHeader:hover {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(110, 207, 193, 0.06);
 }
 
 [data-theme='light'] .layerHeader:hover {
@@ -175,8 +175,8 @@
   font-size: 11px !important;
   padding: 4px 10px !important;
   border-radius: 5px !important;
-  background: rgba(255, 255, 255, 0.04) !important;
-  border: 1px solid rgba(255, 255, 255, 0.06) !important;
+  background: var(--oc-accent-subtle) !important;
+  border: 1px solid rgba(110, 207, 193, 0.16) !important;
   color: var(--oc-text-primary) !important;
 }
 
@@ -204,8 +204,8 @@
   gap: 5px;
   padding: 10px 12px;
   border-radius: 7px;
-  background: rgba(0, 0, 0, 0.15);
-  border: 1px solid #1e1e1e;
+  background: var(--oc-surface-1);
+  border: 1px solid var(--oc-border);
 }
 
 [data-theme='light'] .flowCol {

@@ -219,15 +219,10 @@ export default function Home(): JSX.Element {
         <div className="container">
           <div className="stats-shell">
             <div className="stats-grid">
-              {stats.map((s, i) => (
+              {stats.map((s) => (
                 <div
                   key={s.label}
-                  className="stat-item"
-                  style={{
-                    borderRight: i < stats.length - 1
-                      ? '1px solid var(--oc-border)'
-                      : 'none',
-                  }}>
+                  className="stat-item">
                   <div className="stat-item__value">{s.value}</div>
                   <div className="stat-item__label">{s.label}</div>
                 </div>
