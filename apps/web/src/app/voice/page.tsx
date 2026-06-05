@@ -266,22 +266,30 @@ function VoiceOrb({
   size = 280,
   active = false,
   waiting = false,
+  listening = false,
 }: {
   size?: number;
   active?: boolean;
   waiting?: boolean;
+  listening?: boolean;
 }) {
+  const showBars = active || listening;
   return (
     <div
       className={`oc-orb-wrap${active ? " oc-orb-active" : ""}${
         waiting ? " oc-orb-waiting" : ""
-      }`}
+      }${listening ? " oc-orb-listening" : ""}`}
       style={{ width: size, height: size }}
       aria-hidden="true"
     >
       <div className="oc-orb-ring" />
       <div className="oc-orb-ring oc-orb-ring-2" />
       <div className="oc-orb-core">
+        {showBars && (
+          <div className="oc-orb-bars">
+            <i /><i /><i /><i /><i />
+          </div>
+        )}
         <IconMic size={size * 0.18} />
       </div>
     </div>
@@ -640,7 +648,12 @@ export default function VoicePage() {
             {eyebrowLabel}
           </div>
 
-          <VoiceOrb size={280} active={voiceAgentSpeaking} waiting={voiceIsWarming} />
+          <VoiceOrb
+            size={280}
+            active={voiceAgentSpeaking}
+            waiting={voiceIsWarming}
+            listening={voiceCanAcceptSpeech}
+          />
 
           {!voiceConnected ? (
           <>
@@ -902,25 +915,23 @@ export default function VoicePage() {
             ref={transcriptScrollRef}
             className="flex-1 overflow-y-auto px-4 py-4 space-y-3 md:px-6"
           >
-            {voiceTranscripts.map((t, i) => (
-              <div
-                key={t.itemId ? `${t.role}:${t.itemId}` : `${t.role}:${i}`}
-                className="flex items-start gap-3 text-[14.5px] animate-fadeIn"
-              >
-                <span
-                  className={`text-[11px] font-mono font-medium w-14 shrink-0 pt-1 ${
-                    t.role === "user"
-                      ? "text-oc-primary"
-                      : t.role === "assistant"
-                        ? "text-oc-cta"
-                        : "text-oc-text-dim"
-                  }`}
+            {voiceTranscripts.map((t, i) => {
+              const variant =
+                t.role === "user"
+                  ? "user"
+                  : t.role === "assistant"
+                    ? "assistant"
+                    : "system";
+              return (
+                <div
+                  key={t.itemId ? `${t.role}:${t.itemId}` : `${t.role}:${i}`}
+                  className={`oc-vt-row oc-vt-row--${variant} animate-fadeIn`}
                 >
-                  {t.role}
-                </span>
-                <span className="text-oc-ink-2 leading-relaxed">{t.text}</span>
-              </div>
-            ))}
+                  <span className="oc-vt-role">{t.role}</span>
+                  <span className="oc-vt-bubble">{t.text}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : (

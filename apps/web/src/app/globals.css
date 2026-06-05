@@ -113,14 +113,16 @@ body {
 }
 .oc-surface-noise::before {
   content: "";
-  position: absolute;
+  /* Pinned to the viewport so the texture stays behind the scrolling
+     conversation at every offset (the column itself can exceed one screen). */
+  position: fixed;
   inset: 0;
   opacity: 0.03;
   pointer-events: none;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
   background-size: 128px 128px;
-  border-radius: inherit;
-  z-index: 1;
+  /* Behind the column's content but within its (z-index:1) stacking context. */
+  z-index: -1;
 }
 
 /* ── State dict JSON tree ── */
@@ -229,6 +231,63 @@ body {
 .dot-pulse > span:nth-child(2) { animation-delay: 0.15s; }
 .dot-pulse > span:nth-child(3) { animation-delay: 0.3s; }
 
+/* ── Assistant "thinking" state — calm, consistent with dot-pulse ── */
+.oc-thinking {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.oc-thinking-stages {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+.oc-thinking-stage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-oc-muted);
+}
+.oc-thinking-stage svg {
+  width: 14px;
+  height: 14px;
+  color: var(--color-oc-green);
+  flex-shrink: 0;
+}
+.oc-thinking-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-oc-cta);
+}
+/* Gentle breathing dot — replaces the hard animate-ping pulse. */
+.oc-thinking-breath {
+  position: relative;
+  display: inline-flex;
+  height: 14px;
+  width: 14px;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.oc-thinking-breath span {
+  position: absolute;
+  height: 8px;
+  width: 8px;
+  border-radius: 50%;
+  background: var(--color-oc-cta);
+  animation: ocBreath 1.8s ease-in-out infinite;
+}
+@keyframes ocBreath {
+  0%, 100% { transform: scale(0.7); opacity: 0.45; }
+  50% { transform: scale(1); opacity: 0.9; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -247,13 +306,17 @@ body {
 
 /* ── Atmospheric wash (behind nav rail + chat/voice content) ── */
 .oc-wash {
-  position: absolute;
+  /* Pinned to the viewport so the ambiance stays behind the scrolling
+     conversation at every offset (content can exceed one screen). */
+  position: fixed;
   inset: 0;
   pointer-events: none;
   z-index: 0;
+  /* Centers sit just off-canvas so only the faded tails warm the corners —
+     the saturated peak never pools into the message column or beside the rail. */
   background:
-    radial-gradient(680px 420px at 80% 8%, rgba(196, 122, 59, 0.10), transparent 60%),
-    radial-gradient(640px 480px at 12% 92%, rgba(33, 95, 90, 0.10), transparent 65%);
+    radial-gradient(680px 420px at 100% -4%, rgba(196, 122, 59, 0.04), transparent 60%),
+    radial-gradient(640px 480px at 0% 104%, rgba(33, 95, 90, 0.04), transparent 65%);
 }
 
 /* ── Nav rail (desktop) ── */
@@ -430,7 +493,9 @@ body {
   position: relative;
   isolation: isolate;
   overflow-x: hidden;
-  background: #f7f3eb;
+  /* Match the ::after overlay end-stops and the composer fade (--color-oc-bg)
+     so the two warm-whites don't seam where the background image fades. */
+  background: var(--color-oc-bg);
 }
 .oc-chat-scroll--welcome::before,
 .oc-chat-scroll--welcome::after {
@@ -728,21 +793,34 @@ body {
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
+  /* Slightly stronger ring so the speaker is pre-attentive. */
+  box-shadow: 0 0 0 1px rgba(31, 79, 70, 0.10);
+}
+/* Tighter spacing + hidden mark when the assistant speaks consecutively. */
+.oc-bubble--grouped {
+  margin-top: -6px;
+}
+.oc-bubble-mark--spacer {
+  width: 28px;
+  flex: 0 0 auto;
 }
 .oc-bubble-body {
   padding: 10px 14px;
   border-radius: 12px;
   background: var(--color-oc-warm-50);
-  border: none;
+  border: 1px solid var(--color-oc-border-subtle);
   font-size: 14.5px;
   color: var(--color-oc-ink-2);
   line-height: 1.55;
   max-width: 86%;
   white-space: pre-wrap;
+  /* Soft elevation distinguishes the assistant turn without a louder color. */
+  box-shadow: 0 1px 2px rgba(21, 32, 29, 0.05);
 }
 .oc-bubble--user .oc-bubble-body {
   background: var(--color-oc-primary-tint);
   border: 1px solid var(--color-oc-primary-soft);
+  box-shadow: none;
 }
 
 /* ── Voice surface ── */
@@ -1048,6 +1126,105 @@ body {
     transform: scale(1.06);
     opacity: 1;
   }
+}
+
+/* ── Orb activity bars — simulated (state-driven, not mic-driven) ──
+   A small equalizer inside the core. Animates only while speaking or
+   listening; hidden otherwise so the idle orb stays a calm breath. */
+.oc-orb-bars {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  height: 36%;
+}
+.oc-orb-active .oc-orb-bars,
+.oc-orb-listening .oc-orb-bars {
+  display: flex;
+}
+/* Hide the static mic icon while bars are showing. */
+.oc-orb-active .oc-orb-core > svg,
+.oc-orb-listening .oc-orb-core > svg {
+  display: none;
+}
+.oc-orb-bars i {
+  display: block;
+  width: 3px;
+  height: 100%;
+  border-radius: 2px;
+  transform-origin: center;
+  background: var(--color-oc-primary);
+  animation: ocOrbBar 1s ease-in-out infinite;
+}
+.oc-orb-bars i:nth-child(1) { animation-delay: -0.9s; }
+.oc-orb-bars i:nth-child(2) { animation-delay: -0.6s; }
+.oc-orb-bars i:nth-child(3) { animation-delay: -0.3s; }
+.oc-orb-bars i:nth-child(4) { animation-delay: -0.75s; }
+.oc-orb-bars i:nth-child(5) { animation-delay: -0.45s; }
+/* Speaking: amber, livelier. Listening: teal, gentler. */
+.oc-orb-active .oc-orb-bars i {
+  background: var(--color-oc-cta);
+  animation-duration: 0.7s;
+}
+.oc-orb-listening .oc-orb-bars i {
+  background: var(--color-oc-primary);
+  animation-duration: 1.5s;
+  opacity: 0.7;
+}
+@keyframes ocOrbBar {
+  0%, 100% { transform: scaleY(0.32); }
+  50% { transform: scaleY(1); }
+}
+
+/* ── Voice transcript lines — echo the chat bubble vocabulary ── */
+.oc-vt-row {
+  display: flex;
+  flex-direction: column;
+}
+.oc-vt-row--user {
+  align-items: flex-end;
+}
+.oc-vt-role {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin: 0 4px 3px;
+  color: var(--color-oc-text-dim);
+}
+.oc-vt-row--user .oc-vt-role {
+  color: var(--color-oc-primary);
+}
+.oc-vt-row--assistant .oc-vt-role {
+  color: var(--color-oc-cta);
+}
+.oc-vt-bubble {
+  max-width: 84%;
+  padding: 8px 12px;
+  border-radius: 12px;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-oc-ink-2);
+  white-space: pre-wrap;
+}
+.oc-vt-row--user .oc-vt-bubble {
+  background: var(--color-oc-primary-tint);
+  border: 1px solid var(--color-oc-primary-soft);
+}
+.oc-vt-row--assistant .oc-vt-bubble {
+  background: var(--color-oc-warm-50);
+  border: 1px solid var(--color-oc-border-subtle);
+  box-shadow: 0 1px 2px rgba(21, 32, 29, 0.05);
+}
+/* System / other roles stay quiet and centered. */
+.oc-vt-row--system {
+  align-items: center;
+}
+.oc-vt-row--system .oc-vt-bubble {
+  background: transparent;
+  color: var(--color-oc-text-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
 }
 
 
