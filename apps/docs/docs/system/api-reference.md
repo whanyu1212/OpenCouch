@@ -112,6 +112,12 @@ Session creation request:
 }
 ```
 
+`assistant_voice` is optional. When omitted (or `null`), the backend applies
+the default (`alloy`). The value is normalized (trimmed, lower-cased) and must
+be one of the ten supported Realtime voices: `alloy`, `ash`, `ballad`, `cedar`,
+`coral`, `echo`, `marin`, `sage`, `shimmer`, `verse`. An unsupported name is
+rejected.
+
 Tool execution request:
 
 ```json
@@ -192,3 +198,9 @@ The WebSocket stream emits status, chunk, done, and terminal error events:
 ```
 
 Frontend clients should treat `error` as terminal and display `message` to the user.
+
+WebSocket clients receive the assistant's final text through `chunk` events
+(incremental) and the `done` payload (complete). The runtime's internal stream
+also produces a `response_ready` event, but the WebSocket handler does **not**
+forward it — it is consumed by the TUI to render the reply early. Integrators
+should not wait for a `response_ready` message over the socket.

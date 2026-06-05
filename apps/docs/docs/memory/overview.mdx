@@ -45,6 +45,14 @@ operationally always-on, never feed the prompt, and never participate in the
 user-facing memory-recall toggle.
 :::
 
+:::note Storage names vs. product names
+The API and stores use the [CoALA](https://arxiv.org/abs/2309.02427)-derived
+layer names — `semantic`, `episodic`, `procedural` (this is what
+`/api/memory/status` returns under `counts`). The web Memory page relabels them
+to the friendlier **facts**, **sessions**, and **rules** for users. They are
+the same three layers; only the labels differ by surface.
+:::
+
 ---
 
 ## Current write model

@@ -33,9 +33,26 @@ guided exercises.
 | `confirm_memory_deletion` | Persistent only | Confirm and perform a pending deletion. |
 | `cancel_memory_deletion` | Persistent only | Cancel a pending deletion. |
 
-Persistent-only tools are rejected in incognito voice mode. The one
-exception is `show_memory_status`, which returns an explicit incognito
+The tool surface is filtered by memory mode: persistent sessions expose all
+**17** tools, while incognito sessions expose only the **9** mode-independent
+tools above. Persistent-only tools are rejected in incognito voice mode. The
+one exception is `show_memory_status`, which returns an explicit incognito
 status so the assistant can explain that durable memory is off.
+
+### Intent gate on memory mutations
+
+Beyond mode filtering, the four destructive or preference-changing memory
+tools — `set_proactive_memory_recall`, `save_response_preference`,
+`prepare_memory_deletion_by_index`, and `prepare_memory_deletion_by_query` —
+carry an additional **intent gate**. Each must include a `user_quote`
+argument, and the backend only lets the mutation proceed if that quote matches
+something the user actually said in a recent turn (within the last few turns,
+above a minimum length). If the model cannot cite a matching user utterance,
+the call is blocked.
+
+This is an anti-misfire guard for a hands-free surface: in a free-flowing
+speech loop there is no explicit confirm button, so the gate prevents the model
+from saving a preference or staging a deletion the user never requested.
 
 ## Realtime-owned turns
 

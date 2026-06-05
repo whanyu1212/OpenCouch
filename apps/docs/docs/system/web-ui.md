@@ -40,6 +40,23 @@ If you run the backend manually on port `8000`, the frontend default
 `NEXT_PUBLIC_API_URL=http://localhost:8000/api` works without extra
 configuration.
 
+## Session setup
+
+Every load opens a landing screen that gates the app on an explicit choice of
+**memory mode**, **user id**, and **thread id**. The session lives in the
+Zustand store and is re-derived on each rehydration, so there is no implicit
+"resume where you left off" — the user picks how the next session behaves.
+
+- **Persistent** loads memory and chat history; a blank user id falls back to
+  `web-user`, and a blank thread id is auto-generated as `web-<8 char base36>`.
+- **Incognito** stores nothing: the user id is cleared and a fresh thread id is
+  generated every time.
+
+`memory mode` is a first-class web concept, not just a backend flag — it gates
+client behavior throughout. In incognito the app skips history, memory, and
+thread-list fetches and shows "nothing saved" copy; persistent voice shares the
+same memory owner as text, while incognito voice writes nothing.
+
 ## Runtime shape
 
 | Area | Current implementation |
@@ -51,6 +68,43 @@ configuration.
 | Voice | OpenAI Realtime WebRTC through `/api/voice/realtime/*`, with app-owned tool calls, turn recording, and session finalization |
 | Debug state | `/state` calls `/api/threads/{thread_id}/state` for raw developer inspection only |
 | Error handling | Route `error.tsx`, `global-error.tsx`, loading fallback, not-found fallback, structured API errors, and visible REST error notices |
+
+## Memory page
+
+The `/memory` route is the user-facing memory manager. It is organized into
+four tabs, each with a live count:
+
+- **Overview** — count cards for facts, sessions, and rules (clicking a card
+  jumps to its tab), a config card (mode, owner, crisis-log and feedback
+  counts), and a proactive-recall toggle.
+- **Facts** — semantic facts with category filter pills; each card has an
+  inline two-step "forget" button.
+- **Sessions** — episodic session arcs on a timeline whose node color reflects
+  the closing mood, with theme tags and a mood-progression chip.
+- **Rules** — procedural style rules with their supporting evidence.
+
+The tab counts come from `/api/memory/status`; per-card deletes call the
+matching `/api/memory/*` endpoint. The tabs map to the three memory layers —
+see [Memory overview](/docs/memory/overview).
+
+## Slash commands
+
+The chat composer accepts a small set of web slash commands, distinct from the
+much larger TUI command set. Anything not in this list (including destructive
+commands like `/memory forget`) returns an "unsupported" reply that points the
+user to the right surface.
+
+| Command | Effect |
+|---|---|
+| `/help` | Show the command list |
+| `/end` | End the current persistent session |
+| `/new` | Return home for a new session |
+| `/threads` | Browse previous sessions |
+| `/memory` | Open the Memory page |
+| `/memory recall on` / `off` | Toggle proactive recall |
+| `/state` | Open the State Inspector |
+| `/chat` | Return to chat |
+| `/response-tier fast` / `quality` | Switch response model tier |
 
 ## Streaming lifecycle
 
@@ -81,6 +135,12 @@ safety, memory, routing, and diagnostics fields. This helps local
 dogfooding and debugging, but it is not the product API surface. Normal
 UI flows should consume typed chat, history, session-status, memory, and
 voice endpoints.
+
+A lighter-weight surface sits inline in the chat: each assistant message
+carries an expandable **State Strip** showing that turn's routing pills
+(response style, therapeutic approach, safety level) and timing, drawn from the
+`diagnostics` returned with the reply. It is per-message and always present,
+whereas `/state` is a per-thread raw dump from a separate endpoint.
 
 ## Voice boundary
 
