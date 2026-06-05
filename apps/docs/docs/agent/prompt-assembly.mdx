@@ -26,10 +26,10 @@ runtime by the OpenAI text runtime.
 
 | Layer | Question it answers | Source | Per turn? |
 |---|---|---|---|
-| **Core** | Who is this system? What are the hard rules? | `core_identity.md`, `policy/boundaries.md`, `policy/privacy.md` (collected as `CORE_SOURCES` in `prompts/shared.py`) | Never changes |
+| **Core** | Who is this system? What are the hard rules? | `core_identity.md`, `policy/boundaries.md`, `policy/privacy.md` (collected as `CORE_SOURCES` in `prompts/__init__.py`) | Never changes |
 | **Response style** | What response shape is this turn? | `response_styles/*.md` — support, reflection, psychoeducation, guided_exercise, closing, crisis_response, safety_check | Selected by agent-owned skill/tool context |
 | **Therapeutic approach** | What therapeutic framework overlay? | `therapeutic_approaches/*.md` — motivational_interviewing, cbt, cbt_arc, act, dbt_skills, grief_support, interpersonal_therapy, pfa | Per turn, selected by runtime state and skill context |
-| **Instructions** | How should it respond on this turn specifically? | `agent/specialists/therapeutic_prompt_instructions.py`, `agent/specialists/guided_exercise.py`, and `agent/guardrails/prompts.py` | Per response style |
+| **Instructions** | How should it respond on this turn specifically? | `agent/specialists/therapeutic_response/prompt_instructions.py`, `agent/specialists/guided_exercise.py`, and `agent/guardrails/prompts.py` | Per response style |
 | **Working memory** | What does it know about the user? | Semantic + episodic entries from the load-memory stage | Re-retrieved each turn |
 | **Procedural rules** | What style rules apply? | Rules from `ProceduralProfile`, injected as suffix | Loaded each turn |
 
@@ -67,12 +67,11 @@ than a full crisis response.
 
 | File | What it does |
 |---|---|
-| `agent/prompts/__init__.py` | Re-exports `compose_sources`, `CORE_SOURCES`, crisis prompt builders |
-| `agent/prompts/shared.py` | `CORE_SOURCES` tuple, `load_prompt_source()`, `compose_sources()`, `format_recent_history()` |
+| `agent/prompts/__init__.py` | `CORE_SOURCES` tuple, `load_prompt_source()`, `compose_sources()`, `format_recent_history()`, plus crisis prompt builder re-exports |
 | `agent/guardrails/prompts.py` | Crisis classifier + crisis response prompt builders |
-| `agent/specialists/therapeutic_prompt_sources.py` | `_knowledge_for_response_style()` and response-style / approach source selection |
-| `agent/specialists/therapeutic_prompt_instructions.py` | Per-response-style instruction blocks |
-| `agent/specialists/therapeutic_prompts.py` | Therapeutic-agent system/task prompt builders |
+| `agent/specialists/therapeutic_response/prompt_sources.py` | `_knowledge_for_response_style()` and response-style / approach source selection |
+| `agent/specialists/therapeutic_response/prompt_instructions.py` | Per-response-style instruction blocks |
+| `agent/specialists/therapeutic_response/prompts.py` | Therapeutic-agent system/task prompt builders |
 | `agent/specialists/guided_exercise.py` | Guided-exercise specialist instructions and system prompt builder |
 | `agent/prompts/sources/core_identity.md` | Assistant role, product stance, voice, tone, pacing, directness, and core boundaries |
 | `agent/prompts/sources/policy/` | Safety + privacy + crisis policy (3 files) |

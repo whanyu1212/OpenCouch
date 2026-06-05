@@ -180,7 +180,7 @@ session row is written.
 | `agent/runtime/runtime.py` | `PersistentAgentRuntime` — `run_turn`, `run_turn_stream`, `end_session`, `record_session_feedback`, sweeper, active-session recovery |
 | `agent/runtime/turn.py` | `build_initial_state`, `state_to_output`, `run_agent` |
 | `agent/state.py` | All state fragments + `AgentGraphInputState` / `AgentState` / `AgentGraphOutputState` |
-| `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
+| `agent/runtime/workflow_context.py` | `WorkflowContext` frozen dataclass |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
 | `agent/audit/postgres_crisis_log.py` | Primary Postgres crisis log with retention purge |
 | `agent/audit/sqlite_crisis_log.py` | SQLite crisis-log fallback backend |

@@ -33,7 +33,7 @@ reducer handles merging automatically. No manual dict spreading.
 crisis_gate                load_memory
   · crisis_gate_ms           · load_memory_ms
   · crisis_level             · semantic_hits / episodic_hits
-  · classifier_path          · retrieval_path
+  · crisis_classifier_path   · retrieval_path
          │                          │
          └──────────┬───────────────┘
                     ▼
@@ -183,11 +183,10 @@ render without a mapping update.
 | `crisis_gate_ms` | crisis_gate | Assessment wall-clock time |
 | `crisis_classifier_path` | crisis_gate | `llm_primary` |
 | `crisis_level` | crisis_gate | Normalized level (0–3) |
-| `crisis_resource_lookup_ms` | crisis_resource_lookup | Resource lookup wall-clock time (crisis branch only) |
 | `resource_lookup_status` | crisis_resource_lookup | `found` / `no_location` / `location_refused` / `no_verified_results` / `not_attempted` |
-| `turn_dispatch_ms` | turn_dispatch | Safe-turn routing wall-clock time |
 | `memory_control.action` | turn_dispatch | Detected command kind (or empty when none) |
-| `grounded_lookup.status` | grounded_answer | `answered` / `no_verified_answer` / `not_attempted` |
+| `grounded_lookup_ms` | grounded_lookup | Grounded lookup wall-clock time |
+| `grounded_lookup.status` | grounded_lookup | `answered` / `no_verified_answer` / `not_attempted` |
 | `load_memory_ms` | load_memory | Retrieval wall-clock time |
 | `semantic_hits` | load_memory | Semantic entries retrieved |
 | `semantic_store_size` | load_memory | Total semantic records in store |

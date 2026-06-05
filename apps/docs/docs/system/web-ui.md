@@ -45,7 +45,7 @@ configuration.
 | Area | Current implementation |
 |---|---|
 | Text chat | WebSocket streaming through `/api/chat/stream`, with REST `/api/chat` available for synchronous turns |
-| Session state | Zustand store persisted to local storage for setup choices such as user id, thread id, memory mode, model tier, and assistant voice |
+| Session state | Zustand store persisted to local storage for setup-prefill choices: user id, memory mode, model tier, and assistant voice. Thread id is intentionally **not** persisted — it is regenerated each session to avoid stale thread IDs bleeding across mode switches |
 | Thread history | REST calls to `/api/threads`, `/api/threads/{thread_id}/history`, and `/api/threads/{thread_id}/session-status` |
 | Memory controls | REST calls under `/api/memory/*` for status, recall toggle, list, and deletes |
 | Voice | OpenAI Realtime WebRTC through `/api/voice/realtime/*`, with app-owned tool calls, turn recording, and session finalization |

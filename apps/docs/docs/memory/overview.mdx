@@ -111,15 +111,15 @@ The `--user-id` flag decouples memory identity from thread identity
 | `agent/memory/store/postgres.py` | Primary durable Postgres backend with hybrid retrieval support |
 | `agent/memory/store/sqlite.py` | SQLite fallback backend with embedding BLOB storage and transactional batch writes |
 | `agent/memory/modes.py` | `MemoryMode` enum (`INCOGNITO`, `LOCAL`, `SYNCED`) |
-| `agent/memory/retrieval.py` | RRF fusion (`k=60`), lexical/dense rank, cosine similarity |
-| `agent/memory/embeddings.py` | `EmbeddingProvider` protocol + OpenAI / Null providers |
+| `agent/memory/retrieval/` | `ranking.py` (RRF fusion `k=60`, lexical/dense rank, cosine similarity) and `service.py` (`load_memory_for_turn` orchestration) |
+| `agent/memory/providers/embeddings.py` | `EmbeddingProvider` protocol + OpenAI / Null providers |
 | `agent/memory/text_tokens.py` | Unicode-aware tokenizer with CJK character splitting |
 | `agent/memory/policy/candidates.py` | Candidate models + `SessionMemoryBuffer` |
-| `agent/memory/dedup.py` | Token-set Jaccard dedup (0.85 threshold) |
+| `agent/memory/operations/dedup.py` | Token-set Jaccard dedup (0.85 threshold) |
 | `agent/memory/policy/write.py` | LLM-primary immediate-write / hold / drop / require-repetition policy with hard local guards |
 | `agent/memory/policy/semantic.py` | Stable vs session-only semantic category policy constants |
-| `agent/memory/reconciliation.py` | LLM-primary bump / supersede / coexist handling for semantic + procedural writes |
-| `agent/memory/procedural_profile.py` | `ProceduralProfile` load/save with per-user async lock and rule cap |
+| `agent/memory/operations/reconciliation.py` | LLM-primary bump / supersede / coexist handling for semantic + procedural writes |
+| `agent/memory/operations/procedural_profile.py` | `ProceduralProfile` load/save with per-user async lock and rule cap |
 | `agent/memory/prompts/summarization.py` | Session summarization prompts |
 | `agent/memory/hashing.py` | `hash_session_id()`, `iso_now()` |
 | `agent/memory/types/` | Pydantic models grouped by concern (semantic, episodic, procedural, therapeutic, primitives) |
@@ -148,7 +148,7 @@ The `--user-id` flag decouples memory identity from thread identity
 |---|---|
 | `agent/memory/entries.py` | `WorkingMemoryEntry` types with full SPO triples + formatters |
 | `agent/state.py` | `resolve_owner_id` — fail-loud identity validation |
-| `agent/runtime/memory_context.py` | Runtime-owned per-turn retrieval orchestration; core retrieval logic lives in `agent/memory/recall.py` |
-| `agent/runtime/session/commit.py` | Session-end promotion orchestration for held semantic / procedural candidates; promotion logic lives in `agent/memory/session_commit_service.py` |
-| `agent/runtime/session/summarize.py` | Session-end episodic summarization orchestration; summarization/persistence logic lives in `agent/memory/episodic.py` |
+| `agent/runtime/memory_context.py` | Runtime-owned per-turn retrieval orchestration; core retrieval logic lives in `agent/memory/retrieval/service.py` (`load_memory_for_turn`) |
+| `agent/runtime/session/commit.py` | Session-end promotion orchestration for held semantic / procedural candidates; promotion logic lives in `agent/memory/commit/service.py` |
+| `agent/runtime/session/summarize.py` | Session-end episodic summarization orchestration; summarization/persistence logic lives in `agent/memory/operations/episodic.py` |
 | `agent/runtime/runtime.py` | Shared session-end path, timeout handling, active-session buffering |

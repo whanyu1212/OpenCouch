@@ -37,6 +37,7 @@ long-term memory.
 | `/api/threads/{thread_id}/history` | `GET` | Return user/assistant transcript turns |
 | `/api/threads/{thread_id}/session-status` | `GET` | Return active-session tracking status |
 | `/api/threads/{thread_id}/end` | `POST` | Finalize a text session and persist session-end memory |
+| `/api/threads/{thread_id}/feedback` | `POST` | Record post-session feedback without re-finalizing the session (body: `feedback`, optional `memory_mode`, `modality: text\|voice`) |
 
 :::caution Debug state endpoint
 `/api/threads/{thread_id}/state` powers the local State Inspector and mirrors the TUI's `/debug state` command. It returns raw runtime implementation state, including transcript, memory, safety, routing, and diagnostics fields. It is useful for development and dogfooding, but product clients should use typed endpoints such as `/history`, `/session-status`, `/memory/*`, and `/chat/stream`.
@@ -154,9 +155,15 @@ End-session request:
 ```json
 {
   "thread_id": "web-voice-abc123",
-  "memory_mode": "persistent"
+  "memory_mode": "persistent",
+  "feedback": "positive"
 }
 ```
+
+Both `/api/threads/{thread_id}/end` and `/api/voice/realtime/end` accept an
+optional `feedback` label (`positive` / `negative` / `skip`) that is written
+to the session-feedback store before summarization. Omit it (or send `null`)
+to skip the feedback step.
 
 Voice end-session responses use the same `finalized`, `summary`, `detail`, and session-arc envelope documented for text sessions.
 
@@ -172,6 +179,7 @@ metadata:
 | `response_style` | More specific style or operational branch, such as supportive, memory_control, grounded_lookup, or crisis_response |
 | `therapeutic_approach` | Therapeutic approach overlay when applicable |
 | `crisis` | Normalized crisis assessment |
+| `session_action` | UI hint: `suggest_end_session` when the assistant produced a closing reply, otherwise `none` |
 | `diagnostics` | Per-turn timings and routing metadata |
 
 The WebSocket stream emits status, chunk, done, and terminal error events:
