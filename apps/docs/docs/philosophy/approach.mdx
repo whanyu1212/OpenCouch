@@ -73,47 +73,22 @@ it sits on top of whichever style was selected for the turn.
 
 ## Safety contract
 
-The crisis gate is the **first runtime stage** — it runs before
-memory loading, before any operational gate, before any therapeutic
-response.
+Safety is non-negotiable and comes first. Three promises hold on every
+turn regardless of mode or response style:
 
-```mermaid
-flowchart LR
-    classDef gate fill:#EF44441A,stroke:#EF4444,stroke-width:2px
-    classDef safe fill:#10B9811A,stroke:#10B981,stroke-width:2px
-    classDef action fill:#F59E0B1A,stroke:#F59E0B,stroke-width:2px
-    classDef warn  fill:#F59E0B1A,stroke:#F59E0B,stroke-width:2px
+- **Safety runs before everything.** The crisis gate is the first runtime
+  stage — it precedes memory loading, every operational gate, and all
+  therapeutic response generation. No turn reaches the rest of the pipeline
+  without clearing it.
+- **Clear risk bypasses the normal flow.** When the gate detects clear
+  ideation or imminent risk, the turn skips ordinary memory and therapeutic
+  processing entirely and produces a calm, direct acknowledgement paired with
+  verified resources — never evasion or minimizing. Ambiguous distress instead
+  adds one focused safety check on top of the active response.
+- **Crisis events are always logged.** The audit write happens regardless of
+  memory mode — even in incognito — without storing user-identifying text.
 
-    IN["User message"] --> CG{"Crisis gate"}:::gate
-    CG -->|Level 0| TH["Therapeutic pipeline"]:::safe
-    CG -->|Level 1 — ambiguous| SC["safety_check overlay<br/>inside therapeutic"]:::warn
-    CG -->|Level ≥ 2| RES["Crisis Resource Lookup"]:::action
-    RES --> ACK["Crisis reply<br/>(acknowledge + resources)"]:::action
-    ACK --> LOG["Crisis log (always-on)"]:::action
-    LOG --> STOP(("End turn")):::gate
-```
-
-**When the gate raises level ≥ 2 (clear ideation or imminent risk),
-the agent:**
-
-1. **Skips** memory retrieval and the TherapeuticAgent entirely
-   — no operational gates, no mode dispatch.
-2. **Looks up** verified hotlines for the user's inferred region
-   first, so resources land in the same reply.
-3. **Acknowledges** the distress directly and calmly, without
-   evasion or minimizing.
-4. **Asks at most one** safety question (e.g., "Are you safe right
-   now?").
-5. **Logs** the event to the always-on audit store — even in
-   incognito, with `user_id` set to NULL and `session_id` stored as
-   a one-way hash.
-
-**At level 1 (ambiguous distress with `needs_clarification = true`),
-the agent stays inside the therapeutic branch** but layers the
-`safety_check.md` overlay on top of the active style (usually
-`clarifying`) to force one focused safety probe before any
-therapeutic work. Memory retrieval still runs.
-
-See [Crisis Gate](/docs/philosophy/crisis-gate) for the full
-detection architecture (LLM classifier + truth-table normalization +
-audit log).
+These are guarantees about *what* the runtime promises. For *how* the gate
+detects, normalizes, routes, and logs — the LLM classifier, the truth-table
+normalization, the level-by-level routing, and the privacy-scrubbed audit
+record — see [Crisis Gate](/docs/philosophy/crisis-gate).
