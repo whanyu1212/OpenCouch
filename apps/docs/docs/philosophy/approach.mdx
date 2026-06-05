@@ -4,6 +4,7 @@ sidebar_position: 2
 ---
 
 import TherapyApproach from '@site/src/components/TherapyApproach';
+import AxisCombination from '@site/src/components/AxisCombination';
 
 # Therapeutic Approach
 
@@ -37,22 +38,27 @@ clinical authority.
 
 ---
 
-## Response styles vs. therapeutic approaches
+## How the two axes combine
 
-Two axes, picked along the turn pipeline:
+The interactive panel above lists both axes in full. What matters here is how
+they relate: **every therapeutic turn is one response style overlaid with one
+therapeutic approach.** They are orthogonal and chosen at different points in
+the pipeline.
 
-| Axis | What it is | How many | Selected by |
-|---|---|---|---|
-| **Response style** | Turn shape (`supportive`, `reflective`, `clarifying`, `psychoeducation`, `technique`, `guided_exercise`, `closing`) | 7 | Triage agent picks the route → TherapeuticAgent picks the style → local validation against active exercise/flow state |
-| **Therapeutic approach** | Framework overlay (MI, CBT, ACT, DBT skills, grief support, IPT, PFA) | 7 | `therapeutic_policy` selects the approach and passes it to TherapeuticAgent through prompt context |
+<AxisCombination />
 
-**Response styles** shape *what* the agent does this turn.
-**Therapeutic approaches** shape *how* — which knowledge file loads
-into the system prompt. In `technique` style, the approach drives
-the response shape directly because `technique` is the only style
-with no style-specific knowledge file — the approach overlay (e.g.,
-CBT Socratic questioning rhythm or ACT defusion language) carries
-all the shape.
+- **Response style** is the *shape* of the turn — what the agent does. The
+  TherapeuticAgent picks it (LLM-owned), with local validation against active
+  exercise and flow state.
+- **Therapeutic approach** is the *framework* underneath — how it does it,
+  which knowledge file loads into the system prompt. `therapeutic_policy`
+  selects it and passes it through prompt context.
+
+The two compose. A `supportive` reply might run an MI stance; a `technique`
+turn might run CBT. `technique` is the special case where the approach drives
+the response shape directly — it is the only style with no style-specific
+knowledge file, so the approach overlay (CBT's Socratic questioning rhythm,
+ACT's defusion language) carries all the shape.
 
 Two style families have hard structural contracts: `guided_exercise`
 must produce a step (and pin its approach so it can't drift on
