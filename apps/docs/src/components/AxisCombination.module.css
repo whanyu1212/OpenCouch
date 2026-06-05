@@ -122,22 +122,35 @@
 
 /* ── Dark mode ──────────────────────────────────────────────────────────────── */
 
+/* The site's dark palette is monochromatic teal (every --oc-surface-* is
+   green-tinted), so the formula cards intentionally step OFF the palette to a
+   neutral slate here — no green fill. Identity stays in the accent left-borders
+   (teal for style, amber for approach); hierarchy stays in the lightness step
+   between the input cards and the lighter result card. */
 [data-theme='dark'] .axis {
-  background: var(--oc-surface-2);
+  background: #1e2128;
+  border-color: rgba(255, 255, 255, 0.08);
 }
-/* Keep the result one lightness step above the input cards in dark mode too —
-   surface-3 reads as elevated without the green-on-green tint. */
+[data-theme='dark'] .axisStyle {
+  border-left-color: var(--oc-accent);
+}
+[data-theme='dark'] .axisApproach {
+  border-left-color: var(--oc-warm-400, #c9a063);
+}
 [data-theme='dark'] .axisResult {
-  background: var(--oc-surface-3);
+  background: #262a33;
+  border-left-color: var(--oc-accent);
 }
 [data-theme='dark'] .axisResultText {
   color: var(--oc-text-secondary);
 }
 [data-theme='dark'] .chip {
-  background: var(--oc-surface-2);
+  background: #1e2128;
+  border-color: rgba(255, 255, 255, 0.08);
 }
 [data-theme='dark'] .chipActive {
-  background: var(--oc-accent-subtle);
+  background: #262a33;
+  border-color: var(--oc-accent);
 }
 
 /* ── Narrow screens: stack the formula vertically ───────────────────────────── */
