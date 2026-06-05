@@ -1018,6 +1018,10 @@ html[data-theme='dark'] .doc-card strong { color: var(--oc-text-primary); }
   margin-top: -1.1rem;
   z-index: 5;
   padding-bottom: 0.25rem;
+  /* Mask the hero/landing seam: the strip overlaps the hero by ~18px,
+     and the hero's overflow-clipped orb leaves a faint line at hero.bottom
+     wherever the (transparent) strip lets it show through. */
+  background: var(--oc-warm-50);
 }
 
 .stats-shell {
@@ -1060,6 +1064,10 @@ html[data-theme='dark'] .doc-card strong { color: var(--oc-text-primary); }
   color: var(--oc-text-muted);
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+html[data-theme='dark'] .stats-strip {
+  background: var(--oc-page-bg);
 }
 
 html[data-theme='dark'] .stats-shell {
@@ -1474,13 +1482,13 @@ html[data-theme='dark'] .doc-card {
 }
 
 /* ─── Scrollbar ──────────────────────────────────────────────────────────────── */
-::-webkit-scrollbar       { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: var(--oc-teal-200);
-  border-radius: 3px;
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(60, 78, 75, 0.28) transparent;
 }
-html[data-theme='dark'] ::-webkit-scrollbar-thumb { background: #2f5f59; }
+html[data-theme='dark'] {
+  scrollbar-color: rgba(180, 200, 195, 0.22) transparent;
+}
 
 /* ─── Selection ──────────────────────────────────────────────────────────────── */
 ::selection {
