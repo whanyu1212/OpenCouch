@@ -41,7 +41,9 @@
 .axisResult {
   flex: 1.4 1 0;
   border-left-color: var(--oc-accent);
-  background: var(--oc-accent-subtle);
+  /* A neutral lightness step (not an accent tint) so the "answer" card reads as
+     elevated without stacking green on the teal-cast dark surfaces. */
+  background: var(--oc-surface-3);
 }
 
 .axisLabel {
@@ -123,8 +125,10 @@
 [data-theme='dark'] .axis {
   background: var(--oc-surface-2);
 }
+/* Keep the result one lightness step above the input cards in dark mode too —
+   surface-3 reads as elevated without the green-on-green tint. */
 [data-theme='dark'] .axisResult {
-  background: var(--oc-accent-subtle);
+  background: var(--oc-surface-3);
 }
 [data-theme='dark'] .axisResultText {
   color: var(--oc-text-secondary);
