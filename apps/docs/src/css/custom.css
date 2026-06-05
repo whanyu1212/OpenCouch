@@ -572,8 +572,8 @@ html[data-theme='dark'] .admonition.admonition-danger {
 
 /* ─── Footer ─────────────────────────────────────────────────────────────────── */
 .footer {
-  background: var(--oc-teal-900);
-  border-top: 1px solid rgba(120, 184, 175, 0.08);
+  background: #1a1814;
+  border-top: 1px solid rgba(233, 228, 219, 0.08);
   padding: 3rem 0 2.5rem;
 }
 .footer__title {
@@ -581,21 +581,21 @@ html[data-theme='dark'] .admonition.admonition-danger {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: var(--oc-teal-400) !important;
+  color: var(--oc-teal-300) !important;
   margin-bottom: 0.9rem;
 }
 .footer__link-item {
   font-size: 0.875rem;
-  color: rgba(157, 210, 203, 0.7) !important;
+  color: rgba(216, 210, 200, 0.62) !important;
   transition: color var(--oc-duration-fast);
 }
 .footer__link-item:hover {
-  color: var(--oc-teal-200) !important;
+  color: var(--oc-text-primary) !important;
   text-decoration: none;
 }
 .footer__copyright {
   font-size: 0.78rem;
-  color: rgba(120, 184, 175, 0.4);
+  color: rgba(216, 210, 200, 0.38);
   margin-top: 2rem;
 }
 
@@ -1365,7 +1365,7 @@ html[data-theme='dark'] .flow-badge {
 /* ─── Footer gradient + glow ─────────────────────────────────────────────────── */
 .footer {
   position: relative;
-  background: linear-gradient(180deg, #0f2927 0%, #0d2422 62%, #0b1f1d 100%);
+  background: linear-gradient(180deg, #211e19 0%, #1a1814 62%, #14110d 100%);
 }
 
 .footer::before {
