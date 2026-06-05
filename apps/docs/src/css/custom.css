@@ -119,20 +119,22 @@ html[data-theme='dark'] {
   --oc-cta-border: #d79667;
   --oc-cta-glow:   rgba(240, 173, 126, 0.26);
 
-  --oc-surface-1: #162624;
-  --oc-surface-2: #1a2e2c;
-  --oc-surface-3: #1f3836;
-  --oc-border:      rgba(120, 184, 175, 0.12);
-  --oc-border-strong: rgba(120, 184, 175, 0.28);
+  /* Warm-neutral dark surfaces (not teal). A faint warm-gray that ties to the
+     light theme's parchment family; the teal accent above stays for brand. */
+  --oc-surface-1: #1a1814;
+  --oc-surface-2: #211e19;
+  --oc-surface-3: #2b2720;
+  --oc-border:      rgba(233, 228, 219, 0.10);
+  --oc-border-strong: rgba(233, 228, 219, 0.22);
 
-  /* Dark mode contrast — text on --oc-surface-1 (#162624)
-       primary   #e8f5f3 → 12.8:1 (AAA)
-       secondary #c2ddd9 → 9.5:1  (AAA)
-       muted     #82aaa4 → 5.3:1  (AA)
+  /* Dark mode contrast — warm-tinted near-whites on --oc-surface-1 (#1a1814)
+       primary   #f3efe8 → ~13:1 (AAA)
+       secondary #d8d2c8 → ~9.6:1 (AAA)
+       muted     #a59d90 → ~5.2:1 (AA)
   */
-  --oc-text-primary:   #e8f5f3;
-  --oc-text-secondary: #c2ddd9;
-  --oc-text-muted:     #82aaa4;
+  --oc-text-primary:   #f3efe8;
+  --oc-text-secondary: #d8d2c8;
+  --oc-text-muted:     #a59d90;
 
   --oc-shadow-sm:  0 1px 3px rgba(0, 0, 0, 0.3);
   --oc-shadow-md:  0 4px 12px rgba(0, 0, 0, 0.35);
@@ -146,9 +148,9 @@ html[data-theme='dark'] {
   --ifm-color-primary-light:   #9dd2cb;
   --ifm-color-primary-lighter: #b8e0dc;
 
-  --ifm-background-color:         #0f1e1c;
+  --ifm-background-color:         #14110d;
   --ifm-background-surface-color: var(--oc-surface-1);
-  --ifm-navbar-background-color:  rgba(15, 30, 28, 0.88);
+  --ifm-navbar-background-color:  rgba(20, 17, 13, 0.88);
   --ifm-menu-color:  var(--oc-text-secondary);
 }
 
@@ -335,15 +337,15 @@ html[data-theme='dark'] code {
   padding: 1.4rem 1.6rem !important;
   border-radius: var(--ifm-pre-border-radius) !important;
   border: 1px solid var(--oc-border) !important;
-  background: #0d2422 !important;
+  background: #1a1814 !important;
   box-shadow: var(--oc-shadow-md), inset 0 1px 0 rgba(255,255,255,0.04) !important;
   counter-reset: line;
   overflow-x: auto;
 }
 
 html[data-theme='dark'] .prism-code {
-  background: #080f0e !important;
-  border-color: rgba(120, 184, 175, 0.10) !important;
+  background: #100e0b !important;
+  border-color: rgba(233, 228, 219, 0.10) !important;
 }
 
 /* Code block header / title bar */
@@ -353,9 +355,9 @@ html[data-theme='dark'] .prism-code {
   font-family: var(--ifm-font-family-monospace) !important;
   font-size: 0.78rem !important;
   font-weight: 500 !important;
-  background: #0a1e1c !important;
+  background: #141210 !important;
   border: 1px solid var(--oc-border) !important;
-  border-bottom: 1px solid rgba(120, 184, 175, 0.14) !important;
+  border-bottom: 1px solid rgba(233, 228, 219, 0.12) !important;
   border-radius: var(--ifm-pre-border-radius) var(--ifm-pre-border-radius) 0 0 !important;
   color: var(--oc-teal-300) !important;
   padding: 0.55rem 1.2rem 0.55rem 3.45rem !important;
@@ -433,8 +435,8 @@ html[data-theme='dark'] .prism-code {
 }
 
 html[data-theme='dark'] .admonition {
-  border-color: rgba(120, 184, 175, 0.22) !important;
-  background: linear-gradient(180deg, rgba(18, 36, 33, 0.8), rgba(18, 36, 33, 0.62)) !important;
+  border-color: rgba(233, 228, 219, 0.18) !important;
+  background: linear-gradient(180deg, rgba(42, 39, 32, 0.8), rgba(42, 39, 32, 0.6)) !important;
 }
 
 html[data-theme='dark'] .admonition.admonition-warning {
@@ -451,7 +453,7 @@ html[data-theme='dark'] .admonition.admonition-danger {
 [class*='copyButton'] {
   border: 1px solid var(--oc-border) !important;
   border-radius: 8px !important;
-  background: rgba(16, 33, 30, 0.74) !important;
+  background: rgba(33, 30, 25, 0.74) !important;
   color: var(--oc-teal-200) !important;
   transition: border-color var(--oc-duration-fast), background var(--oc-duration-fast), transform var(--oc-duration-fast) !important;
 }
@@ -811,7 +813,7 @@ html[data-theme='dark'] .hero__subtitle { color: var(--oc-teal-200) !important; 
   text-decoration: none !important;
 }
 html[data-theme='dark'] .button--secondary {
-  background: rgba(16, 33, 30, 0.55) !important;
+  background: rgba(33, 30, 25, 0.55) !important;
 }
 
 /* ─── Doc cards (hero grid) ──────────────────────────────────────────────────── */
@@ -897,8 +899,8 @@ html[data-theme='dark'] .button--secondary {
 .doc-card:hover::after { opacity: 1; }
 
 html[data-theme='dark'] .doc-card {
-  background: rgba(22, 38, 36, 0.82);
-  border-color: rgba(120, 184, 175, 0.14);
+  background: rgba(42, 39, 32, 0.82);
+  border-color: rgba(233, 228, 219, 0.12);
 }
 html[data-theme='dark'] .doc-card:hover {
   border-color: rgba(120, 184, 175, 0.36);
@@ -1047,8 +1049,8 @@ html[data-theme='dark'] .stats-shell {
 }
 
 html[data-theme='dark'] .docs-link-card {
-  background: rgba(22, 38, 36, 0.84);
-  border-color: rgba(120, 184, 175, 0.16);
+  background: rgba(42, 39, 32, 0.84);
+  border-color: rgba(233, 228, 219, 0.14);
 }
 
 html[data-theme='dark'] .docs-link-card:hover {
