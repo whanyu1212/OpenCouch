@@ -25,12 +25,13 @@ const sidebars: SidebarsConfig = {
       items: [
         {
           type: 'category',
-          label: 'Agent Graph',
+          label: 'Agent Runtime',
           collapsed: false,
           items: [
             'agent/graph',
             'agent/state',
             'agent/tools',
+            'agent/flows',
           ],
         },
         'agent/routing-classifiers',

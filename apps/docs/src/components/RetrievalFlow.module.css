@@ -5,8 +5,8 @@
 .root {
   margin: 1.5rem 0;
   padding: 1.25rem;
-  background: #0a0a0a;
-  border: 1px solid #222;
+  background: var(--oc-surface-1);
+  border: 1px solid var(--oc-border);
   border-radius: 14px;
   display: flex;
   flex-direction: column;
@@ -27,12 +27,12 @@
   gap: 8px;
   padding: 10px 20px;
   border-radius: 8px;
-  border: 1px solid #222;
-  background: #161616;
+  border: 1px solid var(--oc-border);
+  background: var(--oc-surface-2);
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 13px;
   font-weight: 500;
-  color: #e4e4e7;
+  color: var(--oc-text-primary);
 }
 
 [data-theme='light'] .inputNode {
@@ -62,14 +62,14 @@
   left: 50%;
   width: 2px;
   height: 10px;
-  background: #52525b;
+  background: var(--oc-border-strong);
   transform: translateX(-1px);
 }
 
 .forkLine {
   width: 2px;
   height: 20px;
-  background: #52525b;
+  background: var(--oc-border-strong);
   margin-top: 10px;
 }
 
@@ -80,7 +80,7 @@
   left: calc(50% - 71px);
   width: 142px;
   height: 2px;
-  background: #52525b;
+  background: var(--oc-border-strong);
 }
 
 /* ── Scorers ─────────────────────────────────────────────────────── */
@@ -104,8 +104,8 @@
 .scorer {
   padding: 14px 16px;
   border-radius: 10px;
-  border: 1px solid #222;
-  background: #0d0d0d;
+  border: 1px solid var(--oc-border);
+  background: var(--oc-surface-2);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -185,7 +185,7 @@
 .scorerDetail code {
   font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
   font-size: 11px !important;
-  background: rgba(255, 255, 255, 0.04) !important;
+  background: var(--oc-accent-subtle) !important;
   padding: 1px 5px !important;
   border-radius: 3px !important;
   color: var(--oc-text-primary) !important;
@@ -207,9 +207,9 @@
   font-weight: 600;
   padding: 2px 8px;
   border-radius: 4px;
-  background: rgba(45, 212, 191, 0.06);
-  border: 1px solid rgba(45, 212, 191, 0.12);
-  color: #5eead4;
+  background: var(--oc-accent-subtle);
+  border: 1px solid rgba(110, 207, 193, 0.16);
+  color: var(--oc-accent-hover);
 }
 
 [data-theme='light'] .strengthGood {
@@ -235,7 +235,7 @@
   left: calc(50% - 71px);
   width: 142px;
   height: 2px;
-  background: #52525b;
+  background: var(--oc-border-strong);
 }
 
 .merge::before {
@@ -245,14 +245,14 @@
   left: 50%;
   width: 2px;
   height: 10px;
-  background: #52525b;
+  background: var(--oc-border-strong);
   transform: translateX(-1px);
 }
 
 .mergeLine {
   width: 2px;
   height: 10px;
-  background: #52525b;
+  background: var(--oc-border-strong);
 }
 
 /* ── Fusion node ─────────────────────────────────────────────────── */
@@ -312,11 +312,11 @@
   padding: 10px 20px;
   border-radius: 8px;
   border: 1px solid #2dd4bf30;
-  background: linear-gradient(135deg, #0d2d2a, #111);
+  background: linear-gradient(135deg, rgba(110, 207, 193, 0.14), var(--oc-surface-2));
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   font-size: 13px;
   font-weight: 600;
-  color: #2dd4bf;
+  color: var(--oc-accent-hover);
 }
 
 [data-theme='light'] .outputNode {

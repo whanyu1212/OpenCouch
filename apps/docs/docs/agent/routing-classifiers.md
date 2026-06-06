@@ -40,6 +40,36 @@ default. Current examples:
 - Crisis level 1 asks one safety clarification instead of routing
   straight to a full crisis response.
 
+## Worked example
+
+The app-owned `TextTurnGraph` resolves one route plan per turn in a fixed
+precedence, short-circuiting at the first match:
+
+1. **Eligibility** — empty/ineligible turns produce no plan.
+2. **Crisis gate** — if the crisis classifier set a crisis runtime mode, route
+   straight to the crisis plan. Nothing below runs.
+3. **Grounded lookup** — if a prior step pre-routed the turn to
+   `grounded_lookup`, emit that plan.
+4. **Guided exercise** — load memory, check exercise lifecycle, and if the turn
+   should run as an exercise, emit the `guided_exercise` plan.
+5. **Memory control** — if the turn was routed to a memory command, emit
+   `memory_control`.
+6. **Therapeutic** — the default for everything else.
+
+Consider *"My chest is tight and I keep thinking everyone would be better off
+without me."* The crisis classifier fires at step 2, sets a crisis runtime
+mode, and the turn resolves to a crisis plan before the therapeutic dispatcher
+is ever consulted — the deterministic precedence guarantees safety routing wins
+over response-style selection.
+
+Now consider *"What's the national crisis text line number?"* during a calm
+session. The crisis gate does not fire; the grounded-lookup classifier
+recognizes an explicit factual request and the turn resolves to
+`grounded_lookup`, which answers only from a verified tool result.
+
+The plan that routing produces is what the [execution flows](/docs/agent/flows)
+then run.
+
 ## Regression coverage
 
 Routing changes should update backend tests and targeted live-provider checks.

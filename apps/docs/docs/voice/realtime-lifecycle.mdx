@@ -47,7 +47,7 @@ Realtime function tools, and persisted turn metadata.
 
 When both sides of a spoken exchange are finalized, the browser calls
 `POST /api/voice/realtime/turn`. The backend calls
-`PersistentAgentRuntime.record_voice_turn(...)`, which appends the
+`runtime.voice.record_voice_turn(...)` (the `VoiceRuntimeFacade`), which appends the
 finalized user/assistant transcript entries, inferred route metadata,
 inferred response-style metadata, grounded lookup result metadata, and
 voice-specific diagnostics to the persisted thread state.
@@ -76,4 +76,5 @@ without durable finalization.
 | `apps/web/src/app/voice/realtime-dev/page.tsx` | Raw dogfood/debug UI for Realtime events. |
 | `apps/backend/api/routes/voice.py` | FastAPI endpoints for Realtime session creation, tool execution, turn recording, and end-session finalization. |
 | `apps/backend/agent/voice/realtime.py` | Realtime session configuration and client-secret creation. |
-| `apps/backend/agent/runtime/runtime.py` | Shared runtime methods used by voice: memory bootstrap, tool context, turn recording, and end session. |
+| `apps/backend/agent/voice/runtime_facade.py` | `VoiceRuntimeFacade` (`runtime.voice.*`) — voice memory bootstrap, tool context, and turn recording. |
+| `apps/backend/agent/runtime/runtime.py` | Shared `end_session(...)` session-end path used by both voice and text. |

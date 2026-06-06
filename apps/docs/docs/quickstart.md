@@ -136,10 +136,11 @@ cd apps/backend
 ```
 :::
 
-:::warning Web UI is temporarily behind the backend
-The backend text agent is the current dogfooding surface while the app
-shell catches up with the agent refactor. Use the TUI when you want the
-most reliable local path.
+:::note Choosing a surface
+The web app is the primary product UI — streaming chat, the memory
+manager, and OpenAI Realtime voice all run there. The TUI is the
+deterministic-mode dogfood path: it needs no provider key and is handy
+for quick local checks and scripted runs.
 :::
 
 ## Voice Mode

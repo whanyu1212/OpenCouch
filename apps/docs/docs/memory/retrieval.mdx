@@ -74,7 +74,7 @@ visited in months.
 | `embedding_model` | TEXT | Model migration detection |
 
 The provider factory (`create_configured_embedding_provider` in
-`agent/memory/embeddings.py`) picks:
+`agent/memory/providers/embeddings.py`) picks:
 
 1. **OpenAI** `text-embedding-3-large` (3072 dims) when
    `OPENAI_API_KEY` is set.

@@ -16,10 +16,10 @@ In persistent voice mode:
 1. Session startup loads compact saved-memory context for the Realtime
    instructions.
 2. Final transcript pairs are written with
-   `PersistentAgentRuntime.record_voice_turn(...)`.
+   `runtime.voice.record_voice_turn(...)` (the `VoiceRuntimeFacade`).
 3. Tool calls observed during the turn are recorded in diagnostics and
    can update app-owned state when the tool has a side effect.
-4. Disconnect calls `PersistentAgentRuntime.end_session(...)`.
+4. Disconnect calls `runtime.end_session(...)`.
 5. The session finalizer may write an episodic arc and promote held
    memory candidates through the same services used by text.
 
@@ -71,7 +71,8 @@ stable user id is supplied, the thread id isolates memory by session.
 
 | File | Purpose |
 |---|---|
-| `agent/runtime/runtime.py` | `voice_session_memory_context`, `build_voice_tool_context`, `prepare_voice_turn_policy`, `record_voice_turn`, and `end_session`. |
+| `agent/voice/runtime_facade.py` | `VoiceRuntimeFacade` (`runtime.voice.*`) — `voice_session_memory_context`, `build_voice_tool_context`, and `record_voice_turn`. |
+| `agent/runtime/runtime.py` | Shared `end_session(...)` session-end path (voice and text). |
 | `agent/voice/transcript.py` | Converts finalized voice text into runtime transcript entries. |
 | `api/routes/voice.py` | Public endpoint layer and incognito/persistent branch behavior. |
 | `apps/web/src/lib/realtime-voice-turn-record.ts` | Builds the browser request body for turn recording. |

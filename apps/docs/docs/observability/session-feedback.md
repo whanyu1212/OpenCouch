@@ -168,4 +168,4 @@ constraint on the opaque `id`.
 | `agent/runtime/runtime.py` | `record_session_feedback()` method, backend selection, lifecycle |
 | `api/models.py` | `EndSessionRequest.feedback`, `MemoryStatusResponse.session_feedback_count` |
 | `api/routes/threads.py` | `POST /api/threads/{id}/end` body handling |
-| `opencouch_cli/app.py` | `_prompt_for_session_feedback`, `_summarize_and_render` |
+| `opencouch_tui/` | TUI session-end flow: prompts for a feedback label and renders the session summary on `/end` and exit |

@@ -1,0 +1,158 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 4px 0 8px;
+  font-family: var(--ifm-font-family-base);
+}
+
+/* ── The formula: style + approach = turn ───────────────────────────────────── */
+
+.formula {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.axis {
+  flex: 1 1 0;
+  min-width: 150px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--oc-border);
+  border-left-width: 3px;
+  border-radius: 10px;
+  background: var(--oc-surface-1);
+  transition: border-color var(--oc-duration-fast) var(--oc-ease-out),
+              transform var(--oc-duration-fast) var(--oc-ease-out);
+}
+
+/* The two input axes carry a slight tonal distinction so the eye reads them as
+   different kinds of thing; the result reads as the composed answer. */
+.axisStyle {
+  border-left-color: var(--oc-accent);
+}
+.axisApproach {
+  border-left-color: var(--oc-warm-400, #c9a063);
+}
+.axisResult {
+  flex: 1.4 1 0;
+  border-left-color: var(--oc-accent);
+  /* A neutral lightness step (not an accent tint) so the "answer" card reads as
+     elevated without stacking green on the teal-cast dark surfaces. */
+  background: var(--oc-surface-3);
+}
+
+.axisLabel {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--oc-text-secondary);
+  opacity: 0.85;
+}
+
+.axisValue {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--ifm-color-primary);
+  word-break: break-word;
+}
+
+.axisCaption {
+  font-size: 0.74rem;
+  font-style: italic;
+  color: var(--oc-text-secondary);
+  opacity: 0.75;
+}
+
+.axisResultText {
+  font-size: 0.86rem;
+  line-height: 1.5;
+  color: var(--oc-text-primary, #15201d);
+}
+
+.operator {
+  align-self: center;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--oc-accent);
+  flex: 0 0 auto;
+}
+
+/* ── Example switcher ───────────────────────────────────────────────────────── */
+
+.switcher {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.72rem;
+  font-weight: 500;
+  padding: 6px 12px;
+  border: 1px solid var(--oc-border);
+  border-radius: 999px;
+  background: var(--oc-surface-1);
+  color: var(--oc-text-secondary);
+  cursor: pointer;
+  transition: border-color var(--oc-duration-fast) var(--oc-ease-out),
+              background var(--oc-duration-fast) var(--oc-ease-out),
+              color var(--oc-duration-fast) var(--oc-ease-out);
+}
+
+.chip:hover {
+  border-color: var(--oc-accent);
+  transform: translateY(-1px);
+}
+
+.chipActive {
+  border-color: var(--oc-accent);
+  background: var(--oc-accent-subtle);
+  color: var(--ifm-color-primary);
+}
+
+/* ── Dark mode ──────────────────────────────────────────────────────────────── */
+
+[data-theme='dark'] .axis {
+  background: var(--oc-surface-2);
+}
+/* Result stays one lightness step above the input cards. */
+[data-theme='dark'] .axisResult {
+  background: var(--oc-surface-3);
+}
+[data-theme='dark'] .axisResultText {
+  color: var(--oc-text-secondary);
+}
+[data-theme='dark'] .chip {
+  background: var(--oc-surface-2);
+}
+[data-theme='dark'] .chipActive {
+  background: var(--oc-surface-3);
+  border-color: var(--oc-accent);
+}
+
+/* ── Narrow screens: stack the formula vertically ───────────────────────────── */
+
+@media (max-width: 600px) {
+  .formula {
+    flex-direction: column;
+  }
+  .operator {
+    align-self: flex-start;
+    transform: rotate(90deg);
+    margin: -2px 0 -2px 18px;
+  }
+  .axis,
+  .axisResult {
+    flex: 1 1 auto;
+  }
+}

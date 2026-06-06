@@ -37,6 +37,7 @@ long-term memory.
 | `/api/threads/{thread_id}/history` | `GET` | Return user/assistant transcript turns |
 | `/api/threads/{thread_id}/session-status` | `GET` | Return active-session tracking status |
 | `/api/threads/{thread_id}/end` | `POST` | Finalize a text session and persist session-end memory |
+| `/api/threads/{thread_id}/feedback` | `POST` | Record post-session feedback without re-finalizing the session (body: `feedback`, optional `memory_mode`, `modality: text\|voice`) |
 
 :::caution Debug state endpoint
 `/api/threads/{thread_id}/state` powers the local State Inspector and mirrors the TUI's `/debug state` command. It returns raw runtime implementation state, including transcript, memory, safety, routing, and diagnostics fields. It is useful for development and dogfooding, but product clients should use typed endpoints such as `/history`, `/session-status`, `/memory/*`, and `/chat/stream`.
@@ -111,6 +112,12 @@ Session creation request:
 }
 ```
 
+`assistant_voice` is optional. When omitted (or `null`), the backend applies
+the default (`alloy`). The value is normalized (trimmed, lower-cased) and must
+be one of the ten supported Realtime voices: `alloy`, `ash`, `ballad`, `cedar`,
+`coral`, `echo`, `marin`, `sage`, `shimmer`, `verse`. An unsupported name is
+rejected.
+
 Tool execution request:
 
 ```json
@@ -154,9 +161,15 @@ End-session request:
 ```json
 {
   "thread_id": "web-voice-abc123",
-  "memory_mode": "persistent"
+  "memory_mode": "persistent",
+  "feedback": "positive"
 }
 ```
+
+Both `/api/threads/{thread_id}/end` and `/api/voice/realtime/end` accept an
+optional `feedback` label (`positive` / `negative` / `skip`) that is written
+to the session-feedback store before summarization. Omit it (or send `null`)
+to skip the feedback step.
 
 Voice end-session responses use the same `finalized`, `summary`, `detail`, and session-arc envelope documented for text sessions.
 
@@ -172,6 +185,7 @@ metadata:
 | `response_style` | More specific style or operational branch, such as supportive, memory_control, grounded_lookup, or crisis_response |
 | `therapeutic_approach` | Therapeutic approach overlay when applicable |
 | `crisis` | Normalized crisis assessment |
+| `session_action` | UI hint: `suggest_end_session` when the assistant produced a closing reply, otherwise `none` |
 | `diagnostics` | Per-turn timings and routing metadata |
 
 The WebSocket stream emits status, chunk, done, and terminal error events:
@@ -184,3 +198,9 @@ The WebSocket stream emits status, chunk, done, and terminal error events:
 ```
 
 Frontend clients should treat `error` as terminal and display `message` to the user.
+
+WebSocket clients receive the assistant's final text through `chunk` events
+(incremental) and the `done` payload (complete). The runtime's internal stream
+also produces a `response_ready` event, but the WebSocket handler does **not**
+forward it — it is consumed by the TUI to render the reply early. Integrators
+should not wait for a `response_ready` message over the socket.

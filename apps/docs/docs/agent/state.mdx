@@ -106,4 +106,4 @@ explicit.
 | `agent/models.py` | `AgentInput`, `AgentOutput`, `Message`, `CrisisAssessment`, `Channel`, `MessageRole`, `ResponseCategory`, `ResponseStyleType`, stream events, `STAGE_LABELS` |
 | `agent/audit/models.py` | `CrisisOverrideOutcome` and `CrisisClassifierPath` (used inside `CrisisAuditState`), plus `CrisisLogRecord` and feedback types |
 | `agent/runtime/turn.py` | `build_initial_state()` (input → state) and `state_to_output()` (state → output) |
-| `agent/runtime_context.py` | `WorkflowContext` frozen dataclass — runtime dependencies via `runtime.context` |
+| `agent/runtime/workflow_context.py` | `WorkflowContext` frozen dataclass — runtime dependencies via `runtime.context` |

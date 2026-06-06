@@ -33,7 +33,7 @@ reducer handles merging automatically. No manual dict spreading.
 crisis_gate                load_memory
   · crisis_gate_ms           · load_memory_ms
   · crisis_level             · semantic_hits / episodic_hits
-  · classifier_path          · retrieval_path
+  · crisis_classifier_path   · retrieval_path
          │                          │
          └──────────┬───────────────┘
                     ▼
@@ -98,6 +98,40 @@ lookup tool output also merges into `state.grounded_lookup` when present.
 Use Opik for text-runtime traces. Use the Realtime dogfood route and
 voice API responses when debugging audio, tool-call, or finalization
 issues.
+
+---
+
+## Safety audit ledger
+
+Distinct from diagnostics and tracing, the **safety audit ledger**
+(`agent/audit/`) is a durable, operator-facing record of crisis-response
+behavior. It is deliberately **not** therapeutic memory, prompt context, or a
+general observability bucket — audit rows are never loaded into
+`working_memory` or used by normal response generation. The separation is the
+point: safety records can be reviewed after the fact without leaking back into
+the assistant's replies.
+
+The crisis path writes in one direction only. After the crisis-response branch
+completes, `write_crisis_log` builds a single `CrisisLogRecord` and the
+configured `CrisisLogBackend` appends it. Records answer operator questions —
+did the classifier fire, at what level, through which classifier path; did
+resource lookup run, find resources, or fall back; did the runtime use the SDK,
+the SDK tool-fallback, or a response-LLM override — **without storing raw user
+text**. Only classification labels, classifier provenance, and structural
+metadata are kept.
+
+| File | Purpose |
+|---|---|
+| `agent/audit/models.py` | `CrisisLogRecord`, classifier-path enums, and aggregate/summary models |
+| `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory / null backends; `write_crisis_log` helper |
+| `agent/audit/postgres_crisis_log.py` | Primary durable Postgres backend |
+| `agent/audit/sqlite_crisis_log.py` | SQLite fallback backend |
+| `agent/audit/summary.py` | Daily safety-summary aggregation over stored records |
+
+Retention is operator-driven (see
+[Memory privacy](/docs/memory/privacy)) — backends expose a
+purge-before-cutoff path, and the TUI adds a manual `/memory purge-crisis [days]`
+command. No automatic expiry ships.
 
 ---
 
@@ -183,11 +217,10 @@ render without a mapping update.
 | `crisis_gate_ms` | crisis_gate | Assessment wall-clock time |
 | `crisis_classifier_path` | crisis_gate | `llm_primary` |
 | `crisis_level` | crisis_gate | Normalized level (0–3) |
-| `crisis_resource_lookup_ms` | crisis_resource_lookup | Resource lookup wall-clock time (crisis branch only) |
 | `resource_lookup_status` | crisis_resource_lookup | `found` / `no_location` / `location_refused` / `no_verified_results` / `not_attempted` |
-| `turn_dispatch_ms` | turn_dispatch | Safe-turn routing wall-clock time |
 | `memory_control.action` | turn_dispatch | Detected command kind (or empty when none) |
-| `grounded_lookup.status` | grounded_answer | `answered` / `no_verified_answer` / `not_attempted` |
+| `grounded_lookup_ms` | grounded_lookup | Grounded lookup wall-clock time |
+| `grounded_lookup.status` | grounded_lookup | `answered` / `no_verified_answer` / `not_attempted` |
 | `load_memory_ms` | load_memory | Retrieval wall-clock time |
 | `semantic_hits` | load_memory | Semantic entries retrieved |
 | `semantic_store_size` | load_memory | Total semantic records in store |

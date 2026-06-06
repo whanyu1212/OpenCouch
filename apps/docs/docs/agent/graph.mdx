@@ -141,21 +141,21 @@ for the full breakdown.
 | `agent/runtime/turn.py` | Compatibility entrypoint for `build_initial_state()`, `state_to_output()`, and `run_agent()` |
 | `agent/state.py` | `AgentState` TypedDict with reducer annotations and split input/output schemas |
 | `agent/memory/entries.py` | `WorkingMemoryEntry` types, factory functions, formatters |
-| `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
+| `agent/runtime/workflow_context.py` | `WorkflowContext` frozen dataclass |
 | `agent/runtime/openai_text_runtime.py` | OpenAI Agents SDK text runtime orchestration |
 | `agent/specialists/` | Triage, therapeutic, crisis, and guided-exercise specialist agent definitions |
 | `agent/tools/` | Agent-owned memory, grounded lookup, crisis lookup, therapeutic response skill, and guided-exercise tools |
 | `agent/skills/therapeutic_response.py` | Response-style guidance rendered as prompt-local SDK skill context |
-| `agent/specialists/therapeutic_prompts.py` | Therapeutic response prompt composition owned by the therapeutic agent |
+| `agent/specialists/therapeutic_response/prompts.py` | Therapeutic response prompt composition owned by the therapeutic agent |
 | `agent/specialists/guided_exercise.py` | Guided-exercise agent instructions and system prompt ownership |
 | `agent/skills/guided_exercises/` | Guided-exercise definitions, selection, state transitions, memory helpers, and skill rendering |
-| `agent/runtime/memory_context.py` | Runtime-owned turn-memory loading backed by `agent/memory/recall.py` |
+| `agent/runtime/memory_context.py` | Runtime-owned turn-memory loading backed by `agent/memory/retrieval/service.py` |
 | `agent/guardrails/` | Crisis input guardrail, classifier service, prompts, and safety delta construction |
 | `agent/tools/crisis.py` | Crisis resource lookup tool and response delta |
 | `agent/memory/control/service.py` | Executes memory commands (list, forget, recall toggle, save preference) |
 | `agent/tools/grounded.py` | Search-grounded factual replies |
-| `agent/runtime/session/commit.py` | Session-end promotion path backed by `agent/memory/session_commit_service.py` |
-| `agent/runtime/session/summarize.py` | Session-end episodic summarization path backed by `agent/memory/episodic.py` |
+| `agent/runtime/session/commit.py` | Session-end promotion path backed by `agent/memory/commit/service.py` |
+| `agent/runtime/session/summarize.py` | Session-end episodic summarization path backed by `agent/memory/operations/episodic.py` |
 | `agent/runtime/turn_finalization.py` | Transcript finalization (single-element delta) |
 | `agent/audit/crisis_log.py` | Audit-log write helper, backend protocol, and in-memory implementations |
 | `agent/audit/postgres_crisis_log.py` | Primary durable crisis log with retention purge |
@@ -166,8 +166,8 @@ for the full breakdown.
 
 1. Create `agent/prompts/sources/response_styles/your_style.md` with the
    response style's knowledge content
-2. Add prompt-source wiring in `agent/specialists/therapeutic_prompt_sources.py`
-   and instructions in `agent/specialists/therapeutic_prompt_instructions.py`
+2. Add prompt-source wiring in `agent/specialists/therapeutic_response/prompt_sources.py`
+   and instructions in `agent/specialists/therapeutic_response/prompt_instructions.py`
 3. Update `agent/skills/therapeutic_response.py` if the style needs different
    prompt-local skill metadata
 4. Update `load_therapeutic_response_skill` guidance if the therapeutic
