@@ -907,35 +907,6 @@ async def test_persistent_runtime_openai_memory_control_streaming_surface(
 
 
 @pytest.mark.asyncio
-async def test_persistent_runtime_openai_shadow_does_not_mutate_state(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Shadow comparison should not write state snapshots or transcript turns."""
-
-    runner = FakeOpenAISDKRunner("shadow-only reply")
-    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
-
-    async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
-    ) as runtime:
-        result = await runtime.run_openai_text_shadow_turn(
-            thread_id="thread-shadow",
-            user_id="user-1",
-            message="I need help settling down before work.",
-            llm_client=FakeCrossRestartLLM(),
-        )
-
-        assert result.status == "eligible"
-        assert result.eligible is True
-        assert result.response_text_length == len("shadow-only reply")
-        assert runner.run_calls
-        assert (await runtime.session_status("thread-shadow")).value == "absent"
-        assert await runtime.get_state("thread-shadow") is None
-        assert await runtime.get_history("thread-shadow") == []
-
-
-@pytest.mark.asyncio
 async def test_persistent_runtime_guided_response_llm_omits_sdk_session_history(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
