@@ -41,11 +41,18 @@ def _select_semantic_candidates_to_commit(
     stored_arc: "StoredSessionArc | None",
     user_turn_texts: list[str],
     prior_session_support_texts: list[str],
+    embeddings: list[list[float]] | None = None,
 ) -> tuple[list[BufferedSemanticCandidate], int]:
-    """Choose which buffered semantic candidates are durable enough to commit."""
+    """Choose which buffered semantic candidates are durable enough to commit.
+
+    ``embeddings`` (one vector per buffered candidate, same order) selects the
+    embedding-cosine clustering path; ``None`` uses lexical clustering.
+    """
     selected: list[BufferedSemanticCandidate] = []
     skipped = 0
-    for group in _cluster_semantic_candidates(buffered_candidates):
+    for group in _cluster_semantic_candidates(
+        buffered_candidates, embeddings=embeddings
+    ):
         support_turn_count = len(
             {record.candidate.source_turn_index for record in group}
         )
@@ -113,12 +120,19 @@ def _select_procedural_candidates_to_commit(
     buffered_candidates: list[BufferedProceduralCandidate],
     *,
     user_turn_texts: list[str],
+    embeddings: list[list[float]] | None = None,
 ) -> tuple[list[tuple[BufferedProceduralCandidate, list[str], int]], int]:
-    """Choose which buffered implicit procedural candidates can promote."""
+    """Choose which buffered implicit procedural candidates can promote.
+
+    ``embeddings`` (one vector per buffered candidate, same order) selects the
+    embedding-cosine clustering path; ``None`` uses lexical clustering.
+    """
     selected: list[tuple[BufferedProceduralCandidate, list[str], int]] = []
     skipped = 0
 
-    for group in _cluster_procedural_candidates(buffered_candidates):
+    for group in _cluster_procedural_candidates(
+        buffered_candidates, embeddings=embeddings
+    ):
         representative = group[-1]
         candidate = representative.candidate
         candidate_tokens = _candidate_tokens(

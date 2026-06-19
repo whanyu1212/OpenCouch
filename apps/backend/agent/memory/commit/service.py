@@ -10,6 +10,10 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from agent.memory.commit.clustering import (
+    procedural_cluster_text,
+    semantic_cluster_text,
+)
 from agent.memory.commit.scoring import (
     _load_prior_session_support_texts,
     _user_turn_texts,
@@ -243,6 +247,30 @@ async def _commit_procedural_candidates(
             result.procedural_failures += 1
 
 
+async def _embed_for_clustering(
+    texts: list[str],
+    embedding_provider: "EmbeddingProvider | None",
+) -> list[list[float]] | None:
+    """Batch-embed candidate texts for cosine clustering.
+
+    Returns one vector per text, or ``None`` (clustering falls back to lexical)
+    when there is no provider, the call fails, or any text fails to embed.
+    """
+
+    if embedding_provider is None or not texts:
+        return None
+    try:
+        vectors = await embedding_provider.aembed(texts)
+    except Exception:
+        logger.warning(
+            "clustering embedding failed; using lexical clustering", exc_info=True
+        )
+        return None
+    if any(vector is None for vector in vectors) or len(vectors) != len(texts):
+        return None
+    return [vector for vector in vectors if vector is not None]
+
+
 async def commit_session_memory(
     state: AgentState,
     *,
@@ -291,19 +319,35 @@ async def commit_session_memory(
         result=result,
     )
 
+    procedural_embeddings = await _embed_for_clustering(
+        [
+            procedural_cluster_text(record.candidate)
+            for record in session_buffer.held_procedural_candidates
+        ],
+        embedding_provider,
+    )
     procedural_candidates_to_commit, result.procedural_skips = (
         _select_procedural_candidates_to_commit(
             session_buffer.held_procedural_candidates,
             user_turn_texts=user_turn_texts,
+            embeddings=procedural_embeddings,
         )
     )
 
+    semantic_embeddings = await _embed_for_clustering(
+        [
+            semantic_cluster_text(record.candidate)
+            for record in session_buffer.held_semantic_candidates
+        ],
+        embedding_provider,
+    )
     semantic_candidates_to_commit, result.semantic_skips = (
         _select_semantic_candidates_to_commit(
             session_buffer.held_semantic_candidates,
             stored_arc=stored_arc,
             user_turn_texts=user_turn_texts,
             prior_session_support_texts=prior_session_support_texts,
+            embeddings=semantic_embeddings,
         )
     )
     await _commit_semantic_candidates(
