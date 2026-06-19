@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from typing import Any
 
+from agent.flows.tool_forcing import force_tool_directive
 from agent.runtime.context import OpenAITextRunContext
 
 
@@ -42,9 +42,8 @@ def _replace_exercise_skill_context_with_tool_instruction(
     replacement = (
         "Exercise skill:\n"
         "(skill context is owned by GuidedExerciseAgent tools)\n"
-        "Required tool: load_guided_exercise_skill\n"
-        f"Required tool arguments: {json.dumps(arguments, sort_keys=True)}\n"
-        "Call the required tool exactly once before answering. Use only the "
+        + force_tool_directive("load_guided_exercise_skill", arguments)
+        + "Use only the "
         "returned skill_context plus the Runtime task below. Do not invent "
         "exercise steps, switch exercises, or offer a menu."
     )

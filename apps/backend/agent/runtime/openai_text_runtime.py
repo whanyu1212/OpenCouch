@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import time
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from typing import Any, cast
 
 from agents import Runner
@@ -17,10 +18,7 @@ from agent.observability.events import (
 )
 from agent.observability.timing import elapsed_ms
 from agent.specialists.roster import build_openai_text_agent_roster
-from agent.specialists.therapeutic import (
-    THERAPEUTIC_AGENT_NAME,
-    build_therapeutic_shadow_agent,
-)
+from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
 from agent.runtime.context import OpenAITextRunContext
 from agent.flows.crisis import (
     crisis_resource_tool_input_text_for_state as crisis_resource_prompt_for_state_path,
@@ -51,7 +49,6 @@ from agent.runtime.memory_context import build_turn_memory_delta
 from agent.runtime.state_ops import (
     DICT_REDUCER_KEYS,
     apply_state_delta,
-    build_shadow_result,
     finalize_openai_turn,
 )
 from agent.runtime.prompt_utils import final_output_text
@@ -69,7 +66,6 @@ from agent.runtime.text_turn_graph import (
 from agent.runtime.triage_dispatch import apply_triage_turn_dispatch
 from agent.runtime.types import (
     TextRuntimeConfig,
-    TextRuntimeShadowResult,
     TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
     TextRuntimeStreamEvent,
@@ -82,6 +78,21 @@ from agent.specialists.therapeutic_response.prompts import (
 from agent.skills.guided_exercises.engine.lifecycle import GuidedExerciseSkillService
 from llm.base import BaseLLMClient
 from llm.openai_client import DEFAULT_OPENAI_MODEL
+
+
+@dataclass(frozen=True)
+class RouteHandler:
+    """One route's pair of execution paths, keyed by ``TextRouteKind``.
+
+    ``execute`` runs the route to a final state; ``stream`` yields incremental
+    events. They are kept as a pair (not derived from one another) because the
+    routes have genuinely different streaming semantics: crisis, guided
+    exercise, and therapeutic stream token-by-token, while grounded lookup has
+    no incremental path and only wraps its final state in two events.
+    """
+
+    execute: Callable[..., Awaitable[AgentState]]
+    stream: Callable[..., AsyncIterator[TextRuntimeStreamEvent]]
 
 
 class OpenAIAgentsSDKRunner:
@@ -221,7 +232,6 @@ class OpenAITextRuntime:
             return await self._execute_route_plan(
                 plan,
                 config=config,
-                streamed=False,
                 context=context,
                 session=session,
             )
@@ -275,77 +285,6 @@ class OpenAITextRuntime:
             # drained on every exit path.
             _drain_prefetched_memory(context)
 
-    async def run_shadow_turn(
-        self,
-        initial_state: AgentTurnInputState,
-        *,
-        config: TextRuntimeConfig,
-        context: WorkflowContext,
-        prior_state: AgentState | None = None,
-    ) -> TextRuntimeShadowResult:
-        """Evaluate the OpenAI path without serving output or writing state."""
-
-        shadow_start = time.monotonic()
-        try:
-            route_result = await self._turn_graph.resolve(
-                initial_state,
-                config=config,
-                context=context,
-                prior_state=prior_state,
-            )
-            if route_result.plan is None:
-                return build_shadow_result(
-                    route_result.prepared,
-                    status="fallback",
-                    shadow_duration_ms=elapsed_ms(shadow_start),
-                )
-            plan = route_result.plan
-            self._apply_route_plan_diagnostics(plan)
-            if plan.kind in {
-                "crisis_response",
-                "crisis_clarification",
-                "grounded_lookup",
-                "guided_exercise",
-            }:
-                return build_shadow_result(
-                    plan.prepared,
-                    status="eligible",
-                    selected_agent=plan.selected_agent,
-                    shadow_duration_ms=elapsed_ms(shadow_start),
-                )
-
-            run_context = self._run_context_for_state(plan.state, config, context)
-            agent = build_therapeutic_shadow_agent(
-                state=plan.state,
-                model=self._model,
-            )
-            input_text = self._input_text_for_state(plan.state)
-
-            run_start = time.monotonic()
-            result = await self._runner.run(
-                agent=agent,
-                input_text=input_text,
-                context=run_context,
-            )
-            response_text = final_output_text(getattr(result, "final_output", None))
-            return build_shadow_result(
-                plan.prepared,
-                status="eligible",
-                selected_agent=plan.selected_agent,
-                sdk_duration_ms=elapsed_ms(run_start),
-                shadow_duration_ms=elapsed_ms(shadow_start),
-                response_text=response_text,
-            )
-        except Exception as exc:  # noqa: BLE001 - shadow must not break serving
-            return TextRuntimeShadowResult(
-                runtime="openai",
-                status="error",
-                eligible=False,
-                shadow_duration_ms=elapsed_ms(shadow_start),
-                error_type=type(exc).__name__,
-                error_message=str(exc),
-            )
-
     def _require_route_plan(self, result: TextTurnGraphResult) -> TextRoutePlan:
         if result.plan is None:
             raise RuntimeError("OpenAI text runtime produced an ineligible turn.")
@@ -363,43 +302,126 @@ class OpenAITextRuntime:
             },
         )
 
-    async def _execute_route_plan(
-        self,
-        plan: TextRoutePlan,
-        *,
-        config: TextRuntimeConfig,
-        context: WorkflowContext,
-        streamed: bool,
-        session: Any | None = None,
-    ) -> AgentState:
-        if plan.kind in {"crisis_response", "crisis_clarification"}:
-            return await self._run_crisis_turn(
+    def _route_handlers(self) -> dict[str, RouteHandler]:
+        """Dispatch table mapping each route kind to its handler pair.
+
+        Kinds absent from this table (``memory_control`` and ``therapeutic``)
+        fall through to the therapeutic handler — preserving the original
+        ``else`` branch of the former if-ladders.
+        """
+
+        crisis = RouteHandler(
+            execute=lambda plan, *, config, context, session: self._run_crisis_turn(
                 plan.state,
                 config=config,
                 context=context,
                 runtime_mode=plan.runtime_mode,
-                streamed=streamed,
+                streamed=False,
                 session=session,
-            )
-        if plan.kind == "grounded_lookup":
-            return await run_grounded_lookup_turn_path(
+            ),
+            stream=lambda plan,
+            *,
+            config,
+            context,
+            session: self._run_crisis_turn_stream(
+                plan.state,
+                config=config,
+                context=context,
+                runtime_mode=plan.runtime_mode,
+                session=session,
+            ),
+        )
+        grounded = RouteHandler(
+            execute=lambda plan,
+            *,
+            config,
+            context,
+            session: run_grounded_lookup_turn_path(
                 self._services(),
                 plan.state,
                 query=plan.query,
                 config=config,
                 context=context,
-                streamed=streamed,
+                streamed=False,
                 session=session,
-            )
-        if plan.kind == "guided_exercise":
-            return await self._run_guided_exercise_turn(
+            ),
+            stream=lambda plan,
+            *,
+            config,
+            context,
+            session: self._stream_grounded_lookup(
+                plan,
+                config=config,
+                context=context,
+                session=session,
+            ),
+        )
+        guided = RouteHandler(
+            execute=lambda plan,
+            *,
+            config,
+            context,
+            session: self._run_guided_exercise_turn(
                 plan.state,
                 config=config,
                 context=context,
-                streamed=streamed,
+                streamed=False,
                 session=session,
-            )
+            ),
+            stream=lambda plan,
+            *,
+            config,
+            context,
+            session: self._run_guided_exercise_turn_stream(
+                plan.state,
+                config=config,
+                context=context,
+                session=session,
+            ),
+        )
+        return {
+            "crisis_response": crisis,
+            "crisis_clarification": crisis,
+            "grounded_lookup": grounded,
+            "guided_exercise": guided,
+        }
 
+    def _handler_for(self, kind: str) -> RouteHandler:
+        return self._route_handlers().get(kind, self._therapeutic_handler())
+
+    def _therapeutic_handler(self) -> RouteHandler:
+        return RouteHandler(
+            execute=lambda plan,
+            *,
+            config,
+            context,
+            session: self._run_therapeutic_route(
+                plan,
+                config=config,
+                context=context,
+                session=session,
+            ),
+            stream=lambda plan,
+            *,
+            config,
+            context,
+            session: run_therapeutic_turn_stream_path(
+                self._services(),
+                plan.state,
+                config=config,
+                context=context,
+                session=session,
+            ),
+        )
+
+    async def _run_therapeutic_route(
+        self,
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AgentState:
         therapeutic_result = await self._run_safe_agent_turn(
             plan.state,
             config=config,
@@ -414,7 +436,47 @@ class OpenAITextRuntime:
             response_style=therapeutic_result.response_style,
             selected_agent=THERAPEUTIC_AGENT_NAME,
             sdk_duration_ms=therapeutic_result.sdk_duration_ms,
-            streamed=streamed,
+            streamed=False,
+        )
+
+    async def _stream_grounded_lookup(
+        self,
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AsyncIterator[TextRuntimeStreamEvent]:
+        # Grounded lookup has no incremental streaming path: it runs the
+        # non-streaming flow to a final state, then synthesizes the two events a
+        # streaming consumer expects (finalize status + final state). Note the
+        # streamed=True here, in contrast to the execute path's streamed=False —
+        # this asymmetry is preserved verbatim from the original inline code.
+        final_state = await run_grounded_lookup_turn_path(
+            self._services(),
+            plan.state,
+            query=plan.query,
+            config=config,
+            context=context,
+            streamed=True,
+            session=session,
+        )
+        yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+        yield TextRuntimeStateEvent(state=final_state)
+
+    async def _execute_route_plan(
+        self,
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AgentState:
+        return await self._handler_for(plan.kind).execute(
+            plan,
+            config=config,
+            context=context,
+            session=session,
         )
 
     async def _stream_route_plan(
@@ -425,44 +487,8 @@ class OpenAITextRuntime:
         context: WorkflowContext,
         session: Any | None = None,
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
-        if plan.kind in {"crisis_response", "crisis_clarification"}:
-            async for event in self._run_crisis_turn_stream(
-                plan.state,
-                config=config,
-                context=context,
-                runtime_mode=plan.runtime_mode,
-                session=session,
-            ):
-                yield event
-            return
-
-        if plan.kind == "grounded_lookup":
-            final_state = await run_grounded_lookup_turn_path(
-                self._services(),
-                plan.state,
-                query=plan.query,
-                config=config,
-                context=context,
-                streamed=True,
-                session=session,
-            )
-            yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
-            yield TextRuntimeStateEvent(state=final_state)
-            return
-
-        if plan.kind == "guided_exercise":
-            async for event in self._run_guided_exercise_turn_stream(
-                plan.state,
-                config=config,
-                context=context,
-                session=session,
-            ):
-                yield event
-            return
-
-        async for event in run_therapeutic_turn_stream_path(
-            self._services(),
-            plan.state,
+        async for event in self._handler_for(plan.kind).stream(
+            plan,
             config=config,
             context=context,
             session=session,

@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from agent.audit.crisis_log import record_crisis_outcome
+from agent.flows.tool_forcing import force_tool_directive
 from agent.observability.timing import elapsed_ms
 from agent.runtime.prompt_utils import chunk_from_sdk_event, final_output_text
 from agent.runtime.session.state import format_recent_history
@@ -352,9 +353,8 @@ def crisis_resource_tool_input_text_for_state(state: AgentState) -> str:
     )
     return (
         "The current user turn is an app-classified level 2/3 crisis response.\n\n"
-        "Required tool: lookup_crisis_resources\n"
-        "Required tool arguments: {}\n"
-        "Call the required tool exactly once before answering. Then write the "
+        + force_tool_directive("lookup_crisis_resources", {})
+        + "Then write the "
         "next assistant message using the tool result as the only source for "
         "specific crisis resources. If the tool result has no verified local "
         "resource, give immediate safety guidance without inventing phone "

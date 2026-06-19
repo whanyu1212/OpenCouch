@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import time
-from hashlib import sha256
 from typing import Any, cast
 
 from agent.models import MessageRole
 from agent.observability.decorators import trace_event
 from agent.observability.diagnostics import diagnostics_from_state, merge_diagnostics
 from agent.observability.events import RUNTIME_TEXT_TURN_FINALIZED
-from agent.runtime.types import TextRuntimeShadowResult, TextRuntimeShadowStatus
 from agent.state import AgentState
 
 
@@ -123,58 +121,3 @@ def finalize_openai_turn(
             }
         )
     return cast(AgentState, final_values)
-
-
-def build_shadow_result(
-    prepared: Any,
-    *,
-    status: TextRuntimeShadowStatus,
-    selected_agent: str | None = None,
-    sdk_duration_ms: float | None = None,
-    shadow_duration_ms: float | None = None,
-    response_text: str | None = None,
-) -> TextRuntimeShadowResult:
-    assessment = prepared.state.get("crisis")
-    summary = response_text_summary(response_text)
-    memory_reference = prepared.state.get("memory_reference", {}) or {}
-    memory_reference_mode = (
-        memory_reference.get("mode") if isinstance(memory_reference, dict) else None
-    )
-    grounded_lookup = prepared.state.get("grounded_lookup", {}) or {}
-    grounded_lookup_query = (
-        grounded_lookup.get("query") if isinstance(grounded_lookup, dict) else None
-    )
-    return TextRuntimeShadowResult(
-        runtime="openai",
-        status=status,
-        eligible=prepared.eligible,
-        fallback_reason=prepared.fallback_reason or None,
-        route=prepared.state.get("route"),
-        memory_reference_mode=(
-            str(memory_reference_mode) if memory_reference_mode is not None else None
-        ),
-        grounded_lookup_query=(
-            str(grounded_lookup_query) if grounded_lookup_query else None
-        ),
-        crisis_level=getattr(assessment, "level", None),
-        needs_crisis_response=getattr(assessment, "needs_crisis_response", None),
-        needs_crisis_clarification=getattr(assessment, "needs_clarification", None),
-        selected_agent=selected_agent,
-        sdk_duration_ms=sdk_duration_ms,
-        shadow_duration_ms=shadow_duration_ms,
-        **summary,
-    )
-
-
-def response_text_summary(text: str | None) -> dict[str, Any]:
-    if not text:
-        return {
-            "response_text_length": None,
-            "response_text_preview": None,
-            "response_text_sha256": None,
-        }
-    return {
-        "response_text_length": len(text),
-        "response_text_preview": text[:160],
-        "response_text_sha256": sha256(text.encode("utf-8")).hexdigest(),
-    }

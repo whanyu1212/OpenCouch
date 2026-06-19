@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from agent.flows.sdk_fallback import (
     can_fallback_to_control_response,
     openai_sdk_fallback_reason,
 )
+from agent.flows.tool_forcing import force_tool_directive
 from agent.runtime.services import TextRuntimeServices
 from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
@@ -103,9 +103,8 @@ def grounded_lookup_input_text_for_state(
     return (
         "The current user turn is an explicit grounded lookup request "
         "selected by the OpenCouch runtime.\n\n"
-        "Required tool: answer_grounded_lookup\n"
-        f"Required tool arguments: {json.dumps({'query': query}, sort_keys=True)}\n"
-        "Call the required tool exactly once before answering. Then answer "
+        + force_tool_directive("answer_grounded_lookup", {"query": query})
+        + "Then answer "
         "using only the tool result's response_text. Do not provide "
         "ungrounded factual claims.\n\n"
         f'Current user message: "{state.get("message", "")}"'

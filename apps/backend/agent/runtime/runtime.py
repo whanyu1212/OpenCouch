@@ -71,7 +71,6 @@ from agent.runtime.types import (
     SessionStatus,
     TextRuntimeChunkEvent,
     TextRuntimeConfig,
-    TextRuntimeShadowResult,
     TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
     ThreadSummary,
@@ -398,7 +397,6 @@ class PersistentAgentRuntime:
         self._speculative_memory_prefetch = speculative_memory_prefetch
         self._thread_llm_clients: dict[str, BaseLLMClient | None] = {}
         self._openai_text_runtime: OpenAITextRuntime | None = None
-        self._openai_shadow_runtime: OpenAITextRuntime | None = None
         self._session_tracker = RuntimeSessionTracker()
 
         self._resources: RuntimeResources = build_runtime_resources(
@@ -786,8 +784,9 @@ class PersistentAgentRuntime:
             llm_client: The control-plane LLM client.
             response_llm_client: Optional response-writer override.
             track_session: Whether the context should create runtime-local
-                session tracking helpers. Shadow runs must keep this disabled
-                so they do not affect liveness or recovery state.
+                session tracking helpers. Non-serving callers (e.g. the voice
+                runtime facade) keep this disabled so they do not affect
+                liveness or recovery state.
 
         Returns:
             The runtime context for the turn.
@@ -881,13 +880,6 @@ class PersistentAgentRuntime:
         if self._openai_text_runtime is None:
             self._openai_text_runtime = OpenAITextRuntime()
         return self._openai_text_runtime
-
-    def _get_openai_shadow_runtime(self) -> OpenAITextRuntime:
-        """Return a non-serving OpenAI runtime for shadow comparisons."""
-
-        if self._openai_shadow_runtime is None:
-            self._openai_shadow_runtime = OpenAITextRuntime()
-        return self._openai_shadow_runtime
 
     async def _openai_sdk_session_for_thread(
         self,
@@ -1157,56 +1149,6 @@ class PersistentAgentRuntime:
             ),
             prior_turn_count=prior_turn_count,
         )
-
-    async def run_openai_text_shadow_turn(
-        self,
-        *,
-        thread_id: str,
-        message: str,
-        channel: Channel = Channel.TEST,
-        user_id: str | None = None,
-        installed_skills: list[str] | None = None,
-        llm_client: BaseLLMClient | None = None,
-        response_llm_client: BaseLLMClient | None = None,
-    ) -> TextRuntimeShadowResult:
-        """Evaluate the OpenAI text runtime without mutating served state.
-
-        The shadow path is for evals and dogfood observability. It uses the
-        same initial-turn construction and app-owned context as a normal turn,
-        but it does not prepare active sessions, write runtime state, append
-        transcript entries, schedule extraction, or return output to users.
-        """
-
-        async with self._thread_lock(thread_id):
-            prior_state = await self.get_state(thread_id)
-            prior_turn_count = turn_count_from_state(prior_state)
-            initial_state = self._build_turn_initial_state(
-                thread_id=thread_id,
-                message=message,
-                channel=channel,
-                user_id=user_id,
-                installed_skills=installed_skills,
-                prior_turn_count=prior_turn_count,
-            )
-            return await self._get_openai_shadow_runtime().run_shadow_turn(
-                initial_state,
-                config=self._config_for_thread(
-                    thread_id,
-                    channel=channel,
-                    user_id=user_id,
-                    streaming=False,
-                ),
-                context=self._context_for_turn(
-                    thread_id=thread_id,
-                    message=message,
-                    prior_state=prior_state,
-                    user_id=user_id,
-                    llm_client=llm_client,
-                    response_llm_client=response_llm_client,
-                    track_session=False,
-                ),
-                prior_state=prior_state,
-            )
 
     async def run_turn(
         self,

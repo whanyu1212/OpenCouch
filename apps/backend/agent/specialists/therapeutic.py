@@ -13,10 +13,6 @@ from agent.specialists.common import (
     definition_with_instructions,
 )
 from agent.runtime.context import OpenAITextRunContext
-from agent.specialists.therapeutic_response.prompts import (
-    build_supportive_system_prompt,
-)
-from agent.state import AgentState
 from agent.tools.grounded import build_grounded_lookup_tools
 from agent.tools.guided_exercise import build_guided_exercise_discovery_tools
 from agent.tools.memory import build_memory_tools
@@ -119,30 +115,9 @@ def build_therapeutic_agent(
     )
 
 
-def build_therapeutic_shadow_agent(
-    *,
-    state: AgentState,
-    model: str = DEFAULT_OPENAI_MODEL,
-) -> Agent[OpenAITextRunContext]:
-    """Build the no-tools therapeutic agent used for shadow evaluation."""
-
-    instructions = (
-        f"{RUNTIME_THERAPEUTIC_INSTRUCTIONS}\n\n"
-        "Shadow runs must not call tools or create side effects. Produce a "
-        "best-effort safe therapeutic reply from the visible prompt only.\n\n"
-        f"{build_supportive_system_prompt(state)}"
-    )
-    return build_therapeutic_agent(
-        model=model,
-        instructions=instructions,
-        tools=[],
-    )
-
-
 __all__ = [
     "RUNTIME_THERAPEUTIC_INSTRUCTIONS",
     "THERAPEUTIC_AGENT_INSTRUCTIONS",
     "THERAPEUTIC_AGENT_NAME",
     "build_therapeutic_agent",
-    "build_therapeutic_shadow_agent",
 ]
