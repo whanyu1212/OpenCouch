@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 
 import pytest
 
 from agent.memory.modes import MemoryMode
+from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.runtime.session import RuntimeSessionTracker
+from agent.runtime.session.active_session import PersistedActiveSessionState
 from agent.runtime.session.service import SessionLifecycleService, SessionSweepResult
+from agent.runtime.types import SessionStatus
 
 
 class _FakeActiveSessionManager:
@@ -27,6 +31,15 @@ class _FakeActiveSessionManager:
     def session_has_expired(self, session: object) -> bool:
         thread_id = getattr(session, "thread_id", None)
         return isinstance(thread_id, str) and thread_id in self.expired_threads
+
+    @asynccontextmanager
+    async def active_session_mutation(
+        self, thread_id: str, **_kwargs: object
+    ) -> AsyncIterator[str | None]:
+        yield "fake-mutation-token"
+
+    async def delete_persisted_active_session(self, thread_id: str) -> None:
+        self.persisted_sessions.pop(thread_id, None)
 
 
 class _FakeStateStore:
@@ -196,6 +209,7 @@ async def test_finalize_expired_sessions_once_counts_outcomes() -> None:
         thread_id: str,
         *,
         llm_client: object | None = None,
+        finalize_only_if_expired: bool = False,
     ) -> None:
         finalized.append((thread_id, llm_client))
 
@@ -249,6 +263,7 @@ async def test_finalize_expired_sessions_once_continues_after_thread_failure() -
         thread_id: str,
         *,
         llm_client: object | None = None,
+        finalize_only_if_expired: bool = False,
     ) -> None:
         if thread_id == "thread-fails":
             raise RuntimeError("forced end failure")
@@ -263,3 +278,76 @@ async def test_finalize_expired_sessions_once_continues_after_thread_failure() -
     assert result.finalized == 1
     assert result.failed_thread_ids == ["thread-fails"]
     assert finalized == ["thread-succeeds"]
+
+
+def _active_session(thread_id: str) -> PersistedActiveSessionState:
+    return PersistedActiveSessionState(
+        thread_id=thread_id,
+        started_at="2026-06-19T00:00:00Z",
+        last_active_at="2026-06-19T00:01:00Z",
+        transcript_start_index=0,
+        max_crisis_level=0,
+        session_buffer=SessionMemoryBuffer(session_id=thread_id),
+    )
+
+
+@pytest.mark.asyncio
+async def test_end_session_unlocked_skips_renewed_session_under_lock() -> None:
+    # Regression for #164 (sweeper TOCTOU): the sweeper's expiry check runs
+    # without the lock; a concurrent turn can renew the session before the lock
+    # is acquired. With finalize_only_if_expired=True, end_session_unlocked must
+    # re-check expiry against the fresh persisted row under the lock and skip
+    # finalizing a session that is no longer expired.
+    manager = _FakeActiveSessionManager()
+    manager.persisted_sessions = {"thread-1": _active_session("thread-1")}
+    manager.expired_threads = set()  # session is NOT expired anymore (renewed)
+    service = _build_service(active_session_manager=manager)
+
+    get_state_calls: list[str] = []
+
+    async def _get_state(thread_id: str) -> object | None:
+        get_state_calls.append(thread_id)
+        return {"transcript": []}
+
+    result = await service.end_session_unlocked(
+        "thread-1",
+        effective_llm_client=lambda thread_id, override: None,
+        session_status_unlocked=lambda thread_id: _coro(SessionStatus.ACTIVE),
+        get_state=_get_state,
+        finalize_only_if_expired=True,
+    )
+
+    assert result is None  # skipped, not finalized
+    assert get_state_calls == []  # short-circuited before any finalize work
+
+
+@pytest.mark.asyncio
+async def test_end_session_unlocked_finalizes_unconditionally_by_default() -> None:
+    # The default (explicit/shutdown callers) must finalize even a non-expired
+    # session — the renewal guard is sweeper-only. We assert it proceeds past the
+    # renewal check into finalize work (reaches get_state), confirming the guard
+    # does not block unconditional callers.
+    manager = _FakeActiveSessionManager()
+    manager.persisted_sessions = {"thread-1": _active_session("thread-1")}
+    manager.expired_threads = set()  # not expired, but default must still finalize
+    service = _build_service(active_session_manager=manager)
+
+    get_state_calls: list[str] = []
+
+    async def _get_state(thread_id: str) -> object | None:
+        get_state_calls.append(thread_id)
+        return None  # triggers the early delete-and-return path; finalize attempted
+
+    await service.end_session_unlocked(
+        "thread-1",
+        effective_llm_client=lambda thread_id, override: None,
+        session_status_unlocked=lambda thread_id: _coro(SessionStatus.ACTIVE),
+        get_state=_get_state,
+        # finalize_only_if_expired defaults to False
+    )
+
+    assert get_state_calls == ["thread-1"]  # did NOT skip; proceeded to finalize
+
+
+async def _coro(value: object) -> object:
+    return value
