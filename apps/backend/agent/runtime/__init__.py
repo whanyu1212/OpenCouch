@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import Any
 
 _RUNTIME_EXPORTS = {
-    "ALLOWED_MSGPACK_MODULES",
     "DEFAULT_CRISIS_LOG_DB_PATH",
     "DEFAULT_FEEDBACK_DB_PATH",
     "DEFAULT_MEMORY_DB_PATH",
@@ -97,7 +96,6 @@ def __getattr__(name: str) -> Any:
 
 
 __all__ = [
-    "ALLOWED_MSGPACK_MODULES",
     "DEFAULT_CRISIS_LOG_DB_PATH",
     "DEFAULT_FEEDBACK_DB_PATH",
     "DEFAULT_MEMORY_DB_PATH",

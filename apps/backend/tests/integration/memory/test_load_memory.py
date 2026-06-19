@@ -1,4 +1,4 @@
-"""Unit tests for turn memory context and assistant-turn finalization stages.
+"""Unit tests for the turn memory context stage.
 
 The pre-refactor memory-load stage wrote to seven state
 keys (transcript, history, working_memory, memory, session_progress,
@@ -16,8 +16,6 @@ refactor fixed:
 2. Turn memory loading does NOT touch routing/response/session_progress/exercise_state.
 3. Guest mode still short-circuits and returns an empty working memory.
 4. Real retrieval still returns formatted memory snippets.
-5. Assistant-turn finalization appends the assistant response exactly once at
-   turn end, guarded against empty responses.
 """
 
 from __future__ import annotations
@@ -36,7 +34,6 @@ from agent.memory.retrieval.service import (
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import MessageRole
-from agent.runtime.turn_finalization import finalize_assistant_turn_delta
 from agent.runtime.memory_context import build_turn_memory_delta
 from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
@@ -439,9 +436,10 @@ class TestTurnMemoryContext:
     async def test_preserves_other_session_memory_fields_via_spread(self) -> None:
         """When updating ``session_memory.summary``, the helper preserves peers.
 
-        runtime's default reducer replaces whole dict values, so the
-        helper must spread the existing ``session_memory`` dict before
-        overwriting ``summary``.
+        The runtime applies session_memory deltas with a shallow dict merge
+        (``state_ops.DICT_REDUCER_KEYS``), so the helper must include the
+        existing peer fields it wants to keep rather than relying on a deep
+        merge.
         """
 
         store = OpenCouchMemoryStore()
@@ -1400,103 +1398,3 @@ class TestEpisodicRetrieval:
             primary_themes=["topic-54"],
             is_catch_up=True,
         )
-
-
-# ─── turn finalization tests ───────────────────────────────────────────
-
-
-class TestFinalizeTurnNode:
-    """Tests for terminal transcript appends."""
-
-    @pytest.mark.asyncio
-    async def test_appends_assistant_response_to_transcript(
-        self,
-    ) -> None:
-        """Turn finalization should return a single-turn transcript delta.
-
-        v0.8 observability: the assistant turn dict also carries a
-        ``response_style`` field sourced from top-level state. This state
-        has no style set, so the mode resolves to ``None``.
-
-        The transcript is reducer-backed, so turn finalization must emit
-        ONLY the assistant turn. Returning the full reconstructed transcript
-        would duplicate prior entries when the reducer merges the delta into
-        state snapshoted state.
-        """
-
-        state: dict[str, Any] = {
-            "transcript": [{"role": "user", "content": "Hi"}],
-            "response_text": "Hello, how can I help?",
-        }
-        delta = finalize_assistant_turn_delta(state)  # type: ignore[arg-type]
-
-        assert len(delta["transcript"]) == 1
-        assert delta["transcript"][0] == {
-            "role": MessageRole.ASSISTANT.value,
-            "content": "Hello, how can I help?",
-            "response_style": None,
-        }
-
-    @pytest.mark.asyncio
-    async def test_empty_response_text_returns_no_transcript_delta(self) -> None:
-        """If ``response_text`` is empty or missing, the node must NOT append
-        an assistant turn. The diagnostics ``finalize_done_at_monotonic``
-        marker is still emitted because it tracks "finalize ran" rather
-        than "a transcript turn was written"."""
-
-        state: dict[str, Any] = {
-            "transcript": [{"role": "user", "content": "Hi"}],
-            "history": [{"role": "user", "content": "Hi"}],
-            "response_text": "",
-        }
-        delta = finalize_assistant_turn_delta(state)  # type: ignore[arg-type]
-
-        assert "transcript" not in delta
-        assert "finalize_done_at_monotonic" in delta["diagnostics"]
-
-    @pytest.mark.asyncio
-    async def test_whitespace_only_response_returns_no_transcript_delta(self) -> None:
-        """Whitespace-only responses should be treated as empty and not
-        pollute the transcript."""
-
-        state: dict[str, Any] = {
-            "transcript": [{"role": "user", "content": "Hi"}],
-            "history": [],
-            "response_text": "   \n\t  ",
-        }
-        delta = finalize_assistant_turn_delta(state)  # type: ignore[arg-type]
-
-        assert "transcript" not in delta
-        assert "finalize_done_at_monotonic" in delta["diagnostics"]
-
-    @pytest.mark.asyncio
-    async def test_missing_response_slot_returns_no_transcript_delta(self) -> None:
-        """If the response field is entirely absent (defensive case), the
-        node should not crash and must not append a phantom assistant turn."""
-
-        state: dict[str, Any] = {
-            "transcript": [{"role": "user", "content": "Hi"}],
-            "history": [],
-        }
-        delta = finalize_assistant_turn_delta(state)  # type: ignore[arg-type]
-
-        assert "transcript" not in delta
-        assert "finalize_done_at_monotonic" in delta["diagnostics"]
-
-    @pytest.mark.asyncio
-    async def test_does_not_touch_other_state_keys(self) -> None:
-        """The node's delta must contain only transcript and the
-        finalize-timing diagnostic. The diagnostic is the boundary marker
-        ``stamp_turn_total_ms`` reads to compute ``post_finalize_ms``."""
-
-        state: dict[str, Any] = {
-            "transcript": [{"role": "user", "content": "Hi"}],
-            "history": [],
-            "response_text": "Hello",
-            "response_style": "supportive",
-            "session_memory": {"summary": "x"},
-        }
-        delta = finalize_assistant_turn_delta(state)  # type: ignore[arg-type]
-
-        assert set(delta.keys()) == {"transcript", "diagnostics"}
-        assert set(delta["diagnostics"].keys()) == {"finalize_done_at_monotonic"}
