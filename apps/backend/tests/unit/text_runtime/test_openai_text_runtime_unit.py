@@ -1261,6 +1261,69 @@ async def test_openai_runtime_streams_safe_therapeutic_turn() -> None:
     assert runner.stream_calls
 
 
+class _MidStreamFailRunner(FakeOpenAISDKRunner):
+    """SDK runner whose stream emits one chunk and then raises a fallback-eligible
+    error, to exercise the mid-stream-failure branch of run_turn_stream."""
+
+    def run_streamed(self, **kwargs: Any) -> Any:
+        self.stream_calls.append(kwargs)
+
+        class _FailingStream:
+            final_output = ""
+
+            async def stream_events(self) -> AsyncIterator[Any]:
+                from types import SimpleNamespace
+
+                yield SimpleNamespace(
+                    type="raw_response_event",
+                    data=SimpleNamespace(
+                        type="response.output_text.delta", delta="partial "
+                    ),
+                )
+                from openai import APIConnectionError
+
+                raise APIConnectionError(request=cast(Any, None))
+
+        return _FailingStream()
+
+
+@pytest.mark.asyncio
+async def test_streaming_sdk_failure_after_chunks_does_not_double_stream() -> None:
+    # Regression for #165: if the SDK stream fails AFTER chunks have already been
+    # emitted to the client, we must NOT fall back to a fresh full control-LLM
+    # reply (that would duplicate/garble output, and there is no reset event in
+    # the protocol). The turn re-raises instead — a clean error beats garbled
+    # output, which matters most on the voice response path.
+    workflow = _StatefulWorkflow()
+    runtime = _runtime(workflow, _MidStreamFailRunner("unused"))
+    # llm_client (NOT response_llm — that would divert to a different stream path)
+    # is set so the control-LLM fallback would be ELIGIBLE if no chunks had
+    # streamed. The fallback would stream this client's text; asserting it never
+    # streams proves the `if chunks: raise` guard (not the predicate) blocks it.
+    fallback_llm = _RecordingResponseLLM("FALLBACK FULL REPLY")
+    context = WorkflowContext(
+        llm_client=fallback_llm,
+        memory_store=OpenCouchMemoryStore(),
+        crisis_log_backend=InMemoryCrisisLogBackend(),
+        memory_mode=MemoryMode.LOCAL,
+    )
+
+    emitted: list[Any] = []
+    with pytest.raises(Exception):  # noqa: B017 - any SDK error re-raise is fine
+        async for event in runtime.run_turn_stream(
+            cast(Any, _initial_state()),
+            config={"configurable": {"thread_id": "thread-1"}},
+            context=context,
+        ):
+            emitted.append(event)
+
+    # The one partial chunk was emitted; the fallback full reply was NOT.
+    chunk_texts = [e.text for e in emitted if isinstance(e, TextRuntimeChunkEvent)]
+    assert "partial " in chunk_texts
+    assert "FALLBACK FULL REPLY" not in chunk_texts
+    assert fallback_llm.stream_calls == 0  # fallback stream never invoked
+
+
 @pytest.mark.asyncio
 async def test_openai_runtime_streams_guided_exercise_turn() -> None:
     workflow = _StatefulWorkflow()
