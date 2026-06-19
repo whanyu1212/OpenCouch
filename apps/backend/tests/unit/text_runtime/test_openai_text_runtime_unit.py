@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from typing import Any, cast
 
@@ -19,7 +20,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.models import AgentInput
 from agent.runtime.triage_dispatch import apply_triage_decision_to_state
-from agent.runtime.workflow_context import WorkflowContext
+from agent.runtime.workflow_context import PrefetchedTurnMemory, WorkflowContext
 from agent.runtime import (
     OpenAITextRuntime,
     TextRuntimeChunkEvent,
@@ -1390,3 +1391,92 @@ async def test_openai_runtime_streams_memory_control_turn_through_sdk_tool() -> 
     ]
     assert runner.run_calls == []
     assert runner.stream_calls
+
+
+async def _never_resolves() -> Any:
+    # Simulates an in-flight prefetch that the turn's route never consumes.
+    await asyncio.sleep(3600)
+
+
+async def _assert_settles(task: asyncio.Task[Any]) -> None:
+    # task.cancel() only requests cancellation; let the loop deliver it, bounded
+    # so a regression (prefetch left pending) fails fast and cleanly instead of
+    # hanging on the task's long sleep.
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=1.0)
+    except asyncio.CancelledError:
+        pass  # expected: the dispatch finally cancelled the orphaned prefetch
+    except TimeoutError:  # pragma: no cover - only hit if the drain regresses
+        pass
+    assert task.done(), (
+        "prefetch task left pending — dispatch boundary did not drain it"
+    )
+
+
+def _context_with_orphan_prefetch() -> tuple[WorkflowContext, asyncio.Task[Any]]:
+    # The grounded_lookup route never calls load_turn_memory, so nothing on the
+    # consume path touches this prefetch — it can only be settled by the new
+    # dispatch-boundary finally. (owner_id matches the turn's owner so a mismatch
+    # cancel cannot mask the behavior under test.)
+    task = asyncio.ensure_future(_never_resolves())
+    prefetch = PrefetchedTurnMemory(
+        task=task,
+        owner_id="user-1",
+        query="Can you look up the current rule?",
+        is_first_turn=True,
+    )
+    context = WorkflowContext(
+        llm_client=_RouteLLM(route="grounded_lookup"),
+        memory_store=OpenCouchMemoryStore(),
+        crisis_log_backend=InMemoryCrisisLogBackend(),
+        memory_mode=MemoryMode.LOCAL,
+        pre_fetched_memory=prefetch,
+    )
+    return context, task
+
+
+def _grounded_runner() -> FakeOpenAISDKRunner:
+    return FakeOpenAISDKRunner(
+        tool_calls=[("answer_grounded_lookup", {"query": "grounded query"})],
+        tool_response_as_final=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_turn_drains_orphaned_prefetch_task() -> None:
+    # Regression for #160/#161: the speculative memory prefetch is scheduled on
+    # every turn but only consumed by routes that call load_turn_memory. On
+    # grounded_lookup (and crisis_response) nothing consumes it, so the dispatch
+    # boundary must settle (cancel/retrieve) it by turn end — never orphaned.
+    workflow = _StatefulWorkflow()
+    runtime = _runtime(workflow, _grounded_runner())
+    context, task = _context_with_orphan_prefetch()
+
+    await runtime.run_turn(
+        cast(Any, _initial_state("Can you look up the current rule?")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=context,
+    )
+
+    # cancel() only requests cancellation; let the loop deliver it. Bounded so a
+    # regression (task left pending) fails fast and cleanly instead of hanging on
+    # the task's long sleep.
+    await _assert_settles(task)
+
+
+@pytest.mark.asyncio
+async def test_run_turn_stream_drains_orphaned_prefetch_task() -> None:
+    # Same invariant on the streaming path; the finally also covers early
+    # consumer abandonment (aclose()).
+    workflow = _StatefulWorkflow()
+    runtime = _runtime(workflow, _grounded_runner())
+    context, task = _context_with_orphan_prefetch()
+
+    async for _event in runtime.run_turn_stream(
+        cast(Any, _initial_state("Can you look up the current rule?")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=context,
+    ):
+        pass
+
+    await _assert_settles(task)

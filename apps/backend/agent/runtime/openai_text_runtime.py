@@ -138,6 +138,24 @@ _DEFAULT_OPENAI_RUNNER = OpenAIAgentsSDKRunner()
 _PRIOR_STATE_NOT_PROVIDED = object()
 
 
+def _drain_prefetched_memory(context: WorkflowContext) -> None:
+    """Cancel/retrieve any speculative memory prefetch at turn end.
+
+    The prefetch task is scheduled per-turn but only consumed by routes that
+    call ``load_turn_memory`` (therapeutic). Routes that skip memory load —
+    crisis_response and grounded_lookup — would otherwise orphan the task,
+    leaking a held memory-store connection and an unretrieved exception. Draining
+    here makes "prefetch is always settled by turn end" an invariant independent
+    of route. ``cancel_if_pending`` is idempotent, so this is a safe no-op when
+    the prefetch was already consumed or never scheduled. Runs at teardown, off
+    the response path, so it adds no turn latency.
+    """
+
+    pre_fetched = context.pre_fetched_memory
+    if pre_fetched is not None:
+        pre_fetched.cancel_if_pending()
+
+
 class OpenAITextRuntime:
     """OpenAI Agents SDK text runtime."""
 
@@ -187,21 +205,24 @@ class OpenAITextRuntime:
                 streamed=False,
             )
 
-        route_result = await self._turn_graph.resolve(
-            initial_state,
-            config=config,
-            context=context,
-            prior_state=prior_state,
-        )
-        plan = self._require_route_plan(route_result)
-        self._apply_route_plan_diagnostics(plan)
-        return await self._execute_route_plan(
-            plan,
-            config=config,
-            streamed=False,
-            context=context,
-            session=session,
-        )
+        try:
+            route_result = await self._turn_graph.resolve(
+                initial_state,
+                config=config,
+                context=context,
+                prior_state=prior_state,
+            )
+            plan = self._require_route_plan(route_result)
+            self._apply_route_plan_diagnostics(plan)
+            return await self._execute_route_plan(
+                plan,
+                config=config,
+                streamed=False,
+                context=context,
+                session=session,
+            )
+        finally:
+            _drain_prefetched_memory(context)
 
     @trace_span(RUNTIME_TEXT_TURN, attrs={"runtime_mode": "text", "streamed": True})
     async def run_turn_stream(
@@ -226,23 +247,29 @@ class OpenAITextRuntime:
             yield TextRuntimeStateEvent(state=final_state)
             return
 
-        route_result = await self._turn_graph.resolve(
-            initial_state,
-            config=config,
-            context=context,
-            prior_state=prior_state,
-        )
-        plan = self._require_route_plan(route_result)
-        self._apply_route_plan_diagnostics(plan)
-        for stage in plan.stream_status_stages:
-            yield TextRuntimeStatusEvent(stage=stage)
-        async for event in self._stream_route_plan(
-            plan,
-            config=config,
-            context=context,
-            session=session,
-        ):
-            yield event
+        try:
+            route_result = await self._turn_graph.resolve(
+                initial_state,
+                config=config,
+                context=context,
+                prior_state=prior_state,
+            )
+            plan = self._require_route_plan(route_result)
+            self._apply_route_plan_diagnostics(plan)
+            for stage in plan.stream_status_stages:
+                yield TextRuntimeStatusEvent(stage=stage)
+            async for event in self._stream_route_plan(
+                plan,
+                config=config,
+                context=context,
+                session=session,
+            ):
+                yield event
+        finally:
+            # Fires on normal completion AND on early consumer abandonment
+            # (aclose()/GeneratorExit), so the prefetch is drained even if the
+            # client drops the stream mid-turn.
+            _drain_prefetched_memory(context)
 
     async def run_shadow_turn(
         self,
