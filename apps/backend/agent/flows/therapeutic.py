@@ -249,6 +249,14 @@ async def run_therapeutic_turn_stream(
                 chunks.append(chunk)
                 yield TextRuntimeChunkEvent(text=chunk)
     except Exception as exc:
+        # Only fall back to the control-LLM stream if nothing has been emitted
+        # to the client yet. Re-streaming a fresh full reply after partial chunks
+        # already went out would duplicate/garble the response (no reset event
+        # exists in the protocol). A mid-stream failure re-raises for a clean
+        # error instead — matching the non-streaming path, which can always fall
+        # back precisely because it has emitted nothing.
+        if chunks:
+            raise
         if not can_fallback_to_control_response(exc, context):
             raise
         async for event in run_therapeutic_response_llm_stream(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from contextlib import suppress
 from typing import Any
 
 from llm.base import BaseLLMClient
@@ -114,36 +115,49 @@ async def run_guided_exercise_turn_stream(
         stream_writer_factory=writer_factory,
     )
     task = asyncio.create_task(skill_service.run_turn(state))
-    while not task.done() or not queue.empty():
-        try:
-            chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
-        except asyncio.TimeoutError:
-            continue
-        if chunk:
-            yield TextRuntimeChunkEvent(text=chunk)
+    try:
+        while not task.done() or not queue.empty():
+            try:
+                chunk = await asyncio.wait_for(queue.get(), timeout=0.1)
+            except asyncio.TimeoutError:
+                continue
+            if chunk:
+                yield TextRuntimeChunkEvent(text=chunk)
 
-    delta = await task
-    apply_state_delta(state, dict(delta))
-    _apply_guided_exercise_tool_diagnostics(
-        state,
-        response_llm.run_context,
-        fallback=response_llm.used_skill_tool_fallback,
-    )
-    response_text = str(state.get("response_text") or "")
-    if not response_text:
-        raise ValueError("guided_exercise returned an empty response.")
-    final_state = await services.finalize_turn(
-        state,
-        response_text=response_text,
-        config=config,
-        runtime_mode="guided_exercise",
-        response_style=str(state.get("response_style") or "guided_exercise"),
-        selected_agent=GUIDED_EXERCISE_AGENT_NAME,
-        sdk_duration_ms=response_llm.last_duration_ms,
-        streamed=True,
-    )
-    yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
-    yield TextRuntimeStateEvent(state=final_state)
+        # Only on normal completion: collect the result and finalize. If the
+        # consumer abandoned the stream (GeneratorExit at a yield above), control
+        # jumps straight to the finally and none of this runs.
+        delta = await task
+        apply_state_delta(state, dict(delta))
+        _apply_guided_exercise_tool_diagnostics(
+            state,
+            response_llm.run_context,
+            fallback=response_llm.used_skill_tool_fallback,
+        )
+        response_text = str(state.get("response_text") or "")
+        if not response_text:
+            raise ValueError("guided_exercise returned an empty response.")
+        final_state = await services.finalize_turn(
+            state,
+            response_text=response_text,
+            config=config,
+            runtime_mode="guided_exercise",
+            response_style=str(state.get("response_style") or "guided_exercise"),
+            selected_agent=GUIDED_EXERCISE_AGENT_NAME,
+            sdk_duration_ms=response_llm.last_duration_ms,
+            streamed=True,
+        )
+        yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+        yield TextRuntimeStateEvent(state=final_state)
+    finally:
+        # Guarantee the producer never outlives this generator: on early consumer
+        # abandonment the drain loop exits before `await task`, orphaning it.
+        # Cancelling and draining a cancelled task completes promptly, so this is
+        # safe to await even while unwinding a GeneratorExit.
+        if not task.done():
+            task.cancel()
+            with suppress(asyncio.CancelledError):
+                await task
 
 
 def _apply_guided_exercise_tool_diagnostics(
