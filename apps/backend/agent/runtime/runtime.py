@@ -90,7 +90,6 @@ DEFAULT_MEMORY_DB_PATH = _STORE_DIR / "memory.sqlite3"
 DEFAULT_TEXT_SESSION_DB_PATH = _STORE_DIR / "text_sessions.sqlite3"
 DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
 DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
-ALLOWED_MSGPACK_MODULES: tuple[str, ...] = ()
 SESSION_TIMEOUT = timedelta(minutes=20)
 _UNSET = object()
 

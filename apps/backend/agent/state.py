@@ -3,17 +3,17 @@
 ``AgentState`` is the internal product snapshot persisted by
 ``PersistentAgentRuntime``.
 
-The ``Annotated`` reducer metadata is retained as documentation for how turn
-deltas are merged: ``transcript`` appends list entries with ``operator.add``,
-while grouped dict channels use ``_merge_dicts`` so services can update only
-the nested fields they own.
+Per-turn deltas are merged by the runtime in
+``agent.runtime.state_ops.apply_state_delta`` (and ``_effective_turn_state`` in
+``agent.runtime.openai_text_runtime``): the ``transcript`` list is appended, and
+the grouped dict channels listed in ``state_ops.DICT_REDUCER_KEYS`` are
+shallow-merged so services can update only the nested fields they own.
 """
 
 from __future__ import annotations
 
-import operator
 from collections.abc import Mapping
-from typing import Annotated, Any, Literal, NotRequired, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
 from agent.memory.types import GuidancePermission, SessionIntent, SessionStage
@@ -42,19 +42,6 @@ def resolve_owner_id(state: Mapping[str, Any]) -> str:
             "namespace cross-contamination."
         )
     return owner
-
-
-def _merge_dicts(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
-    """Merge two dict-like reducer values with right-side precedence.
-
-    Args:
-        left: The existing accumulated state value.
-        right: The incoming node delta.
-
-    Returns:
-        A merged dict. ``None`` is treated as an empty dict on either side.
-    """
-    return {**(left or {}), **(right or {})}
 
 
 class SessionMemoryState(TypedDict):
@@ -231,12 +218,11 @@ class AgentConversationState(TypedDict):
     """Conversation and working-memory channels used during a turn.
 
     ``agent.runtime.build_initial_state`` emits the current user turn into
-    ``transcript``. The text runtime appends the assistant turn. The transcript uses
-    ``operator.add`` metadata to document append semantics. Turn memory owns
+    ``transcript``. The text runtime appends the assistant turn. Turn memory owns
     ``working_memory`` for prompt-time semantic and episodic recall.
     """
 
-    transcript: NotRequired[Annotated[list[dict[str, str]], operator.add]]
+    transcript: NotRequired[list[dict[str, str]]]
     working_memory: list[WorkingMemoryEntry]
 
 
@@ -244,16 +230,17 @@ class AgentPersistentState(TypedDict):
     """Continuity channels persisted in runtime state snapshots.
 
     These grouped dicts are long-lived text-runtime state. Services should
-    return partial nested deltas for only the fields they own; the
-    dict reducers preserve existing sibling keys from prior turns.
+    return partial nested deltas for only the fields they own; the runtime's
+    shallow dict merge (``state_ops.DICT_REDUCER_KEYS``) preserves existing
+    sibling keys from prior turns.
     """
 
-    session_memory: Annotated[SessionMemoryState, _merge_dicts]
-    procedural_profile: Annotated[ProceduralProfileState, _merge_dicts]
-    session_progress: Annotated[SessionProgressState, _merge_dicts]
-    exercise_state: Annotated[ExerciseState, _merge_dicts]
-    memory_control: Annotated[MemoryControlState, _merge_dicts]
-    grounded_lookup: Annotated[GroundedLookupState, _merge_dicts]
+    session_memory: SessionMemoryState
+    procedural_profile: ProceduralProfileState
+    session_progress: SessionProgressState
+    exercise_state: ExerciseState
+    memory_control: MemoryControlState
+    grounded_lookup: GroundedLookupState
 
 
 class AgentCrisisState(TypedDict):
@@ -280,7 +267,7 @@ class AgentTurnOutputState(AgentCrisisState, TypedDict):
     session_action: NotRequired[SessionAction]
     response_text: NotRequired[str]
     should_persist_memory: NotRequired[bool]
-    diagnostics: NotRequired[Annotated[dict[str, Any], _merge_dicts]]
+    diagnostics: NotRequired[dict[str, Any]]
 
 
 class AgentPrivateState(TypedDict):

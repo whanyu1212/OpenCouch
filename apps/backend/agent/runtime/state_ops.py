@@ -14,6 +14,11 @@ from agent.runtime.types import TextRuntimeShadowResult, TextRuntimeShadowStatus
 from agent.state import AgentState
 
 
+# Channels merged via shallow dict spread ({**old, **new}) instead of
+# last-writer-wins. Must mirror the grouped dict channels in
+# ``agent.state.AgentPersistentState`` plus ``diagnostics``; adding a grouped
+# channel there without listing it here will silently overwrite sibling keys
+# from prior turns instead of preserving them.
 DICT_REDUCER_KEYS = {
     "session_memory",
     "procedural_profile",
