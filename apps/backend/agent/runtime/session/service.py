@@ -460,6 +460,10 @@ class SessionLifecycleService:
                     memory_store=self._memory_store,
                     memory_mode=self._memory_mode,
                     embedding_provider=self._embedding_provider,
+                    # Normal conversational session end extracts memory candidates
+                    # from the whole transcript; the transcript-finalize path does
+                    # not (summarize-only contract).
+                    extract_candidates=True,
                 )
                 await self.clear_session_continuity_in_state(
                     thread_id,
