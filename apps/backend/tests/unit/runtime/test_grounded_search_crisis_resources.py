@@ -262,6 +262,29 @@ async def test_lookup_returns_lookup_error_on_timeout() -> None:
 
 
 @pytest.mark.asyncio
+async def test_lookup_returns_lookup_error_when_location_extraction_fails() -> None:
+    # Regression for #158: a failure in the FIRST crisis LLM call (location
+    # extraction) must degrade to lookup_error, not propagate and crash the
+    # crisis turn. Previously _extract_location ran outside the try/except.
+    llm = _FakeLookupLLM(
+        structured_responses=[
+            TimeoutError("provider timed out during location extraction"),
+        ],
+    )
+
+    location, resources, status = await find_crisis_resources(
+        _state(),
+        llm_client=llm,
+    )
+
+    assert location == ""
+    assert resources == []
+    assert status == "lookup_error"
+    # Only the location-extraction call was attempted; no resource search ran.
+    assert [call["response_schema"] for call in llm.calls] == ["CrisisLocationDecision"]
+
+
+@pytest.mark.asyncio
 async def test_lookup_returns_no_verified_results_when_none_found() -> None:
     llm = _FakeLookupLLM(
         structured_responses=[

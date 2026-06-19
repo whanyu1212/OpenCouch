@@ -305,7 +305,16 @@ async def find_crisis_resources_for_request(
 ) -> tuple[str, list[dict[str, str]], CrisisResourceLookupStatus]:
     """Find verified crisis resources from framework-neutral input."""
 
-    location, location_status = await _extract_location(request, llm_client=llm_client)
+    try:
+        location, location_status = await _extract_location(
+            request, llm_client=llm_client
+        )
+    except Exception:
+        logger.error(
+            "crisis location extraction failed; returning lookup_error",
+            exc_info=True,
+        )
+        return "", [], "lookup_error"
     if location_status == "refused":
         return "", [], "location_refused"
     if location_status != "provided" or not location:

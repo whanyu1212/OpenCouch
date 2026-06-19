@@ -164,7 +164,10 @@ async def write_crisis_log(
             level=level,
             override_kind=override_kind,
             classifier_path=classifier_path,
-            reason=reason or "",
+            # CrisisAssessment.reason is uncapped LLM output; CrisisLogRecord.reason
+            # enforces max_length=500. Truncate here so an over-long reason can never
+            # raise ValidationError and silently drop the whole crisis audit record.
+            reason=(reason or "")[:500],
             response_node_completed=True,
             llm_failure_occurred=llm_failure_occurred,
             response_style=str(state.get("response_style") or "crisis_response"),
