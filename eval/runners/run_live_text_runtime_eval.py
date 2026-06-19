@@ -35,37 +35,18 @@ if str(BACKEND_ROOT) not in sys.path:
 from config import load_runtime_env  # noqa: E402
 from agent.audit.crisis_log import InMemoryCrisisLogBackend  # noqa: E402
 from agent.memory.hashing import iso_now as _iso_now  # noqa: E402
-from agent.memory.types import (  # noqa: E402
-    ExtractionResult,
-    ProceduralExtractionResult,
-)
 from agent.memory.modes import MemoryMode  # noqa: E402
+from agent.memory.extraction import extract_session_candidates  # noqa: E402
 from agent.memory.policy.candidates import (  # noqa: E402
-    PolicyDecision,
     SessionMemoryBuffer,
-    build_procedural_candidate,
-    build_semantic_candidate,
-)
-from agent.memory.policy.write import (  # noqa: E402
-    decide_procedural_candidate_llm_primary,
-    decide_semantic_candidate_llm_primary,
-)
-from agent.memory.operations.procedural_profile import (  # noqa: E402
-    aupsert_procedural_rule,
-    build_procedural_rule,
 )
 from agent.memory.operations.reconciliation import (  # noqa: E402
     filter_active_semantic_records,
-)
-from agent.memory.operations.semantic_writes import (  # noqa: E402
-    BatchWriteItem,
-    apply_semantic_writes_batch,
 )
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore  # noqa: E402
 from agent.memory.store.postgres import PostgresMemoryStore  # noqa: E402
 from agent.models import AgentInput  # noqa: E402
 from agent.runtime import OpenAITextRuntime, build_initial_state  # noqa: E402
-from agent.memory.policy.write import text_contains_memory_control_request  # noqa: E402
 from agent.runtime.session import run_commit_session_memory  # noqa: E402
 from agent.runtime.session.history import (  # noqa: E402
     session_conversation_from_transcript,
@@ -509,154 +490,25 @@ async def _run_memory_write_quality(
         )
 
     transcript = list(final_state.get("transcript", []) or [])
-    user_turns = _user_turn_texts_from_transcript(transcript)
     session_id = f"live-memory-write-session-{case.id}"
-    semantic_result, procedural_result = await _extract_memory_write_candidates(
-        live_client,
-        case=case,
-        transcript=transcript,
-        session_id=session_id,
-    )
-    buffer = SessionMemoryBuffer(session_id=session_id)
-    policy_decisions: list[dict[str, Any]] = []
     commit_result = _empty_memory_commit_result()
-    has_memory_control_request = any(
-        text_contains_memory_control_request(text) for text in user_turns
+    conversation = session_conversation_from_transcript(transcript)
+
+    # Drive the ACTUAL production extractor over the whole transcript so the eval
+    # measures shipping behavior, not a reimplementation. It populates the buffer
+    # (skipping incognito / no-LLM / empty itself); commit_session_memory then
+    # clusters, scores, and writes.
+    buffer = SessionMemoryBuffer(session_id=session_id)
+    await extract_session_candidates(
+        conversation=conversation,
+        session_id=session_id,
+        session_buffer=buffer,
+        llm_client=live_client,
+        memory_mode=case.memory_mode,
     )
-
-    immediate_items: list[BatchWriteItem] = []
-    for fact in semantic_result.facts:
-        if has_memory_control_request:
-            policy_decisions.append(
-                _dropped_policy_decision_payload(
-                    layer="semantic",
-                    payload=fact.model_dump(mode="json"),
-                    reason="explicit memory-control request in session transcript",
-                )
-            )
-            continue
-        if not _evidence_quote_is_user_grounded(user_turns, fact.evidence_quote):
-            policy_decisions.append(
-                _dropped_policy_decision_payload(
-                    layer="semantic",
-                    payload=fact.model_dump(mode="json"),
-                    reason="evidence quote was not grounded in user-authored text",
-                )
-            )
-            continue
-        normalized = _normalize_semantic_fact_for_memory_write_eval(
-            fact,
-            owner_id=owner_id,
-            session_id=session_id,
-            user_turns=user_turns,
-        )
-        candidate = build_semantic_candidate(
-            normalized,
-            message=_message_for_turn_index(user_turns, normalized.source_turn_index),
-        )
-        decision = await decide_semantic_candidate_llm_primary(
-            candidate,
-            llm_client=live_client,
-        )
-        policy_decisions.append(
-            _policy_decision_payload(
-                layer="semantic",
-                payload=normalized.model_dump(mode="json"),
-                decision=decision,
-            )
-        )
-        if decision.action == "commit_now":
-            immediate_items.append(
-                BatchWriteItem(
-                    candidate=candidate,
-                    write_timing="immediate",
-                    write_reason=decision.reason,
-                    policy_version=decision.policy_version,
-                )
-            )
-        elif decision.action in ("commit_at_session_end", "require_repetition"):
-            buffer.hold_semantic(candidate, decision)
-
-    if immediate_items:
-        outcome = await apply_semantic_writes_batch(
-            memory_store,
-            owner_id=owner_id,
-            items=immediate_items,
-            llm_client=live_client,
-            log_context="live_memory_write_eval",
-        )
-        commit_result["immediate_semantic_writes"] = outcome.written
-        commit_result["immediate_semantic_bumps"] = outcome.bumped
-        commit_result["immediate_semantic_skips"] = outcome.skipped
-
-    for turn_index, draft in enumerate(procedural_result.rules):
-        if has_memory_control_request:
-            policy_decisions.append(
-                _dropped_policy_decision_payload(
-                    layer="procedural",
-                    payload=draft.model_dump(mode="json"),
-                    reason="explicit memory-control request in session transcript",
-                )
-            )
-            continue
-        grounded_evidence = _filter_user_grounded_evidence(user_turns, draft.evidence)
-        if not grounded_evidence:
-            policy_decisions.append(
-                _dropped_policy_decision_payload(
-                    layer="procedural",
-                    payload=draft.model_dump(mode="json"),
-                    reason="rule evidence was not grounded in user-authored text",
-                )
-            )
-            continue
-        draft = draft.model_copy(update={"evidence": grounded_evidence})
-        candidate = build_procedural_candidate(
-            draft,
-            message=_message_for_turn_index(user_turns, turn_index),
-            session_id=session_id,
-            turn_index=min(turn_index, max(len(user_turns) - 1, 0)),
-        )
-        decision = await decide_procedural_candidate_llm_primary(
-            candidate,
-            llm_client=live_client,
-        )
-        policy_decisions.append(
-            _policy_decision_payload(
-                layer="procedural",
-                payload=draft.model_dump(mode="json"),
-                decision=decision,
-            )
-        )
-        if decision.action == "commit_now":
-            rule = build_procedural_rule(
-                rule_text=draft.rule,
-                evidence=draft.evidence,
-                confidence=draft.confidence,
-                source="explicit_user",
-                write_timing="immediate",
-                write_reason=decision.reason,
-                policy_version=decision.policy_version,
-            )
-            upsert = await aupsert_procedural_rule(
-                memory_store,
-                user_id=owner_id,
-                rule=rule,
-                llm_client=live_client,
-            )
-            if upsert.action == "skipped":
-                commit_result["immediate_procedural_skips"] += 1
-            else:
-                commit_result["immediate_procedural_writes"] += 1
-        elif decision.action == "commit_at_session_end":
-            buffer.hold_procedural(candidate, decision)
-
-    if has_memory_control_request:
-        buffer.held_semantic_candidates.clear()
-        buffer.held_procedural_candidates.clear()
-
     held_semantic_count = len(buffer.held_semantic_candidates)
     held_procedural_count = len(buffer.held_procedural_candidates)
-    conversation = session_conversation_from_transcript(transcript)
+
     started_at = _iso_now()
     ended_at = _iso_now()
     stored_arc = await run_summarize_session(
@@ -675,6 +527,10 @@ async def _run_memory_write_quality(
         memory_store=memory_store,
         session_buffer=buffer,
         stored_arc=stored_arc,
+        # No embedding provider here -> commit clusters lexically. This eval
+        # measures extraction -> commit -> persist quality; embedding-cosine
+        # clustering has its own deterministic tests (test_cosine_clustering).
+        embedding_provider=None,
         llm_client=live_client,
         conversation=conversation,
     )
@@ -685,12 +541,9 @@ async def _run_memory_write_quality(
     output = {
         "owner_id": owner_id,
         "extraction": {
-            "semantic_candidate_count": len(semantic_result.facts),
-            "procedural_candidate_count": len(procedural_result.rules),
-            "semantic_reason": semantic_result.reason,
-            "procedural_reason": procedural_result.reason,
+            "semantic_candidate_count": held_semantic_count,
+            "procedural_candidate_count": held_procedural_count,
         },
-        "policy_decisions": policy_decisions,
         "memory_commit_result": commit_result,
         "held_memory_count": held_semantic_count + held_procedural_count,
         "held_semantic_count": held_semantic_count,
@@ -707,124 +560,6 @@ async def _run_memory_write_quality(
         finally:
             await reopened.aclose()
     return output
-
-
-async def _extract_memory_write_candidates(
-    live_client: BaseLLMClient,
-    *,
-    case: EvalCase,
-    transcript: list[Any],
-    session_id: str,
-) -> tuple[ExtractionResult, ProceduralExtractionResult]:
-    transcript_text = _render_transcript_for_memory_write(transcript)
-    semantic: ExtractionResult = await live_client.generate_structured(
-        prompt=_semantic_memory_extraction_prompt(
-            case=case,
-            transcript_text=transcript_text,
-            session_id=session_id,
-        ),
-        response_schema=ExtractionResult,
-        system_instruction=_memory_extraction_system_prompt(),
-        use_search=False,
-    )
-    procedural: ProceduralExtractionResult = await live_client.generate_structured(
-        prompt=_procedural_memory_extraction_prompt(
-            case=case,
-            transcript_text=transcript_text,
-        ),
-        response_schema=ProceduralExtractionResult,
-        system_instruction=_memory_extraction_system_prompt(),
-        use_search=False,
-    )
-    return semantic, procedural
-
-
-def _memory_extraction_system_prompt() -> str:
-    return (
-        "You are a strict memory-candidate extractor for OpenCouch. Return only "
-        "the requested structured schema. Extract candidates only when they are "
-        "grounded in the user's words and useful for future support. Do not save "
-        "purely transient mood, one-off logistics, assistant text, tool text, or "
-        "facts that would feel intrusive if recalled later."
-    )
-
-
-def _semantic_memory_extraction_prompt(
-    *,
-    case: EvalCase,
-    transcript_text: str,
-    session_id: str,
-) -> str:
-    return (
-        "Extract semantic memory candidates from this completed support session.\n\n"
-        "Use only these categories: loss, preference, coping_strategy, "
-        "relationship, trigger, goal, context.\n"
-        "Use only these predicates: KNOWS, WORRIES_ABOUT, EXPERIENCED, USES, "
-        "WANTS, PARTICIPATED_IN, MENTIONED_IN.\n"
-        "Use subject {type: 'User', identifier: <case user id>} for user facts.\n"
-        "Use object types only from: User, Person, Concern, Event, "
-        "CopingStrategy, Goal, Session, Turn.\n\n"
-        "Good semantic candidates are stable or recurring facts, preferences, "
-        "coping strategies, triggers, goals, relationships, or important context. "
-        "Do not extract current-only feelings like 'nervous right now' unless the "
-        "user clearly frames them as a recurring pattern. For fragile negative "
-        "self-beliefs, extract the pattern only when the transcript supports it, "
-        "and phrase the object as a belief/pattern rather than objective truth.\n\n"
-        f"case_id: {case.id}\n"
-        f"user_id: {case.user_id}\n"
-        f"source_session_id to copy: {session_id}\n"
-        "source_turn_index must be the zero-based index of the user turn that "
-        "contains the evidence quote.\n\n"
-        f"Transcript:\n{transcript_text}"
-    )
-
-
-def _procedural_memory_extraction_prompt(
-    *,
-    case: EvalCase,
-    transcript_text: str,
-) -> str:
-    return (
-        "Extract procedural memory candidates from this completed support "
-        "session. Procedural memory is an assistant-facing rule about how "
-        "OpenCouch should respond to this user in the future.\n\n"
-        "Extract a rule only for durable user preferences about response style, "
-        "memory use, structure, pacing, or formats. Do not extract one-off "
-        "requests, ordinary facts about the user's life, current mood, or any "
-        "preference that would weaken crisis or safety behavior.\n\n"
-        "Rules should be short imperative guidance, grounded in user evidence.\n\n"
-        f"case_id: {case.id}\n"
-        f"user_id: {case.user_id}\n\n"
-        f"Transcript:\n{transcript_text}"
-    )
-
-
-def _render_transcript_for_memory_write(transcript: list[Any]) -> str:
-    lines: list[str] = []
-    user_index = 0
-    for turn in transcript:
-        if not isinstance(turn, dict):
-            continue
-        role = str(turn.get("role") or "unknown")
-        content = str(turn.get("content") or "").strip()
-        if not content:
-            continue
-        if role == "user":
-            lines.append(f"user[{user_index}]: {content}")
-            user_index += 1
-        else:
-            lines.append(f"{role}: {content}")
-    return "\n".join(lines).strip()
-
-
-def _user_turn_texts_from_transcript(transcript: list[Any]) -> list[str]:
-    return [
-        str(turn.get("content") or "").strip()
-        for turn in transcript
-        if isinstance(turn, dict)
-        and turn.get("role") == "user"
-        and str(turn.get("content") or "").strip()
-    ]
 
 
 def _source_turn_index_for_evidence(
@@ -895,36 +630,6 @@ def _normalize_semantic_fact_for_memory_write_eval(
             ),
         }
     )
-
-
-def _policy_decision_payload(
-    *,
-    layer: str,
-    payload: dict[str, Any],
-    decision: PolicyDecision,
-) -> dict[str, Any]:
-    return {
-        "layer": layer,
-        "payload": payload,
-        "action": decision.action,
-        "reason": decision.reason,
-        "policy_version": decision.policy_version,
-    }
-
-
-def _dropped_policy_decision_payload(
-    *,
-    layer: str,
-    payload: dict[str, Any],
-    reason: str,
-) -> dict[str, Any]:
-    return {
-        "layer": layer,
-        "payload": payload,
-        "action": "drop",
-        "reason": reason,
-        "policy_version": "eval_provenance_guard_v1",
-    }
 
 
 async def _saved_memory_snapshot(
