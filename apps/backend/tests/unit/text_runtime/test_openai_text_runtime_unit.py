@@ -1413,11 +1413,19 @@ async def _assert_settles(task: asyncio.Task[Any]) -> None:
     )
 
 
-def _context_with_orphan_prefetch() -> tuple[WorkflowContext, asyncio.Task[Any]]:
-    # The grounded_lookup route never calls load_turn_memory, so nothing on the
-    # consume path touches this prefetch — it can only be settled by the new
-    # dispatch-boundary finally. (owner_id matches the turn's owner so a mismatch
-    # cancel cannot mask the behavior under test.)
+_USE_GROUNDED_ROUTE = object()
+
+
+def _context_with_orphan_prefetch(
+    *,
+    llm_client: Any = _USE_GROUNDED_ROUTE,
+) -> tuple[WorkflowContext, asyncio.Task[Any]]:
+    # Attaches a never-resolving prefetch that the turn's route never consumes,
+    # so it can only be settled by the dispatch-boundary finally. By default
+    # drives the grounded_lookup route (never calls load_turn_memory); pass
+    # llm_client=None to exercise the deterministic no-LLM smoke path. (owner_id
+    # matches the turn's owner so a mismatch cancel cannot mask the behavior
+    # under test.)
     task = asyncio.ensure_future(_never_resolves())
     prefetch = PrefetchedTurnMemory(
         task=task,
@@ -1425,8 +1433,13 @@ def _context_with_orphan_prefetch() -> tuple[WorkflowContext, asyncio.Task[Any]]
         query="Can you look up the current rule?",
         is_first_turn=True,
     )
+    resolved_client = (
+        _RouteLLM(route="grounded_lookup")
+        if llm_client is _USE_GROUNDED_ROUTE
+        else llm_client
+    )
     context = WorkflowContext(
-        llm_client=_RouteLLM(route="grounded_lookup"),
+        llm_client=resolved_client,
         memory_store=OpenCouchMemoryStore(),
         crisis_log_backend=InMemoryCrisisLogBackend(),
         memory_mode=MemoryMode.LOCAL,
@@ -1474,6 +1487,41 @@ async def test_run_turn_stream_drains_orphaned_prefetch_task() -> None:
 
     async for _event in runtime.run_turn_stream(
         cast(Any, _initial_state("Can you look up the current rule?")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=context,
+    ):
+        pass
+
+    await _assert_settles(task)
+
+
+@pytest.mark.asyncio
+async def test_run_turn_drains_prefetch_on_deterministic_no_llm_turn() -> None:
+    # Codex P2 follow-up: the prefetch is scheduled independently of llm_client,
+    # so a deterministic (no-LLM) smoke turn can still carry a live prefetch. The
+    # drain must run on the no-LLM early-return path too, not only the real path.
+    workflow = _StatefulWorkflow()
+    runtime = _runtime(workflow, _grounded_runner())
+    context, task = _context_with_orphan_prefetch(llm_client=None)
+
+    await runtime.run_turn(
+        cast(Any, _initial_state()),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=context,
+    )
+
+    await _assert_settles(task)
+
+
+@pytest.mark.asyncio
+async def test_run_turn_stream_drains_prefetch_on_deterministic_no_llm_turn() -> None:
+    # Same no-LLM smoke-path coverage for the streaming method.
+    workflow = _StatefulWorkflow()
+    runtime = _runtime(workflow, _grounded_runner())
+    context, task = _context_with_orphan_prefetch(llm_client=None)
+
+    async for _event in runtime.run_turn_stream(
+        cast(Any, _initial_state()),
         config={"configurable": {"thread_id": "thread-1"}},
         context=context,
     ):

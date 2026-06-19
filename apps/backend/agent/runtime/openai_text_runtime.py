@@ -198,14 +198,18 @@ class OpenAITextRuntime:
     ) -> Mapping[str, Any]:
         """Run one turn through the OpenAI text runtime."""
 
-        if context.llm_client is None:
-            return _deterministic_smoke_state(
-                initial_state,
-                prior_state=prior_state,
-                streamed=False,
-            )
-
+        # Wraps the whole body — including the no-LLM smoke return — so the
+        # prefetch is drained on every exit path. The runtime schedules the
+        # prefetch independently of llm_client, so a deterministic (no-LLM) turn
+        # can still carry a live prefetch task that must not be orphaned.
         try:
+            if context.llm_client is None:
+                return _deterministic_smoke_state(
+                    initial_state,
+                    prior_state=prior_state,
+                    streamed=False,
+                )
+
             route_result = await self._turn_graph.resolve(
                 initial_state,
                 config=config,
@@ -236,18 +240,18 @@ class OpenAITextRuntime:
     ) -> AsyncIterator[TextRuntimeStreamEvent]:
         """Run one streaming turn through the OpenAI text runtime."""
 
-        if context.llm_client is None:
-            yield TextRuntimeStatusEvent(stage="deterministic")
-            final_state = _deterministic_smoke_state(
-                initial_state,
-                prior_state=prior_state,
-                streamed=True,
-            )
-            yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
-            yield TextRuntimeStateEvent(state=final_state)
-            return
-
         try:
+            if context.llm_client is None:
+                yield TextRuntimeStatusEvent(stage="deterministic")
+                final_state = _deterministic_smoke_state(
+                    initial_state,
+                    prior_state=prior_state,
+                    streamed=True,
+                )
+                yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+                yield TextRuntimeStateEvent(state=final_state)
+                return
+
             route_result = await self._turn_graph.resolve(
                 initial_state,
                 config=config,
@@ -266,9 +270,9 @@ class OpenAITextRuntime:
             ):
                 yield event
         finally:
-            # Fires on normal completion AND on early consumer abandonment
-            # (aclose()/GeneratorExit), so the prefetch is drained even if the
-            # client drops the stream mid-turn.
+            # Fires on normal completion, the no-LLM smoke return, AND early
+            # consumer abandonment (aclose()/GeneratorExit), so the prefetch is
+            # drained on every exit path.
             _drain_prefetched_memory(context)
 
     async def run_shadow_turn(
