@@ -270,9 +270,15 @@ class SessionLifecycleService:
                     "session timeout reached for thread %s; auto-finalizing expired session",
                     active_thread_id,
                 )
+                # finalize_only_if_expired re-checks expiry under the thread lock;
+                # if a concurrent turn renewed the session since the unlocked check
+                # above, end_session skips finalization (logged at debug) and leaves
+                # it active. ``finalized`` counts sweep finalize attempts that did
+                # not raise, consistent with its existing meaning.
                 await end_session(
                     active_thread_id,
                     llm_client=effective_llm_client(active_thread_id, None),
+                    finalize_only_if_expired=True,
                 )
                 result.finalized += 1
             except Exception:
@@ -359,8 +365,19 @@ class SessionLifecycleService:
         effective_llm_client: EffectiveLLMResolver,
         session_status_unlocked: SessionStatusResolver,
         get_state: StateLoader,
+        finalize_only_if_expired: bool = False,
     ) -> StoredSessionArc | None:
-        """Summarize an active session while the caller owns the thread lock."""
+        """Summarize an active session while the caller owns the thread lock.
+
+        Args:
+            finalize_only_if_expired: When ``True`` (the background sweeper
+                path), re-check expiry against the freshly-loaded persisted row
+                under the lock and skip finalization if the session is no longer
+                expired. This closes the TOCTOU where a concurrent turn renews
+                ``last_active_at`` between the sweeper's unlocked expiry check and
+                lock acquisition. Explicit and shutdown callers leave this
+                ``False`` so they always finalize unconditionally.
+        """
         resolved_llm_client = effective_llm_client(thread_id, llm_client)
         status = await session_status_unlocked(thread_id)
         persisted = await self._active_session_manager.load_persisted_active_session(
@@ -373,6 +390,22 @@ class SessionLifecycleService:
         )
 
         if not has_active_session:
+            return None
+
+        # Sweeper-only: the expiry check that selected this thread ran without the
+        # lock. Now that we hold it, re-evaluate against the fresh persisted row;
+        # a concurrent turn may have renewed the session in the meantime. Leave it
+        # active and let a later sweep re-evaluate.
+        if (
+            finalize_only_if_expired
+            and persisted is not None
+            and not self._active_session_manager.session_has_expired(persisted)
+        ):
+            logger.debug(
+                "session for thread %s was renewed since the sweep check; "
+                "skipping auto-finalize",
+                thread_id,
+            )
             return None
 
         @asynccontextmanager

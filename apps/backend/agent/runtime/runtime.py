@@ -1328,25 +1328,35 @@ class PersistentAgentRuntime:
         thread_id: str,
         *,
         llm_client: BaseLLMClient | None = None,
+        finalize_only_if_expired: bool = False,
     ) -> StoredSessionArc | None:
         """Summarize the active session for a thread and write it to memory.
 
         Args:
             thread_id: The thread whose active session should be summarized.
             llm_client: The optional LLM client for session summarization.
+            finalize_only_if_expired: When ``True`` (background sweeper), re-check
+                expiry under the lock and skip if the session was renewed. Left
+                ``False`` for explicit/shutdown callers, which finalize
+                unconditionally.
 
         Returns:
             The written session arc, or ``None`` when summarization is skipped.
         """
 
         async with self._thread_lock(thread_id):
-            return await self._end_session_unlocked(thread_id, llm_client=llm_client)
+            return await self._end_session_unlocked(
+                thread_id,
+                llm_client=llm_client,
+                finalize_only_if_expired=finalize_only_if_expired,
+            )
 
     async def _end_session_unlocked(
         self,
         thread_id: str,
         *,
         llm_client: BaseLLMClient | None = None,
+        finalize_only_if_expired: bool = False,
     ) -> StoredSessionArc | None:
         """Summarize an active session while the caller owns the thread lock."""
 
@@ -1356,6 +1366,7 @@ class PersistentAgentRuntime:
             effective_llm_client=self._effective_llm_client,
             session_status_unlocked=self._session_status_unlocked,
             get_state=self.get_state,
+            finalize_only_if_expired=finalize_only_if_expired,
         )
 
     async def end_transcript_session(
