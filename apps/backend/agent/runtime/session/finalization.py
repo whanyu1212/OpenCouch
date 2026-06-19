@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 
+from agent.memory.extraction import extract_session_candidates
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.providers.embeddings import EmbeddingProvider
 from agent.memory.types import StoredSessionArc
@@ -34,6 +35,7 @@ async def finalize_session_window(
     memory_mode: MemoryMode,
     embedding_provider: EmbeddingProvider | None,
     conversation: SessionConversation | None = None,
+    extract_candidates: bool = False,
 ) -> StoredSessionArc | None:
     """Run the shared session-end summarization and memory commit path.
 
@@ -77,6 +79,21 @@ async def finalize_session_window(
         approach_hint=approach_hint,
         conversation=session_conversation,
     )
+
+    # Whole-transcript intake: populate the buffer that the commit step drains.
+    # Off the realtime path, so an extra LLM pass here is fine. Skips itself in
+    # incognito / no-LLM / empty-session and never raises out.
+    # Opt-in: only the normal session-end path extracts. end_transcript_session
+    # finalizes an externally-supplied transcript and must NOT replay extraction
+    # (its contract is summarize-only), so it leaves extract_candidates=False.
+    if extract_candidates and session_buffer is not None:
+        await extract_session_candidates(
+            conversation=session_conversation,
+            session_id=thread_id,
+            session_buffer=session_buffer,
+            llm_client=llm_client,
+            memory_mode=memory_mode,
+        )
 
     commit_result = await run_commit_session_memory(
         state,

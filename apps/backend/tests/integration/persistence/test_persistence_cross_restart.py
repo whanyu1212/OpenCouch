@@ -554,7 +554,14 @@ async def test_all_three_layers_persist_across_full_lifecycle(
     paths = runtime_paths(tmp_path)
 
     # ── Runtime A: write everything ───────────────────────────────────
-    llm_a = FakeCrossRestartLLM()
+    # Empty extraction result: this test seeds its semantic fact explicitly and
+    # asserts exact layer counts across restart; it is not an extraction-quality
+    # test. Session-end extraction is now live, so without this the fake's canned
+    # default fact would add a second semantic record. (Extraction quality is
+    # covered by tests/unit/memory/test_session_extractor.py.)
+    llm_a = FakeCrossRestartLLM(
+        extraction_result=ExtractionResult(facts=[], reason="seeded explicitly"),
+    )
     async with PersistentAgentRuntime(
         **paths,
         memory_mode=MemoryMode.LOCAL,
