@@ -178,11 +178,22 @@ async def test_crisis_resource_lookup_records_location_refusal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_crisis_resource_lookup_surfaces_lookup_failure() -> None:
-    llm = _FakeLookupLLM(structured_responses=[])
+async def test_crisis_resource_lookup_degrades_when_location_extraction_fails() -> None:
+    # Regression for #158: a failure in the location-extraction LLM call must degrade
+    # to lookup_error (location-free safety guidance) rather than propagate and crash
+    # the crisis turn. For speech-to-speech this is the difference between the model
+    # still speaking a safe reply and the user in crisis hearing dead air.
+    llm = _FakeLookupLLM(
+        structured_responses=[TimeoutError("provider timed out during extraction")],
+    )
 
-    with pytest.raises(AssertionError, match="No fake structured response configured"):
-        await build_crisis_resource_lookup_delta(
-            _state(),
-            _FakeRuntime(llm_client=llm).context,
-        )
+    delta = await build_crisis_resource_lookup_delta(
+        _state(),
+        _FakeRuntime(llm_client=llm).context,
+    )
+
+    assert delta == {
+        "inferred_location": "",
+        "found_resources": [],
+        "resource_lookup_status": "lookup_error",
+    }

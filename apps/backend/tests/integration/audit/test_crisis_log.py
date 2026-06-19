@@ -179,6 +179,29 @@ class TestCrisisLogNode:
         assert await backend.arecord_count() == 1
 
     @pytest.mark.asyncio
+    async def test_over_long_reason_is_truncated_not_dropped(self) -> None:
+        # Regression for #159: CrisisAssessment.reason is uncapped LLM output, but
+        # CrisisLogRecord.reason enforces max_length=500. An over-long reason used to
+        # raise ValidationError at record construction, which write_crisis_log swallows
+        # — silently dropping the ENTIRE crisis audit record. The reason must be
+        # truncated so the record is still written for this acute-crisis event.
+        backend = InMemoryCrisisLogBackend()
+        runtime = _MockRuntime(crisis_log_backend=backend)
+        state = _build_crisis_state(level=3, reason="x" * 600)
+
+        await write_crisis_log(state, runtime.context)
+
+        assert await backend.arecord_count() == 1
+        today = date.today()  # noqa: DTZ011 - local date for bucketing
+        records = await backend.alist_by_date(today)
+        if not records:
+            from datetime import timedelta
+
+            records = await backend.alist_by_date(today - timedelta(days=1))
+        assert len(records) == 1
+        assert len(records[0].reason) == 500
+
+    @pytest.mark.asyncio
     async def test_record_fields_match_state(self) -> None:
         """The written record should carry the crisis assessment details."""
 

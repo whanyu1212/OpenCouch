@@ -32,7 +32,12 @@ _GUIDED_EXERCISE_TOOL_NAMES = {
 }
 
 _TOOL_ROUTE_PRIORITY: tuple[tuple[str, VoiceTurnMetadata], ...] = (
+    # Either crisis tool forces the crisis route so the turn is audit-logged.
+    # The model is instructed to call get_crisis_support_template independently of
+    # lookup_crisis_resources, so a template-only crisis turn must still route to
+    # crisis (otherwise it falls through to "therapeutic" and is never recorded).
     ("lookup_crisis_resources", VoiceTurnMetadata("crisis", "crisis_response")),
+    ("get_crisis_support_template", VoiceTurnMetadata("crisis", "crisis_response")),
     ("answer_grounded_lookup", VoiceTurnMetadata("grounded_lookup", "grounded_lookup")),
     *(
         (name, VoiceTurnMetadata("memory_control", "memory_control"))
