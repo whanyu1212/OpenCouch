@@ -11,9 +11,6 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from agent.runtime.session.active_session import (
-    PersistedActiveSessionState,
-)
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend
 from agent.feedback.session_feedback import SessionFeedbackBackend
@@ -41,6 +38,10 @@ from agent.runtime.session.service import (
     SessionLifecycleService,
     SessionSweepResult,
 )
+from agent.runtime.thread_state_reader import (
+    ThreadStateReader,
+    merge_history_response_styles,
+)
 from agent.runtime.session_feedback import (
     record_session_feedback as record_runtime_session_feedback,
 )
@@ -59,7 +60,6 @@ from agent.models import (
     ChunkEvent,
     DoneEvent,
     Message,
-    MessageRole,
     ResponseReadyEvent,
     StatusEvent,
     StreamEvent,
@@ -435,6 +435,13 @@ class PersistentAgentRuntime:
         self._embedding_provider = self._resources.embedding_provider
         self._active_session_store = self._resources.active_session_store
         self._active_session_manager = self._resources.active_session_manager
+        self._thread_state_reader = ThreadStateReader(
+            state_store=self._state_store,
+            text_session_store=self._text_session_store,
+            active_session_manager=self._active_session_manager,
+            session_tracker=self._session_tracker,
+            memory_mode=self.memory_mode,
+        )
         self._session_lifecycle = SessionLifecycleService(
             memory_mode=self.memory_mode,
             session_tracker=self._session_tracker,
@@ -948,115 +955,37 @@ class PersistentAgentRuntime:
         if self._text_session_store is not None:
             history = await self._text_session_store.get_history(thread_id)
             if history:
-                return _merge_history_response_styles(history, final_state)
+                return merge_history_response_styles(history, final_state)
         return messages_from_transcript(final_state.get("transcript", []))
 
     async def get_state(self, thread_id: str) -> AgentState | None:
-        """Load the latest persisted state snapshot for a thread.
+        """Load the latest persisted state snapshot for a thread."""
 
-        Args:
-            thread_id: The thread identifier.
-
-        Returns:
-            The latest persisted runtime state, if any.
-        """
-
-        return await self._state_store.load_state(thread_id)
+        return await self._thread_state_reader.get_state(thread_id)
 
     async def get_history(self, thread_id: str) -> list[Message]:
-        """Load the full persisted transcript for a thread.
+        """Load the full persisted transcript for a thread."""
 
-        Args:
-            thread_id: The thread identifier.
-
-        Returns:
-            The materialized transcript messages for the thread.
-        """
-
-        state = await self.get_state(thread_id)
-        if self._text_session_store is not None:
-            history = await self._text_session_store.get_history(thread_id)
-            if history:
-                return _merge_history_response_styles(history, state)
-            if state is None:
-                return history
-        if state is None:
-            return []
-        return messages_from_transcript(state.get("transcript", []))
+        return await self._thread_state_reader.get_history(thread_id)
 
     async def session_status(self, thread_id: str) -> SessionStatus:
-        """Return the active-session liveness status for a thread.
+        """Return the active-session liveness status for a thread."""
 
-        Args:
-            thread_id: Thread identifier.
-
-        Returns:
-            The current session status.
-        """
-
-        return await self._session_status_unlocked(thread_id)
+        return await self._thread_state_reader.session_status(thread_id)
 
     async def _session_status_unlocked(self, thread_id: str) -> SessionStatus:
         """Return session status without acquiring the per-thread lock.
 
-        Args:
-            thread_id: Thread identifier.
-
-        Returns:
-            The current session status.
+        Retained as a runtime shim because ``reset_thread`` and the
+        session-lifecycle paths depend on the unlocked liveness check.
         """
 
-        if self.memory_mode == MemoryMode.INCOGNITO:
-            if self._session_tracker.has_tracking(thread_id):
-                return SessionStatus.ACTIVE
-            return SessionStatus.ABSENT
-
-        row = await self._active_session_manager.load_persisted_active_session_row(
-            thread_id
-        )
-        if row is None:
-            if self._session_tracker.has_tracking(thread_id):
-                return SessionStatus.ACTIVE
-            return SessionStatus.ABSENT
-
-        if row.finalize_required_reason == "interrupted":
-            return SessionStatus.INTERRUPTED
-
-        if row.mutation_token is not None:
-            if not self._active_session_manager.is_mutation_in_flight(
-                row.mutation_token
-            ):
-                return SessionStatus.INTERRUPTED
-
-        if row.rotate_after_this_turn:
-            return SessionStatus.ROTATION_REQUIRED
-
-        try:
-            session = PersistedActiveSessionState.from_json(row.payload_json)
-        except Exception:
-            logger.warning(
-                "active session payload could not be decoded for thread %s",
-                thread_id,
-                exc_info=True,
-            )
-            return SessionStatus.INTERRUPTED
-
-        if self._active_session_manager.session_has_expired(session):
-            return SessionStatus.EXPIRED_UNFINALIZED
-
-        return SessionStatus.ACTIVE
+        return await self._thread_state_reader.session_status_unlocked(thread_id)
 
     async def has_active_session(self, thread_id: str) -> bool:
-        """Return whether a thread currently has an unresolved session.
+        """Return whether a thread currently has an unresolved session."""
 
-        Args:
-            thread_id: The thread identifier.
-
-        Returns:
-            ``True`` when the thread still has active session tracking.
-        """
-
-        return await self.session_status(thread_id) == SessionStatus.ACTIVE
+        return await self._thread_state_reader.has_active_session(thread_id)
 
     async def reset_thread(self, thread_id: str) -> None:
         """Delete all persisted runtime, SDK-session, and active-session state.
@@ -1082,34 +1011,9 @@ class PersistentAgentRuntime:
             self._clear_thread_state(thread_id)
 
     async def list_threads(self, *, limit: int = 20) -> list[ThreadSummary]:
-        """List the most recent persisted threads.
+        """List the most recent persisted threads."""
 
-        Args:
-            limit: The maximum number of threads to return.
-
-        Returns:
-            The most recent persisted thread summaries.
-        """
-
-        thread_ids = await self._state_store.list_thread_ids(limit=limit)
-
-        summaries: list[ThreadSummary] = []
-        for thread_id in thread_ids:
-            state = await self.get_state(thread_id)
-            history = await self.get_history(thread_id)
-            session_progress: Mapping[str, Any] = (
-                state.get("session_progress", {}) if state is not None else {}
-            )
-            turn_count = session_progress.get("turn_count", 0)
-            summaries.append(
-                ThreadSummary(
-                    thread_id=thread_id,
-                    turn_count=int(turn_count),
-                    message_count=len(history),
-                    has_context=state is not None,
-                )
-            )
-        return summaries
+        return await self._thread_state_reader.list_threads(limit=limit)
 
     @staticmethod
     def _build_turn_initial_state(
@@ -1566,44 +1470,3 @@ class PersistentAgentRuntime:
                 from agent.runtime.turn import state_to_output
 
                 yield DoneEvent(output=state_to_output(final_state))
-
-
-def _merge_history_response_styles(
-    history: list[Message],
-    state: AgentState | None,
-) -> list[Message]:
-    """Overlay assistant response styles from runtime transcript onto history."""
-
-    if state is None:
-        return history
-    transcript_messages = messages_from_transcript(state.get("transcript", []))
-    transcript_assistants = [
-        message
-        for message in transcript_messages
-        if message.role == MessageRole.ASSISTANT
-    ]
-    if not transcript_assistants:
-        return history
-
-    enriched: list[Message] = []
-    assistant_index = 0
-    for message in history:
-        if message.role != MessageRole.ASSISTANT or message.response_style is not None:
-            enriched.append(message)
-            continue
-
-        response_style = None
-        while assistant_index < len(transcript_assistants):
-            candidate = transcript_assistants[assistant_index]
-            assistant_index += 1
-            if candidate.content == message.content:
-                response_style = candidate.response_style
-                break
-        enriched.append(
-            Message(
-                role=message.role,
-                content=message.content,
-                response_style=response_style,
-            )
-        )
-    return enriched
