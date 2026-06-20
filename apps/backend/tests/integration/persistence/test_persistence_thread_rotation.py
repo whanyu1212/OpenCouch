@@ -181,7 +181,9 @@ async def test_failed_run_turn_leaves_interrupted_marker(
         **runtime_paths(tmp_path),
         finalize_active_sessions_on_close=False,
     ) as runtime:
-        runtime._openai_text_runtime = cast(Any, _FailingTextRuntime())  # noqa: SLF001
+        runtime._sdk_bridge._openai_text_runtime = cast(  # noqa: SLF001
+            Any, _FailingTextRuntime()
+        )
 
         with pytest.raises(RuntimeError, match="runtime failed"):
             await runtime.run_turn(thread_id="thread-failed-turn", message="hello")

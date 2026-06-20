@@ -616,4 +616,4 @@ async def test_aenter_prewarms_embedding_provider_and_text_runtime() -> None:
 
     async with runtime:
         assert embedding_provider.warmup_calls == 1
-        assert runtime._openai_text_runtime is not None  # noqa: SLF001
+        assert runtime._sdk_bridge._openai_text_runtime is not None  # noqa: SLF001

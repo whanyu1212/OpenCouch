@@ -13,7 +13,7 @@ def test_persistent_runtime_defaults_to_openai_text_runtime() -> None:
     runtime = PersistentAgentRuntime()
 
     assert runtime._text_session_store is not None
-    assert runtime._openai_text_runtime is None
+    assert runtime._sdk_bridge._openai_text_runtime is None
 
 
 @pytest.mark.asyncio
@@ -25,7 +25,7 @@ async def test_prewarm_initializes_openai_text_runtime(tmp_path) -> None:
         text_session_backend="sqlite",
         text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
     ) as runtime:
-        assert isinstance(runtime._openai_text_runtime, OpenAITextRuntime)
+        assert isinstance(runtime._sdk_bridge._openai_text_runtime, OpenAITextRuntime)
 
 
 @pytest.mark.asyncio

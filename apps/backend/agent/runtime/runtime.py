@@ -33,15 +33,11 @@ from agent.runtime.session import (
     transcript_length,
     turn_count_from_state,
 )
-from agent.runtime.session.history import messages_from_transcript
 from agent.runtime.session.service import (
     SessionLifecycleService,
     SessionSweepResult,
 )
-from agent.runtime.thread_state_reader import (
-    ThreadStateReader,
-    merge_history_response_styles,
-)
+from agent.runtime.thread_state_reader import ThreadStateReader
 from agent.runtime.session_feedback import (
     record_session_feedback as record_runtime_session_feedback,
 )
@@ -51,6 +47,7 @@ from agent.runtime.streaming import (
 )
 from agent.runtime.session_store import TextSessionBackend
 from agent.runtime.openai_text_runtime import OpenAITextRuntime
+from agent.runtime.sdk_session_bridge import SdkSessionBridge
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.runtime.resources import RuntimeResources, build_runtime_resources
@@ -396,7 +393,6 @@ class PersistentAgentRuntime:
         self._auto_finalize_excluded = auto_finalize_excluded
         self._speculative_memory_prefetch = speculative_memory_prefetch
         self._thread_llm_clients: dict[str, BaseLLMClient | None] = {}
-        self._openai_text_runtime: OpenAITextRuntime | None = None
         self._session_tracker = RuntimeSessionTracker()
 
         self._resources: RuntimeResources = build_runtime_resources(
@@ -441,6 +437,9 @@ class PersistentAgentRuntime:
             active_session_manager=self._active_session_manager,
             session_tracker=self._session_tracker,
             memory_mode=self.memory_mode,
+        )
+        self._sdk_bridge = SdkSessionBridge(
+            text_session_store=self._text_session_store,
         )
         self._session_lifecycle = SessionLifecycleService(
             memory_mode=self.memory_mode,
@@ -884,48 +883,7 @@ class PersistentAgentRuntime:
     def _get_openai_text_runtime(self) -> OpenAITextRuntime:
         """Return the serving OpenAI Agents SDK text runtime."""
 
-        if self._openai_text_runtime is None:
-            self._openai_text_runtime = OpenAITextRuntime()
-        return self._openai_text_runtime
-
-    async def _openai_sdk_session_for_thread(
-        self,
-        thread_id: str,
-        *,
-        current_user_message: str,
-        prior_state: AgentState | None,
-    ) -> Any | None:
-        """Return the SDK session for OpenAI serving turns when enabled."""
-
-        if self._text_session_store is None:
-            return None
-        await self._recover_empty_openai_sdk_session_from_state(thread_id, prior_state)
-        return self._text_session_store.turn_session_for_thread(
-            thread_id,
-            current_user_message=current_user_message,
-        )
-
-    async def _recover_empty_openai_sdk_session_from_state(
-        self,
-        thread_id: str,
-        prior_state: AgentState | None,
-    ) -> bool:
-        """Recover an empty SDK session from app-visible transcript state.
-
-        The SDK session owns model-visible episodic conversation history.
-        ``AgentState.transcript`` is app-visible state for UI/API/audit use, and
-        only crosses back into the SDK session when that session is empty.
-        """
-
-        if self._text_session_store is None or prior_state is None:
-            return False
-        messages = messages_from_transcript(prior_state.get("transcript", []))
-        if not messages:
-            return False
-        return await self._text_session_store.seed_thread_from_messages(
-            thread_id,
-            messages,
-        )
+        return self._sdk_bridge.get_text_runtime()
 
     async def _ensure_openai_sdk_turn_recorded(
         self,
@@ -936,27 +894,11 @@ class PersistentAgentRuntime:
     ) -> None:
         """Ensure SDK history contains the finalized OpenAI user/assistant turn."""
 
-        if self._text_session_store is None:
-            return
-        response_text = str(final_state.get("response_text") or "").strip()
-        await self._text_session_store.ensure_turn_recorded(
+        await self._sdk_bridge.ensure_turn_recorded(
             thread_id,
             user_message=user_message,
-            assistant_message=response_text,
+            final_state=final_state,
         )
-
-    async def _history_for_final_state(
-        self,
-        thread_id: str,
-        final_state: AgentState,
-    ) -> list[Message]:
-        """Return public history without calling the public get_history method."""
-
-        if self._text_session_store is not None:
-            history = await self._text_session_store.get_history(thread_id)
-            if history:
-                return merge_history_response_styles(history, final_state)
-        return messages_from_transcript(final_state.get("transcript", []))
 
     async def get_state(self, thread_id: str) -> AgentState | None:
         """Load the latest persisted state snapshot for a thread."""
@@ -1109,7 +1051,7 @@ class PersistentAgentRuntime:
                 installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
-            sdk_session = await self._openai_sdk_session_for_thread(
+            sdk_session = await self._sdk_bridge.session_for_thread(
                 thread_id,
                 current_user_message=message,
                 prior_state=prior_state,
@@ -1161,7 +1103,9 @@ class PersistentAgentRuntime:
                 result = PersistentTurnResult(
                     output=state_to_output(final_state),
                     state=final_state,
-                    history=await self._history_for_final_state(thread_id, final_state),
+                    history=await self._sdk_bridge.history_for_final_state(
+                        thread_id, final_state
+                    ),
                 )
 
                 await self._active_session_manager.clear_active_session_mutation(
@@ -1377,7 +1321,7 @@ class PersistentAgentRuntime:
                 installed_skills=installed_skills,
                 prior_turn_count=prior_turn_count,
             )
-            sdk_session = await self._openai_sdk_session_for_thread(
+            sdk_session = await self._sdk_bridge.session_for_thread(
                 thread_id,
                 current_user_message=message,
                 prior_state=prior_state,
