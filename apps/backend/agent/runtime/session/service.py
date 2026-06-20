@@ -99,6 +99,33 @@ class SessionLifecycleService:
             self._thread_locks[thread_id] = lock
         return lock
 
+    def prune_idle_thread_locks(self) -> int:
+        """Drop in-process locks for threads with no in-flight or pending work.
+
+        ``thread_lock`` is insert-only, so the lock map otherwise grows one
+        ``asyncio.Lock`` per distinct thread id for the process lifetime. A lock
+        is idle when it is unlocked AND the thread has no in-process tracking. On
+        the single event loop, an unlocked lock with no tracking has no holder
+        and no realistic waiter (a waiter on an unlocked lock would already have
+        acquired it), so removing it cannot split lock identity for live work. A
+        later turn re-creates the lock and re-hydrates tracking via
+        ``prepare_session_for_turn``.
+
+        The per-entry check and delete run with no ``await`` between them, so a
+        concurrent ``thread_lock`` call cannot interleave and observe a
+        mid-prune state.
+
+        Returns:
+            int: Number of idle lock entries pruned.
+        """
+
+        pruned = 0
+        for thread_id, lock in list(self._thread_locks.items()):
+            if not lock.locked() and not self._session_tracker.has_tracking(thread_id):
+                del self._thread_locks[thread_id]
+                pruned += 1
+        return pruned
+
     def start_background_tasks(
         self,
         *,
@@ -301,6 +328,7 @@ class SessionLifecycleService:
             while True:
                 await asyncio.sleep(self._session_sweep_interval_seconds)
                 await finalize_expired_sessions_once()
+                self.prune_idle_thread_locks()
         except asyncio.CancelledError:
             raise
 
