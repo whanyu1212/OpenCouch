@@ -25,7 +25,10 @@ from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
 from agent.feedback.models import SessionFeedbackRecord
 from agent.feedback.sqlite_session_feedback import SqliteSessionFeedbackBackend
 from agent.feedback.postgres_session_feedback import PostgresSessionFeedbackBackend
-from tests.support.persistence import postgres_database_url
+from tests.support.persistence import (
+    postgres_database_url,
+    truncate_postgres_tables,
+)
 
 
 def _crisis_record(
@@ -47,25 +50,6 @@ def _crisis_record(
         response_node_completed=True,
         llm_failure_occurred=False,
     )
-
-
-async def _truncate_postgres(dsn: str, *tables: str) -> None:
-    import psycopg
-    from psycopg.rows import dict_row
-
-    async with await psycopg.AsyncConnection.connect(
-        dsn, autocommit=True, row_factory=dict_row
-    ) as conn:
-        async with conn.cursor() as cursor:
-            for table in tables:
-                await cursor.execute(
-                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
-                    "WHERE table_name = %s) AS present",
-                    (table,),
-                )
-                row = await cursor.fetchone()
-                if row and row["present"]:
-                    await cursor.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY")
 
 
 # --------------------------------------------------------------------------- #
@@ -98,11 +82,11 @@ async def crisis_backend(request, tmp_path):
     dsn = postgres_database_url()
     if not dsn:
         pytest.skip("Postgres integration tests disabled")
-    await _truncate_postgres(dsn, "crisis_log")
+    await truncate_postgres_tables(dsn, "crisis_log")
     backend = PostgresCrisisLogBackend(dsn)
     yield "postgres", backend
     await backend.aclose()
-    await _truncate_postgres(dsn, "crisis_log")
+    await truncate_postgres_tables(dsn, "crisis_log")
 
 
 # --------------------------------------------------------------------------- #
@@ -337,11 +321,11 @@ async def feedback_backend(request, tmp_path):
     dsn = postgres_database_url()
     if not dsn:
         pytest.skip("Postgres integration tests disabled")
-    await _truncate_postgres(dsn, "session_feedback")
+    await truncate_postgres_tables(dsn, "session_feedback")
     backend = PostgresSessionFeedbackBackend(dsn)
     yield "postgres", backend
     await backend.aclose()
-    await _truncate_postgres(dsn, "session_feedback")
+    await truncate_postgres_tables(dsn, "session_feedback")
 
 
 @pytest.mark.asyncio
