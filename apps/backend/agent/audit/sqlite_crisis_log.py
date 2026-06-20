@@ -7,28 +7,23 @@ for forward compatibility.
 
 Crisis-response side effects append records. ``apurge_before`` exists for
 explicit operator or maintenance retention paths.
+
+The store body is shared with the PostgreSQL backend via
+:class:`~agent.storage.kv_store.KvStore`; only the SQLite DDL (TEXT value
+column, ``INTEGER PRIMARY KEY AUTOINCREMENT``) and the SQLite dialect live here.
 """
 
 from __future__ import annotations
 
-import json
-import logging
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import aiosqlite
-
 from agent.audit.crisis_log import CrisisLogBackend
-from agent.audit.crisis_log_serialization import (
-    deserialize_crisis_record,
-    serialize_crisis_record,
-)
 from agent.audit.models import CrisisLogRecord
-from agent.memory.hashing import extract_iso_date
-
-logger = logging.getLogger(__name__)
-
+from agent.storage.kv_store import KvStore
+from agent.storage.sqldialect import SQLITE_DIALECT
+from agent.audit.crisis_log_store import build_crisis_log_table_config
 
 CRISIS_LOG_DDL = """
 CREATE TABLE IF NOT EXISTS crisis_log (
@@ -83,43 +78,18 @@ class SqliteCrisisLogBackend:
         self.sqlite_path = (
             Path(sqlite_path) if sqlite_path != ":memory:" else Path(":memory:")
         )
-        self._connection: aiosqlite.Connection | None = None
-        self._closed = False
+        self._store: KvStore[CrisisLogRecord] = KvStore(
+            target=str(self.sqlite_path),
+            dialect=SQLITE_DIALECT,
+            config=build_crisis_log_table_config(CRISIS_LOG_SCHEMA_DDL),
+            backend_label="SqliteCrisisLogBackend",
+        )
 
-    async def _ensure_connection(self) -> aiosqlite.Connection:
-        """Open the SQLite connection on first use.
+    @property
+    def _connection(self):  # noqa: ANN202 - mirrors the store's lazy handle
+        """Expose the lazily-opened connection (None until first use)."""
 
-        Returns:
-            aiosqlite.Connection: Shared connection for the backend instance.
-        """
-
-        if self._closed:
-            raise RuntimeError("SqliteCrisisLogBackend is closed.")
-        if self._connection is not None:
-            return self._connection
-
-        if str(self.sqlite_path) != ":memory:":
-            self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-
-        self._connection = await aiosqlite.connect(str(self.sqlite_path))
-        self._connection.row_factory = aiosqlite.Row
-        await self._ensure_schema(self._connection)
-        return self._connection
-
-    @staticmethod
-    async def _ensure_schema(conn: aiosqlite.Connection) -> None:
-        """Ensure the SQLite crisis-log schema exists.
-
-        Args:
-            conn (aiosqlite.Connection): Open SQLite connection.
-
-        Returns:
-            None: Applies schema DDL.
-        """
-
-        for ddl in CRISIS_LOG_SCHEMA_DDL:
-            await conn.execute(ddl)
-        await conn.commit()
+        return self._store._connection  # noqa: SLF001
 
     async def aappend(self, record: CrisisLogRecord) -> None:
         """Append one SQLite-backed crisis record.
@@ -131,29 +101,7 @@ class SqliteCrisisLogBackend:
             None: Writes the record to SQLite.
         """
 
-        conn = await self._ensure_connection()
-        detected_date = extract_iso_date(record.detected_at)
-        serialized = serialize_crisis_record(record)
-        value_json = json.dumps(serialized, default=str)
-
-        await conn.execute(
-            """
-            INSERT INTO crisis_log
-                (id, session_id_opaque, user_id_or_null, detected_at,
-                 detected_date, level, value)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record.id,
-                record.session_id_opaque,
-                record.user_id_or_null,
-                record.detected_at,
-                detected_date,
-                record.level,
-                value_json,
-            ),
-        )
-        await conn.commit()
+        await self._store.aappend(record)
 
     async def alist_by_date(self, day: date) -> list[CrisisLogRecord]:
         """List SQLite-backed crisis records for one date.
@@ -165,18 +113,7 @@ class SqliteCrisisLogBackend:
             list[CrisisLogRecord]: Records for the day in insertion order.
         """
 
-        conn = await self._ensure_connection()
-        date_prefix = day.isoformat()
-        async with conn.execute(
-            """
-            SELECT value FROM crisis_log
-            WHERE detected_date = ?
-            ORDER BY insertion_order ASC
-            """,
-            (date_prefix,),
-        ) as cursor:
-            rows = await cursor.fetchall()
-        return [deserialize_crisis_record(json.loads(row["value"])) for row in rows]
+        return await self._store.alist_by_key(day.isoformat())
 
     async def arecord_count(self) -> int:
         """Count SQLite-backed crisis records.
@@ -185,12 +122,7 @@ class SqliteCrisisLogBackend:
             int: Total crisis-log record count.
         """
 
-        if self._closed:
-            return 0
-        conn = await self._ensure_connection()
-        async with conn.execute("SELECT COUNT(*) FROM crisis_log") as cursor:
-            row = await cursor.fetchone()
-        return int(row[0]) if row else 0
+        return await self._store.arecord_count()
 
     async def apurge_before(self, cutoff: date) -> int:
         """Purge SQLite-backed crisis records older than a cutoff date.
@@ -202,19 +134,7 @@ class SqliteCrisisLogBackend:
             int: Number of records deleted.
         """
 
-        if self._closed:
-            return 0
-        conn = await self._ensure_connection()
-        cutoff_str = cutoff.isoformat()
-        cursor = await conn.execute(
-            """
-            DELETE FROM crisis_log
-            WHERE detected_date < ?
-            """,
-            (cutoff_str,),
-        )
-        await conn.commit()
-        return int(cursor.rowcount or 0)
+        return await self._store.apurge_before(cutoff)
 
     async def aclose(self) -> None:
         """Close the SQLite crisis backend.
@@ -223,19 +143,7 @@ class SqliteCrisisLogBackend:
             None: Marks the backend closed and releases the connection.
         """
 
-        if self._closed:
-            return
-        self._closed = True
-        if self._connection is not None:
-            try:
-                await self._connection.close()
-            except Exception:
-                logger.warning(
-                    "SqliteCrisisLogBackend: connection close raised; ignoring",
-                    exc_info=True,
-                )
-            finally:
-                self._connection = None
+        await self._store.aclose()
 
 
 if TYPE_CHECKING:

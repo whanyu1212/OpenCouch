@@ -7,24 +7,25 @@ for forward compatibility.
 
 Feedback rows are intentionally session-keyed because they are created
 at session close, not by model execution during normal turn handling.
+
+The store body is shared with the PostgreSQL backend via
+:class:`~agent.storage.kv_store.KvStore`; only the SQLite DDL (TEXT value
+column, ``INTEGER PRIMARY KEY AUTOINCREMENT``) and the SQLite dialect live here.
 """
 
 from __future__ import annotations
 
-import json
-import logging
 from datetime import date
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import aiosqlite
-
-from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.feedback.models import SessionFeedbackRecord
-from agent.memory.hashing import extract_iso_date
-
-logger = logging.getLogger(__name__)
-
+from agent.feedback.session_feedback import SessionFeedbackBackend
+from agent.feedback.session_feedback_store import (
+    build_session_feedback_table_config,
+)
+from agent.storage.kv_store import KvStore
+from agent.storage.sqldialect import SQLITE_DIALECT
 
 SESSION_FEEDBACK_DDL = """
 CREATE TABLE IF NOT EXISTS session_feedback (
@@ -82,43 +83,18 @@ class SqliteSessionFeedbackBackend:
         self.sqlite_path = (
             Path(sqlite_path) if sqlite_path != ":memory:" else Path(":memory:")
         )
-        self._connection: aiosqlite.Connection | None = None
-        self._closed = False
+        self._store: KvStore[SessionFeedbackRecord] = KvStore(
+            target=str(self.sqlite_path),
+            dialect=SQLITE_DIALECT,
+            config=build_session_feedback_table_config(SESSION_FEEDBACK_SCHEMA_DDL),
+            backend_label="SqliteSessionFeedbackBackend",
+        )
 
-    async def _ensure_connection(self) -> aiosqlite.Connection:
-        """Open the SQLite connection on first use.
+    @property
+    def _connection(self):  # noqa: ANN202 - mirrors the store's lazy handle
+        """Expose the lazily-opened connection (None until first use)."""
 
-        Returns:
-            aiosqlite.Connection: Shared connection for the backend instance.
-        """
-
-        if self._closed:
-            raise RuntimeError("SqliteSessionFeedbackBackend is closed.")
-        if self._connection is not None:
-            return self._connection
-
-        if str(self.sqlite_path) != ":memory:":
-            self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-
-        self._connection = await aiosqlite.connect(str(self.sqlite_path))
-        self._connection.row_factory = aiosqlite.Row
-        await self._ensure_schema(self._connection)
-        return self._connection
-
-    @staticmethod
-    async def _ensure_schema(conn: aiosqlite.Connection) -> None:
-        """Ensure the SQLite session-feedback schema exists.
-
-        Args:
-            conn (aiosqlite.Connection): Open SQLite connection.
-
-        Returns:
-            None: Applies schema DDL.
-        """
-
-        for ddl in SESSION_FEEDBACK_SCHEMA_DDL:
-            await conn.execute(ddl)
-        await conn.commit()
+        return self._store._connection  # noqa: SLF001
 
     async def aappend(self, record: SessionFeedbackRecord) -> None:
         """Append one SQLite-backed feedback record.
@@ -130,33 +106,7 @@ class SqliteSessionFeedbackBackend:
             None: Writes the record to SQLite.
         """
 
-        conn = await self._ensure_connection()
-        recorded_date = extract_iso_date(record.recorded_at)
-        serialized = record.model_dump(mode="json")
-        value_json = json.dumps(serialized, default=str)
-
-        await conn.execute(
-            """
-            INSERT INTO session_feedback
-                (id, session_id_opaque, user_id_or_null, recorded_at,
-                 recorded_date, label, turn_count_at_end, source,
-                 schema_version, value)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record.id,
-                record.session_id_opaque,
-                record.user_id_or_null,
-                record.recorded_at,
-                recorded_date,
-                record.label,
-                record.turn_count_at_end,
-                record.source,
-                record.schema_version,
-                value_json,
-            ),
-        )
-        await conn.commit()
+        await self._store.aappend(record)
 
     async def alist_by_session(
         self, session_id_opaque: str
@@ -170,20 +120,7 @@ class SqliteSessionFeedbackBackend:
             list[SessionFeedbackRecord]: Records for the session in insertion order.
         """
 
-        conn = await self._ensure_connection()
-        async with conn.execute(
-            """
-            SELECT value FROM session_feedback
-            WHERE session_id_opaque = ?
-            ORDER BY insertion_order ASC
-            """,
-            (session_id_opaque,),
-        ) as cursor:
-            rows = await cursor.fetchall()
-        return [
-            SessionFeedbackRecord.model_validate(json.loads(row["value"]))
-            for row in rows
-        ]
+        return await self._store.alist_by_key(session_id_opaque)
 
     async def arecord_count(self) -> int:
         """Count SQLite-backed feedback records.
@@ -192,12 +129,7 @@ class SqliteSessionFeedbackBackend:
             int: Total feedback record count.
         """
 
-        if self._closed:
-            return 0
-        conn = await self._ensure_connection()
-        async with conn.execute("SELECT COUNT(*) FROM session_feedback") as cursor:
-            row = await cursor.fetchone()
-        return int(row[0]) if row else 0
+        return await self._store.arecord_count()
 
     async def apurge_before(self, cutoff: date) -> int:
         """Purge SQLite-backed feedback records older than a cutoff date.
@@ -209,19 +141,7 @@ class SqliteSessionFeedbackBackend:
             int: Number of records deleted.
         """
 
-        if self._closed:
-            return 0
-        conn = await self._ensure_connection()
-        cutoff_str = cutoff.isoformat()
-        cursor = await conn.execute(
-            """
-            DELETE FROM session_feedback
-            WHERE recorded_date < ?
-            """,
-            (cutoff_str,),
-        )
-        await conn.commit()
-        return int(cursor.rowcount or 0)
+        return await self._store.apurge_before(cutoff)
 
     async def aclose(self) -> None:
         """Close the SQLite feedback backend.
@@ -230,19 +150,7 @@ class SqliteSessionFeedbackBackend:
             None: Marks the backend closed and releases the connection.
         """
 
-        if self._closed:
-            return
-        self._closed = True
-        if self._connection is not None:
-            try:
-                await self._connection.close()
-            except Exception:
-                logger.warning(
-                    "SqliteSessionFeedbackBackend: connection close raised; ignoring",
-                    exc_info=True,
-                )
-            finally:
-                self._connection = None
+        await self._store.aclose()
 
 
 if TYPE_CHECKING:
