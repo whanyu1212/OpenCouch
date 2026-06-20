@@ -40,7 +40,11 @@ async def _isolate_postgres_persistence() -> AsyncIterator[None]:
     """
 
     dsn = postgres_database_url()
-    if dsn is None:
+    if not dsn:
+        # ``postgres_database_url`` returns ``None`` when the suite is disabled
+        # and ``""`` when enabled with an empty URL; both mean "not configured".
+        # Matching the existing Postgres tests' ``if not dsn`` guard avoids
+        # psycopg.connect("") falling back to the local default database.
         yield
         return
 
