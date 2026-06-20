@@ -30,6 +30,37 @@ def postgres_database_url() -> str | None:
     return os.getenv(_POSTGRES_TEST_URL_ENV)
 
 
+async def truncate_postgres_tables(dsn: str, *tables: str) -> None:
+    """Truncate the named Postgres tables, skipping any that do not exist.
+
+    Used to isolate opt-in Postgres integration tests that share one database:
+    each test starts from empty shared tables instead of inheriting rows from
+    whatever ran before. Absent tables are skipped so the helper is safe to call
+    before any schema has been created.
+
+    Args:
+        dsn (str): PostgreSQL connection string.
+        tables (str): Table names to truncate (identity sequences are reset).
+    """
+
+    import psycopg
+    from psycopg.rows import dict_row
+
+    async with await psycopg.AsyncConnection.connect(
+        dsn, autocommit=True, row_factory=dict_row
+    ) as conn:
+        async with conn.cursor() as cursor:
+            for table in tables:
+                await cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+                    "WHERE table_name = %s) AS present",
+                    (table,),
+                )
+                row = await cursor.fetchone()
+                if row and row["present"]:
+                    await cursor.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY")
+
+
 class FakeCrossRestartLLM(BaseLLMClient):
     """Deterministic LLM client for persistence runtime smoke tests.
 
