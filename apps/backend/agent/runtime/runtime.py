@@ -522,30 +522,14 @@ class PersistentAgentRuntime:
 
         return self._session_lifecycle.thread_lock(thread_id)
 
-    def _auto_finalization_excluded(self, thread_id: str) -> bool:
-        """Return whether runtime background finalization should skip a thread."""
-
-        return self._session_lifecycle.auto_finalization_excluded(thread_id)
-
     async def _list_active_thread_ids(self) -> list[str]:
-        """List thread ids with unresolved active sessions."""
+        """List thread ids with unresolved active sessions.
+
+        Kept as a runtime-level shim because tests monkeypatch it on the runtime
+        and ``_finalize_expired_sessions_once`` passes it through as a callback.
+        """
 
         return await self._session_lifecycle.list_active_thread_ids()
-
-    async def _clear_session_continuity_in_state(
-        self,
-        thread_id: str,
-        state: AgentState | None,
-        *,
-        suppress_errors: bool = False,
-    ) -> None:
-        """Clear session-scoped continuity fields from persisted runtime state."""
-
-        await self._session_lifecycle.clear_session_continuity_in_state(
-            thread_id,
-            state,
-            suppress_errors=suppress_errors,
-        )
 
     def _clear_thread_state(self, thread_id: str) -> None:
         """Drop all in-process state for one thread."""
@@ -607,13 +591,19 @@ class PersistentAgentRuntime:
         )
 
     async def _finalize_expired_sessions_once(self) -> SessionSweepResult:
-        """Finalize any sessions that crossed the inactivity timeout."""
+        """Finalize any sessions that crossed the inactivity timeout.
+
+        Kept as a runtime-level shim because the persistence sweeper tests call
+        it directly (and monkeypatch ``_list_active_thread_ids`` on the runtime).
+        """
 
         return await self._session_lifecycle.finalize_expired_sessions_once(
             end_session=self.end_session,
             effective_llm_client=self._effective_llm_client,
             list_active_thread_ids=self._list_active_thread_ids,
-            is_auto_finalization_excluded=self._auto_finalization_excluded,
+            is_auto_finalization_excluded=(
+                self._session_lifecycle.auto_finalization_excluded
+            ),
         )
 
     async def _prepare_session_for_turn(
@@ -624,7 +614,10 @@ class PersistentAgentRuntime:
         llm_client: BaseLLMClient | None,
         expected_liveness: ExpectedSessionLiveness | None = None,
     ) -> None:
-        """Restore or create the active session before a new turn."""
+        """Restore or create the active session before a new turn.
+
+        Kept as a runtime-level shim because the voice runtime facade reaches it.
+        """
 
         await self._session_lifecycle.prepare_session_for_turn(
             thread_id=thread_id,
@@ -1223,7 +1216,9 @@ class PersistentAgentRuntime:
             end_session=self.end_session,
             effective_llm_client=self._effective_llm_client,
             list_active_thread_ids=self._list_active_thread_ids,
-            is_auto_finalization_excluded=self._auto_finalization_excluded,
+            is_auto_finalization_excluded=(
+                self._session_lifecycle.auto_finalization_excluded
+            ),
         )
 
     async def record_session_feedback(
