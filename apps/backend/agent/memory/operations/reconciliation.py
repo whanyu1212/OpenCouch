@@ -102,6 +102,35 @@ def filter_active_semantic_records(records: list[StoreRecord]) -> list[StoreReco
     ]
 
 
+def _semantic_subject_matches(
+    candidate: MemoryWrite | SemanticFact,
+    record: StoreRecord,
+) -> bool:
+    """Return whether the candidate and record refer to the same subject slot."""
+
+    value = record.value
+    record_subject = value.get("subject", {})
+    if candidate.subject.type != record_subject.get("type"):
+        return False
+    if candidate.subject.identifier == record_subject.get("identifier"):
+        return True
+
+    # User-subject memories are scoped by the store namespace owner. Treat
+    # extractor placeholder aliases (e.g. ``test-user``) as the same slot when
+    # either side already uses that authoritative owner id; the namespace
+    # remains the isolation boundary between different people.
+    record_owner_id = record.namespace[0] if record.namespace else None
+    subject_identifiers = {
+        candidate.subject.identifier,
+        record_subject.get("identifier"),
+    }
+    return (
+        candidate.subject.type == "User"
+        and record_owner_id is not None
+        and record_owner_id in subject_identifiers
+    )
+
+
 def _semantic_slot_matches(
     candidate: MemoryWrite | SemanticFact,
     record: StoreRecord,
@@ -119,8 +148,7 @@ def _semantic_slot_matches(
     value = record.value
     return (
         candidate.category == value.get("category")
-        and candidate.subject.type == value.get("subject", {}).get("type")
-        and candidate.subject.identifier == value.get("subject", {}).get("identifier")
+        and _semantic_subject_matches(candidate, record)
         and candidate.predicate == value.get("predicate")
         and candidate.object.type == value.get("object", {}).get("type")
     )
