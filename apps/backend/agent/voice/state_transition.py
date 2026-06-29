@@ -153,13 +153,16 @@ def populate_voice_crisis_audit_state(
 ) -> None:
     """Synthesize crisis audit fields for a voice crisis turn.
 
-    Voice crisis handling is prompt-driven: the route is inferred from the
-    model calling ``lookup_crisis_resources`` (see ``infer_voice_turn_metadata``).
-    There is no server classifier, so the audit record records the
-    tool-call signal rather than a classifier verdict. ``level`` is held at
-    2 because voice has no independent imminence judgment to justify 3, and
-    ``crisis_classifier_path`` is intentionally omitted so ``write_crisis_log``
-    keeps its ``llm_primary`` default rather than inventing a new enum value.
+    The live Realtime response remains prompt/tool driven: the crisis route is
+    inferred from the model calling a crisis tool (see
+    ``infer_voice_turn_metadata``). A separate app-owned classifier runs after
+    non-crisis voice turns for audit/safety-net purposes, but it intentionally
+    does not alter the already-spoken response. This in-turn audit record keeps
+    the tool-call signal rather than a classifier verdict. ``level`` is held at
+    2 because the live voice route has no independent imminence judgment to
+    justify 3, and ``crisis_classifier_path`` is intentionally omitted so
+    ``write_crisis_log`` keeps its ``llm_primary`` default rather than inventing
+    a new enum value.
     """
     state["crisis"] = CrisisAssessment(
         level=2,

@@ -297,12 +297,22 @@ class VoiceToolCallResponse(BaseModel):
     output: dict[str, object]
 
 
+class VoicePostTurnSafetyResponse(BaseModel):
+    """Immediate scheduling status for the non-blocking voice safety net."""
+
+    scheduled: bool
+    status: Literal["scheduled", "skipped"]
+    reason: str | None = None
+    pending_count: int = Field(default=0, ge=0)
+
+
 class VoiceTurnRecordResponse(BaseModel):
     """POST /api/voice/realtime/turn response body."""
 
     recorded: bool
     thread_id: str
     message_count: int
+    post_turn_safety: VoicePostTurnSafetyResponse | None = None
 
 
 class VoiceEndSessionResponse(SessionEndResponse):

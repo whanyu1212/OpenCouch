@@ -492,7 +492,7 @@ class VoiceRuntimeFacade:
             response_llm_client=llm_client,
             track_session=False,
         )
-        self._post_turn_safety_auditor.schedule_check(
+        safety_schedule = self._post_turn_safety_auditor.schedule_check(
             VoicePostTurnSafetyCheck(
                 thread_id=thread_id,
                 user_id=user_id,
@@ -509,6 +509,9 @@ class VoiceRuntimeFacade:
                 llm_client=llm_client,
             )
         )
+        diagnostics = dict(state.get("diagnostics", {}) or {})
+        diagnostics["voice_post_turn_safety"] = safety_schedule.as_dict()
+        state["diagnostics"] = diagnostics
         return state
 
 

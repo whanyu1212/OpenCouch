@@ -21,6 +21,7 @@ from agent.observability.events import (
     VOICE_POST_TURN_SAFETY_COMPLETED,
     VOICE_POST_TURN_SAFETY_FAILED,
     VOICE_POST_TURN_SAFETY_MISSED_CRISIS,
+    VOICE_POST_TURN_SAFETY_SCHEDULED,
     VOICE_POST_TURN_SAFETY_SKIPPED,
 )
 from agent.observability.timing import elapsed_ms
@@ -48,6 +49,31 @@ class VoicePostTurnSafetyCheck:
     prior_state: AgentState | None
     context: Any
     llm_client: BaseLLMClient | None
+
+
+@dataclass(frozen=True, slots=True)
+class VoicePostTurnSafetyScheduleResult:
+    """Observable outcome of attempting to enqueue a post-turn safety check."""
+
+    scheduled: bool
+    reason: str | None = None
+    pending_count: int = 0
+
+    @property
+    def status(self) -> str:
+        """Return a stable API-facing status string."""
+
+        return "scheduled" if self.scheduled else "skipped"
+
+    def as_dict(self) -> dict[str, object]:
+        """Return a JSON-serializable diagnostic payload."""
+
+        return {
+            "scheduled": self.scheduled,
+            "status": self.status,
+            "reason": self.reason,
+            "pending_count": self.pending_count,
+        }
 
 
 class VoicePostTurnSafetyAuditor:
@@ -80,30 +106,30 @@ class VoicePostTurnSafetyAuditor:
         self._discard_finished_tasks()
         return len(self._tasks)
 
-    def schedule_check(self, check: VoicePostTurnSafetyCheck) -> bool:
+    def schedule_check(
+        self,
+        check: VoicePostTurnSafetyCheck,
+    ) -> VoicePostTurnSafetyScheduleResult:
         """Schedule one background audit check when it is useful and possible.
 
         Returns:
-            bool: ``True`` when a task was scheduled, ``False`` when skipped.
+            VoicePostTurnSafetyScheduleResult: Whether work was scheduled and,
+            when skipped, the reason. The caller can surface this immediately
+            because later classifier completion/failure happens asynchronously.
         """
 
         if self._closed:
-            self._trace_skipped(check, reason="closed")
-            return False
+            return self._skip_check(check, reason="closed")
         if check.llm_client is None:
-            self._trace_skipped(check, reason="no_llm_client")
-            return False
+            return self._skip_check(check, reason="no_llm_client")
         if not check.user_text.strip():
-            self._trace_skipped(check, reason="empty_user_text")
-            return False
+            return self._skip_check(check, reason="empty_user_text")
         if check.realtime_route == "crisis":
-            self._trace_skipped(check, reason="already_crisis_routed")
-            return False
+            return self._skip_check(check, reason="already_crisis_routed")
 
         self._discard_finished_tasks()
         if len(self._tasks) >= self._max_pending_tasks:
-            self._trace_skipped(check, reason="task_limit_reached")
-            return False
+            return self._skip_check(check, reason="task_limit_reached")
 
         task = asyncio.create_task(
             self._run_check(check),
@@ -111,7 +137,20 @@ class VoicePostTurnSafetyAuditor:
         )
         self._tasks.add(task)
         task.add_done_callback(lambda done: self._tasks.discard(done))
-        return True
+        pending_count = len(self._tasks)
+        trace_event(
+            VOICE_POST_TURN_SAFETY_SCHEDULED,
+            {
+                "voice_runtime": "openai_realtime",
+                "route": check.realtime_route,
+                "response_style": check.response_style,
+                "pending_count": pending_count,
+            },
+        )
+        return VoicePostTurnSafetyScheduleResult(
+            scheduled=True,
+            pending_count=pending_count,
+        )
 
     async def drain(self, timeout_seconds: float | None = None) -> int:
         """Wait for scheduled checks to finish.
@@ -231,7 +270,14 @@ class VoicePostTurnSafetyAuditor:
             },
         )
 
-    def _trace_skipped(self, check: VoicePostTurnSafetyCheck, *, reason: str) -> None:
+    def _skip_check(
+        self,
+        check: VoicePostTurnSafetyCheck,
+        *,
+        reason: str,
+    ) -> VoicePostTurnSafetyScheduleResult:
+        self._discard_finished_tasks()
+        pending_count = len(self._tasks)
         trace_event(
             VOICE_POST_TURN_SAFETY_SKIPPED,
             {
@@ -239,7 +285,13 @@ class VoicePostTurnSafetyAuditor:
                 "reason": reason,
                 "route": check.realtime_route,
                 "response_style": check.response_style,
+                "pending_count": pending_count,
             },
+        )
+        return VoicePostTurnSafetyScheduleResult(
+            scheduled=False,
+            reason=reason,
+            pending_count=pending_count,
         )
 
     def _discard_finished_tasks(self) -> None:
@@ -265,4 +317,5 @@ def _classifier_state_for_check(check: VoicePostTurnSafetyCheck) -> AgentState:
 __all__ = [
     "VoicePostTurnSafetyAuditor",
     "VoicePostTurnSafetyCheck",
+    "VoicePostTurnSafetyScheduleResult",
 ]

@@ -9,6 +9,7 @@ VOICE_CRISIS_RESOURCE_LOOKUP_PERSISTED = "voice.crisis_resource_lookup.persisted
 VOICE_POST_TURN_SAFETY_COMPLETED = "voice.post_turn_safety.completed"
 VOICE_POST_TURN_SAFETY_FAILED = "voice.post_turn_safety.failed"
 VOICE_POST_TURN_SAFETY_MISSED_CRISIS = "voice.post_turn_safety.missed_crisis"
+VOICE_POST_TURN_SAFETY_SCHEDULED = "voice.post_turn_safety.scheduled"
 VOICE_POST_TURN_SAFETY_SKIPPED = "voice.post_turn_safety.skipped"
 VOICE_RESPONSE_FINALIZED = "voice.response.finalized"
 VOICE_TOOL_COMPLETED = "voice.tool.completed"
