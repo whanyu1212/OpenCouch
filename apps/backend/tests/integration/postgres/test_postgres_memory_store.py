@@ -159,6 +159,36 @@ async def test_delete_returns_true_when_record_existed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_batch_rollback_discards_partial_writes() -> None:
+    """A failing batch must not persist earlier rows in the transaction."""
+
+    dsn = _require_postgres_database_url()
+    owner_id = _owner_id()
+    namespace = (owner_id, "semantic")
+    store = PostgresMemoryStore(dsn)
+
+    try:
+        with pytest.raises(Exception):  # noqa: B017 - database constraint error
+            await store.aput_batch(
+                [
+                    (namespace, "batch-first", {"v": "must rollback"}, None, None),
+                    (
+                        (owner_id, "invalid-kind"),
+                        "batch-invalid",
+                        {"v": "violates namespace_kind CHECK"},
+                        None,
+                        None,
+                    ),
+                ]
+            )
+
+        assert await store.aget(namespace, "batch-first") is None
+    finally:
+        await store.aclose()
+        await _delete_records_for_owners(dsn, [owner_id])
+
+
+@pytest.mark.asyncio
 async def test_namespaces_isolated_across_users() -> None:
     """Writes to one user's namespace must not leak into another's."""
 

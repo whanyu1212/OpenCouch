@@ -104,6 +104,7 @@ class PostgresMemoryStore:
         self._connection: psycopg.AsyncConnection[dict[str, Any]] | None = None
         self._closed = False
         self._connect_lock = asyncio.Lock()
+        self._write_lock = asyncio.Lock()
 
     async def _ensure_connection(self) -> psycopg.AsyncConnection[dict[str, Any]]:
         """Open the PostgreSQL connection on first use.
@@ -350,89 +351,17 @@ class PostgresMemoryStore:
             None: Writes the record to PostgreSQL.
         """
 
-        conn = await self._ensure_connection()
-        owner_id, namespace_kind = unpack_memory_namespace(namespace)
-        fields = prepare_memory_record_fields(value, embedding=embedding)
-        embedding_vector_3072 = self._embedding_vector_3072_literal(
-            embedding,
-            fields.embedding_dim,
-        )
+        async with self._write_lock:
+            conn = await self._ensure_connection()
+            owner_id, namespace_kind = unpack_memory_namespace(namespace)
+            fields = prepare_memory_record_fields(value, embedding=embedding)
+            embedding_vector_3072 = self._embedding_vector_3072_literal(
+                embedding,
+                fields.embedding_dim,
+            )
 
-        async with conn.transaction():
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    """
-                    INSERT INTO memory_records
-                        (id, owner_id, namespace_kind, category, value,
-                         created_at, last_referenced_at, dormant_at, user_visible,
-                         embedding, embedding_vector_3072, embedding_dim, embedding_model)
-                    VALUES (
-                        %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s::vector(3072), %s, %s
-                    )
-                    ON CONFLICT (id, owner_id, namespace_kind) DO UPDATE SET
-                        category = EXCLUDED.category,
-                        value = EXCLUDED.value,
-                        created_at = EXCLUDED.created_at,
-                        last_referenced_at = EXCLUDED.last_referenced_at,
-                        dormant_at = EXCLUDED.dormant_at,
-                        user_visible = EXCLUDED.user_visible,
-                        embedding = EXCLUDED.embedding,
-                        embedding_vector_3072 = EXCLUDED.embedding_vector_3072,
-                        embedding_dim = EXCLUDED.embedding_dim,
-                        embedding_model = EXCLUDED.embedding_model
-                    """,
-                    (
-                        key,
-                        owner_id,
-                        namespace_kind,
-                        fields.category,
-                        fields.serialized_value,
-                        fields.created_at,
-                        fields.last_referenced_at,
-                        fields.dormant_at,
-                        fields.user_visible,
-                        embedding,
-                        embedding_vector_3072,
-                        fields.embedding_dim,
-                        embedding_model,
-                    ),
-                )
-
-    async def aput_batch(
-        self,
-        items: list[
-            tuple[
-                Namespace,
-                str,
-                dict[str, Any],
-                list[float] | None,
-                str | None,
-            ]
-        ],
-    ) -> None:
-        """Write multiple PostgreSQL-backed records in one transaction.
-
-        Args:
-            items (list[tuple[Namespace, str, dict[str, Any], list[float] | None, str | None]]):
-                Items shaped as ``(namespace, key, value, embedding, embedding_model)``.
-
-        Returns:
-            None: Commits the batch or rolls it back on failure.
-        """
-
-        if not items:
-            return
-
-        conn = await self._ensure_connection()
-        async with conn.transaction():
-            async with conn.cursor() as cursor:
-                for namespace, key, value, embedding, embedding_model in items:
-                    owner_id, namespace_kind = unpack_memory_namespace(namespace)
-                    fields = prepare_memory_record_fields(value, embedding=embedding)
-                    embedding_vector_3072 = self._embedding_vector_3072_literal(
-                        embedding,
-                        fields.embedding_dim,
-                    )
+            async with conn.transaction():
+                async with conn.cursor() as cursor:
                     await cursor.execute(
                         """
                         INSERT INTO memory_records
@@ -470,6 +399,82 @@ class PostgresMemoryStore:
                             embedding_model,
                         ),
                     )
+
+    async def aput_batch(
+        self,
+        items: list[
+            tuple[
+                Namespace,
+                str,
+                dict[str, Any],
+                list[float] | None,
+                str | None,
+            ]
+        ],
+    ) -> None:
+        """Write multiple PostgreSQL-backed records in one transaction.
+
+        Args:
+            items (list[tuple[Namespace, str, dict[str, Any], list[float] | None, str | None]]):
+                Items shaped as ``(namespace, key, value, embedding, embedding_model)``.
+
+        Returns:
+            None: Commits the batch or rolls it back on failure.
+        """
+
+        if not items:
+            return
+
+        async with self._write_lock:
+            conn = await self._ensure_connection()
+            async with conn.transaction():
+                async with conn.cursor() as cursor:
+                    for namespace, key, value, embedding, embedding_model in items:
+                        owner_id, namespace_kind = unpack_memory_namespace(namespace)
+                        fields = prepare_memory_record_fields(
+                            value, embedding=embedding
+                        )
+                        embedding_vector_3072 = self._embedding_vector_3072_literal(
+                            embedding,
+                            fields.embedding_dim,
+                        )
+                        await cursor.execute(
+                            """
+                            INSERT INTO memory_records
+                                (id, owner_id, namespace_kind, category, value,
+                                 created_at, last_referenced_at, dormant_at, user_visible,
+                                 embedding, embedding_vector_3072, embedding_dim, embedding_model)
+                            VALUES (
+                                %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s, %s::vector(3072), %s, %s
+                            )
+                            ON CONFLICT (id, owner_id, namespace_kind) DO UPDATE SET
+                                category = EXCLUDED.category,
+                                value = EXCLUDED.value,
+                                created_at = EXCLUDED.created_at,
+                                last_referenced_at = EXCLUDED.last_referenced_at,
+                                dormant_at = EXCLUDED.dormant_at,
+                                user_visible = EXCLUDED.user_visible,
+                                embedding = EXCLUDED.embedding,
+                                embedding_vector_3072 = EXCLUDED.embedding_vector_3072,
+                                embedding_dim = EXCLUDED.embedding_dim,
+                                embedding_model = EXCLUDED.embedding_model
+                            """,
+                            (
+                                key,
+                                owner_id,
+                                namespace_kind,
+                                fields.category,
+                                fields.serialized_value,
+                                fields.created_at,
+                                fields.last_referenced_at,
+                                fields.dormant_at,
+                                fields.user_visible,
+                                embedding,
+                                embedding_vector_3072,
+                                fields.embedding_dim,
+                                embedding_model,
+                            ),
+                        )
 
     async def aget(
         self,
@@ -703,19 +708,20 @@ class PostgresMemoryStore:
             bool: ``True`` when a record was deleted.
         """
 
-        conn = await self._ensure_connection()
-        owner_id, namespace_kind = unpack_memory_namespace(namespace)
-        async with conn.transaction():
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    """
-                    DELETE FROM memory_records
-                    WHERE id = %s AND owner_id = %s AND namespace_kind = %s
-                    """,
-                    (key, owner_id, namespace_kind),
-                )
-                deleted = cursor.rowcount or 0
-        return deleted > 0
+        async with self._write_lock:
+            conn = await self._ensure_connection()
+            owner_id, namespace_kind = unpack_memory_namespace(namespace)
+            async with conn.transaction():
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        """
+                        DELETE FROM memory_records
+                        WHERE id = %s AND owner_id = %s AND namespace_kind = %s
+                        """,
+                        (key, owner_id, namespace_kind),
+                    )
+                    deleted = cursor.rowcount or 0
+            return deleted > 0
 
     async def aclose(self) -> None:
         """Close the PostgreSQL store connection.
@@ -726,18 +732,22 @@ class PostgresMemoryStore:
 
         if self._closed:
             return
-        async with self._connect_lock:
-            self._closed = True
-            if self._connection is not None:
-                try:
-                    await self._connection.close()
-                except Exception:
-                    logger.warning(
-                        "PostgresMemoryStore: connection close raised; ignoring",
-                        exc_info=True,
-                    )
-                finally:
-                    self._connection = None
+        # Serialize close with write transactions on the shared connection and
+        # keep lock ordering consistent with write methods
+        # (_write_lock -> _ensure_connection -> _connect_lock).
+        async with self._write_lock:
+            async with self._connect_lock:
+                self._closed = True
+                if self._connection is not None:
+                    try:
+                        await self._connection.close()
+                    except Exception:
+                        logger.warning(
+                            "PostgresMemoryStore: connection close raised; ignoring",
+                            exc_info=True,
+                        )
+                    finally:
+                        self._connection = None
 
     async def arecord_count(self, namespace: Namespace | None = None) -> int:
         """Count PostgreSQL-backed records.
