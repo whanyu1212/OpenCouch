@@ -207,6 +207,7 @@ class SqliteMemoryStore:
         self._connection: aiosqlite.Connection | None = None
         self._closed = False
         self._connect_lock = asyncio.Lock()
+        self._write_lock = asyncio.Lock()
 
     async def _ensure_connection(self) -> aiosqlite.Connection:
         """Open the SQLite connection on first use.
@@ -309,53 +310,54 @@ class SqliteMemoryStore:
             None: Writes the record to SQLite.
         """
 
-        conn = await self._ensure_connection()
-        owner_id, namespace_kind = unpack_memory_namespace(namespace)
-        fields = prepare_memory_record_fields(value, embedding=embedding)
-        user_visible = 1 if fields.user_visible else 0
-        embedding_blob = _encode_embedding(embedding)
+        async with self._write_lock:
+            conn = await self._ensure_connection()
+            owner_id, namespace_kind = unpack_memory_namespace(namespace)
+            fields = prepare_memory_record_fields(value, embedding=embedding)
+            user_visible = 1 if fields.user_visible else 0
+            embedding_blob = _encode_embedding(embedding)
 
-        # INSERT OR REPLACE via a conflict clause on the compound
-        # UNIQUE (id, owner_id, namespace_kind) constraint. When a row
-        # already exists for this (id, owner_id, namespace_kind) tuple,
-        # we update its value in place; otherwise we insert a new row.
-        # The same ``id`` under a different namespace is a new row,
-        # not a conflict — bucket-isolation semantics match the
-        # in-memory store.
-        await conn.execute(
-            """
-            INSERT INTO memory_records
-                (id, owner_id, namespace_kind, category, value,
-                 created_at, last_referenced_at, dormant_at, user_visible,
-                 embedding, embedding_dim, embedding_model)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id, owner_id, namespace_kind) DO UPDATE SET
-                category = excluded.category,
-                value = excluded.value,
-                created_at = excluded.created_at,
-                last_referenced_at = excluded.last_referenced_at,
-                dormant_at = excluded.dormant_at,
-                user_visible = excluded.user_visible,
-                embedding = excluded.embedding,
-                embedding_dim = excluded.embedding_dim,
-                embedding_model = excluded.embedding_model
-            """,
-            (
-                key,
-                owner_id,
-                namespace_kind,
-                fields.category,
-                fields.serialized_value,
-                fields.created_at,
-                fields.last_referenced_at,
-                fields.dormant_at,
-                user_visible,
-                embedding_blob,
-                fields.embedding_dim,
-                embedding_model,
-            ),
-        )
-        await conn.commit()
+            # INSERT OR REPLACE via a conflict clause on the compound
+            # UNIQUE (id, owner_id, namespace_kind) constraint. When a row
+            # already exists for this (id, owner_id, namespace_kind) tuple,
+            # we update its value in place; otherwise we insert a new row.
+            # The same ``id`` under a different namespace is a new row,
+            # not a conflict — bucket-isolation semantics match the
+            # in-memory store.
+            await conn.execute(
+                """
+                INSERT INTO memory_records
+                    (id, owner_id, namespace_kind, category, value,
+                     created_at, last_referenced_at, dormant_at, user_visible,
+                     embedding, embedding_dim, embedding_model)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id, owner_id, namespace_kind) DO UPDATE SET
+                    category = excluded.category,
+                    value = excluded.value,
+                    created_at = excluded.created_at,
+                    last_referenced_at = excluded.last_referenced_at,
+                    dormant_at = excluded.dormant_at,
+                    user_visible = excluded.user_visible,
+                    embedding = excluded.embedding,
+                    embedding_dim = excluded.embedding_dim,
+                    embedding_model = excluded.embedding_model
+                """,
+                (
+                    key,
+                    owner_id,
+                    namespace_kind,
+                    fields.category,
+                    fields.serialized_value,
+                    fields.created_at,
+                    fields.last_referenced_at,
+                    fields.dormant_at,
+                    user_visible,
+                    embedding_blob,
+                    fields.embedding_dim,
+                    embedding_model,
+                ),
+            )
+            await conn.commit()
 
     async def aput_batch(
         self,
@@ -382,51 +384,52 @@ class SqliteMemoryStore:
         if not items:
             return
 
-        conn = await self._ensure_connection()
-        try:
-            await conn.execute("BEGIN")
-            for namespace, key, value, embedding, embedding_model in items:
-                owner_id, namespace_kind = unpack_memory_namespace(namespace)
-                fields = prepare_memory_record_fields(value, embedding=embedding)
-                user_visible = 1 if fields.user_visible else 0
-                embedding_blob = _encode_embedding(embedding)
-                await conn.execute(
-                    """
-                    INSERT INTO memory_records
-                        (id, owner_id, namespace_kind, category, value,
-                         created_at, last_referenced_at, dormant_at, user_visible,
-                         embedding, embedding_dim, embedding_model)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(id, owner_id, namespace_kind) DO UPDATE SET
-                        category = excluded.category,
-                        value = excluded.value,
-                        created_at = excluded.created_at,
-                        last_referenced_at = excluded.last_referenced_at,
-                        dormant_at = excluded.dormant_at,
-                        user_visible = excluded.user_visible,
-                        embedding = excluded.embedding,
-                        embedding_dim = excluded.embedding_dim,
-                        embedding_model = excluded.embedding_model
-                    """,
-                    (
-                        key,
-                        owner_id,
-                        namespace_kind,
-                        fields.category,
-                        fields.serialized_value,
-                        fields.created_at,
-                        fields.last_referenced_at,
-                        fields.dormant_at,
-                        user_visible,
-                        embedding_blob,
-                        fields.embedding_dim,
-                        embedding_model,
-                    ),
-                )
-            await conn.commit()
-        except Exception:
-            await conn.rollback()
-            raise
+        async with self._write_lock:
+            conn = await self._ensure_connection()
+            try:
+                await conn.execute("BEGIN")
+                for namespace, key, value, embedding, embedding_model in items:
+                    owner_id, namespace_kind = unpack_memory_namespace(namespace)
+                    fields = prepare_memory_record_fields(value, embedding=embedding)
+                    user_visible = 1 if fields.user_visible else 0
+                    embedding_blob = _encode_embedding(embedding)
+                    await conn.execute(
+                        """
+                        INSERT INTO memory_records
+                            (id, owner_id, namespace_kind, category, value,
+                             created_at, last_referenced_at, dormant_at, user_visible,
+                             embedding, embedding_dim, embedding_model)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id, owner_id, namespace_kind) DO UPDATE SET
+                            category = excluded.category,
+                            value = excluded.value,
+                            created_at = excluded.created_at,
+                            last_referenced_at = excluded.last_referenced_at,
+                            dormant_at = excluded.dormant_at,
+                            user_visible = excluded.user_visible,
+                            embedding = excluded.embedding,
+                            embedding_dim = excluded.embedding_dim,
+                            embedding_model = excluded.embedding_model
+                        """,
+                        (
+                            key,
+                            owner_id,
+                            namespace_kind,
+                            fields.category,
+                            fields.serialized_value,
+                            fields.created_at,
+                            fields.last_referenced_at,
+                            fields.dormant_at,
+                            user_visible,
+                            embedding_blob,
+                            fields.embedding_dim,
+                            embedding_model,
+                        ),
+                    )
+                await conn.commit()
+            except Exception:
+                await conn.rollback()
+                raise
 
     @staticmethod
     def _row_to_store_record(
@@ -684,17 +687,18 @@ class SqliteMemoryStore:
             bool: ``True`` when a record was deleted.
         """
 
-        conn = await self._ensure_connection()
-        owner_id, namespace_kind = unpack_memory_namespace(namespace)
-        cursor = await conn.execute(
-            """
-            DELETE FROM memory_records
-            WHERE id = ? AND owner_id = ? AND namespace_kind = ?
-            """,
-            (key, owner_id, namespace_kind),
-        )
-        await conn.commit()
-        return (cursor.rowcount or 0) > 0
+        async with self._write_lock:
+            conn = await self._ensure_connection()
+            owner_id, namespace_kind = unpack_memory_namespace(namespace)
+            cursor = await conn.execute(
+                """
+                DELETE FROM memory_records
+                WHERE id = ? AND owner_id = ? AND namespace_kind = ?
+                """,
+                (key, owner_id, namespace_kind),
+            )
+            await conn.commit()
+            return (cursor.rowcount or 0) > 0
 
     async def aclose(self) -> None:
         """Close the SQLite store connection.
@@ -705,20 +709,23 @@ class SqliteMemoryStore:
 
         if self._closed:
             return
-        # Serialize with _connect_lock so aclose() cannot race with a
-        # concurrent _ensure_connection() that is mid-initialization.
-        async with self._connect_lock:
-            self._closed = True
-            if self._connection is not None:
-                try:
-                    await self._connection.close()
-                except Exception:
-                    logger.warning(
-                        "SqliteMemoryStore: connection close raised; ignoring",
-                        exc_info=True,
-                    )
-                finally:
-                    self._connection = None
+        # Serialize with _write_lock first so close cannot race with a
+        # commit/rollback on the shared connection. Then take _connect_lock in
+        # the same order write methods use (_write_lock -> _ensure_connection ->
+        # _connect_lock) to avoid deadlocks with lazy connection opening.
+        async with self._write_lock:
+            async with self._connect_lock:
+                self._closed = True
+                if self._connection is not None:
+                    try:
+                        await self._connection.close()
+                    except Exception:
+                        logger.warning(
+                            "SqliteMemoryStore: connection close raised; ignoring",
+                            exc_info=True,
+                        )
+                    finally:
+                        self._connection = None
 
     # These share the same aiosqlite connection as the other async
     # methods, which is why they're async. An earlier attempt made

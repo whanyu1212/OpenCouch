@@ -21,6 +21,9 @@ Test structure:
 
 from __future__ import annotations
 
+import asyncio
+from typing import Any
+
 import pytest
 
 from agent.memory.store.sqlite import SqliteMemoryStore
@@ -107,6 +110,89 @@ async def test_delete_returns_true_when_record_existed() -> None:
     assert await store.adelete(namespace, "fact-1") is True
     assert await store.adelete(namespace, "fact-1") is False  # already gone
     assert await store.aget(namespace, "fact-1") is None
+    await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_put_cannot_commit_failed_batch_partial_write(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unrelated put must not commit a still-open failing batch.
+
+    This pins the regression from #162: with one shared SQLite connection, a
+    concurrent ``aput`` commit could commit the first row of an ``aput_batch``
+    before that batch later failed and rolled back. The batch's first row must
+    remain absent while the independent write still commits.
+    """
+
+    store = SqliteMemoryStore(":memory:")
+    namespace = ("user-1", "semantic")
+    conn = await store._ensure_connection()  # noqa: SLF001 - test instrumentation
+    original_execute = conn.execute
+    original_commit = conn.commit
+    batch_first_inserted = asyncio.Event()
+    release_batch = asyncio.Event()
+    independent_committed_before_batch_released = asyncio.Event()
+
+    async def execute_wrapper(sql: str, parameters: Any = None):  # noqa: ANN202
+        if parameters is None:
+            result = await original_execute(sql)
+        else:
+            result = await original_execute(sql, parameters)
+        if isinstance(parameters, tuple) and parameters[:1] == ("batch-first",):
+            batch_first_inserted.set()
+            await release_batch.wait()
+        return result
+
+    async def commit_wrapper() -> None:
+        await original_commit()
+        if not release_batch.is_set():
+            independent_committed_before_batch_released.set()
+
+    monkeypatch.setattr(conn, "execute", execute_wrapper)
+    monkeypatch.setattr(conn, "commit", commit_wrapper)
+
+    batch_task = asyncio.create_task(
+        store.aput_batch(
+            [
+                (namespace, "batch-first", {"v": "must rollback"}, None, None),
+                (
+                    ("user-1", "invalid-kind"),
+                    "batch-invalid",
+                    {"v": "violates namespace_kind CHECK"},
+                    None,
+                    None,
+                ),
+            ]
+        )
+    )
+    await asyncio.wait_for(batch_first_inserted.wait(), timeout=1.0)
+
+    independent_task = asyncio.create_task(
+        store.aput(namespace, "independent", {"v": "must commit"})
+    )
+    try:
+        await asyncio.wait_for(
+            independent_committed_before_batch_released.wait(),
+            timeout=0.2,
+        )
+    except TimeoutError:
+        # With the fix, the independent write is blocked on the per-store write
+        # lock until the failing batch rolls back. Without the fix this event is
+        # set because the independent commit cross-commits ``batch-first``.
+        pass
+
+    release_batch.set()
+    with pytest.raises(Exception):  # noqa: B017 - SQLite raises an integrity error
+        await batch_task
+    await independent_task
+    monkeypatch.setattr(conn, "execute", original_execute)
+    monkeypatch.setattr(conn, "commit", original_commit)
+
+    assert await store.aget(namespace, "batch-first") is None
+    independent = await store.aget(namespace, "independent")
+    assert independent is not None
+    assert independent.value == {"v": "must commit"}
     await store.aclose()
 
 
