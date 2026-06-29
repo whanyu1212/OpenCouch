@@ -127,17 +127,21 @@ async def test_voice_turn_endpoint_records_transcript(
             )
 
         history = await runtime.get_history("voice-thread")
+        persisted_state = await runtime.get_state("voice-thread")
 
     assert response.status_code == 200
     body = response.json()
     assert body["recorded"] is True
     assert body["message_count"] == 2
-    assert body["post_turn_safety"] == {
+    expected_safety = {
         "scheduled": False,
         "status": "skipped",
         "reason": "no_llm_client",
         "pending_count": 0,
     }
+    assert body["post_turn_safety"] == expected_safety
+    assert persisted_state is not None
+    assert persisted_state["diagnostics"]["voice_post_turn_safety"] == expected_safety
     assert [message.content for message in history] == [
         "I feel overwhelmed.",
         "That sounds like a lot to carry.",
