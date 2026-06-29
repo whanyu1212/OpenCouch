@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -141,10 +142,18 @@ async def record_voice_realtime_turn(
             },
         ) from exc
 
+    diagnostics = state.get("diagnostics", {})
+    post_turn_safety = None
+    if isinstance(diagnostics, Mapping):
+        candidate = diagnostics.get("voice_post_turn_safety")
+        if isinstance(candidate, Mapping):
+            post_turn_safety = dict(candidate)
+
     return VoiceTurnRecordResponse(
         recorded=True,
         thread_id=body.thread_id,
         message_count=len(state.get("transcript", []) or []),
+        post_turn_safety=post_turn_safety,
     )
 
 

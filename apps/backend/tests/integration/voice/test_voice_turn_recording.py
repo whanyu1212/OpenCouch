@@ -127,10 +127,21 @@ async def test_voice_turn_endpoint_records_transcript(
             )
 
         history = await runtime.get_history("voice-thread")
+        persisted_state = await runtime.get_state("voice-thread")
 
     assert response.status_code == 200
-    assert response.json()["recorded"] is True
-    assert response.json()["message_count"] == 2
+    body = response.json()
+    assert body["recorded"] is True
+    assert body["message_count"] == 2
+    expected_safety = {
+        "scheduled": False,
+        "status": "skipped",
+        "reason": "no_llm_client",
+        "pending_count": 0,
+    }
+    assert body["post_turn_safety"] == expected_safety
+    assert persisted_state is not None
+    assert persisted_state["diagnostics"]["voice_post_turn_safety"] == expected_safety
     assert [message.content for message in history] == [
         "I feel overwhelmed.",
         "That sounds like a lot to carry.",
@@ -204,10 +215,12 @@ async def test_voice_turn_endpoint_infers_route_and_tool_metadata(
 async def test_voice_crisis_turn_writes_one_audit_record() -> None:
     """A voice turn that called lookup_crisis_resources is audited like text.
 
-    Voice crisis handling is prompt-driven, so the only crisis signal is the
-    model's tool call. The runtime must still write exactly one
-    ``CrisisLogRecord`` so a crisis over voice is as auditable as one over
-    text, and the verified resource status must thread into the record.
+    The live Realtime crisis route is prompt/tool driven, so this in-turn
+    audit record is based on the model's crisis tool call. Missed non-crisis
+    routes are checked separately by the post-turn safety auditor. The runtime
+    must still write exactly one ``CrisisLogRecord`` here so a crisis over voice
+    is as auditable as one over text, and the verified resource status must
+    thread into the record.
     """
 
     runtime = PersistentAgentRuntime(
@@ -274,7 +287,7 @@ async def test_non_crisis_voice_turn_writes_no_audit_record() -> None:
     )
 
     async with runtime:
-        await runtime.voice.record_voice_turn(
+        state = await runtime.voice.record_voice_turn(
             thread_id="voice-thread",
             user_id="user-1",
             user_text="I had a rough day at work.",
@@ -288,6 +301,12 @@ async def test_non_crisis_voice_turn_writes_no_audit_record() -> None:
 
     assert pending == 0
     assert count == 0
+    assert state["diagnostics"]["voice_post_turn_safety"] == {
+        "scheduled": False,
+        "status": "skipped",
+        "reason": "no_llm_client",
+        "pending_count": 0,
+    }
 
 
 @pytest.mark.asyncio
@@ -307,7 +326,7 @@ async def test_post_turn_voice_classifier_writes_missed_crisis_audit_record() ->
     )
 
     async with runtime:
-        await runtime.voice.record_voice_turn(
+        state = await runtime.voice.record_voice_turn(
             thread_id="voice-missed-crisis",
             user_id="user-1",
             user_text="I've been thinking about ending it all.",
@@ -321,6 +340,12 @@ async def test_post_turn_voice_classifier_writes_missed_crisis_audit_record() ->
         )
 
     assert pending == 0
+    assert state["diagnostics"]["voice_post_turn_safety"] == {
+        "scheduled": True,
+        "status": "scheduled",
+        "reason": None,
+        "pending_count": 1,
+    }
     assert llm.crisis_calls == 1
     assert len(records) == 1
     record = records[0]

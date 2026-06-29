@@ -141,10 +141,18 @@ export interface RealtimeVoiceToolCallResponse {
   output: Record<string, unknown>;
 }
 
+export interface RealtimeVoicePostTurnSafetyStatus {
+  scheduled: boolean;
+  status: "scheduled" | "skipped";
+  reason: string | null;
+  pending_count: number;
+}
+
 export interface RealtimeVoiceTurnRecordResponse {
   recorded: boolean;
   thread_id: string;
   message_count: number;
+  post_turn_safety?: RealtimeVoicePostTurnSafetyStatus | null;
 }
 
 export interface RealtimeVoiceRecordedToolCall {

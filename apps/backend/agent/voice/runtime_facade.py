@@ -483,33 +483,37 @@ class VoiceRuntimeFacade:
                     },
                 )
 
-        post_turn_context = self._runtime._context_for_turn(
-            thread_id=thread_id,
-            message=state.get("message", ""),
-            prior_state=prior_state,
-            user_id=user_id,
-            llm_client=llm_client,
-            response_llm_client=llm_client,
-            track_session=False,
-        )
-        self._post_turn_safety_auditor.schedule_check(
-            VoicePostTurnSafetyCheck(
+            post_turn_context = self._runtime._context_for_turn(
                 thread_id=thread_id,
+                message=state.get("message", ""),
+                prior_state=prior_state,
                 user_id=user_id,
-                user_text=user_text,
-                realtime_route=transition.metadata.route,
-                response_style=transition.metadata.response_style,
-                state=cast(AgentState, dict(state)),
-                prior_state=(
-                    cast(AgentState, dict(prior_state))
-                    if prior_state is not None
-                    else None
-                ),
-                context=post_turn_context,
                 llm_client=llm_client,
+                response_llm_client=llm_client,
+                track_session=False,
             )
-        )
-        return state
+            safety_schedule = self._post_turn_safety_auditor.schedule_check(
+                VoicePostTurnSafetyCheck(
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    user_text=user_text,
+                    realtime_route=transition.metadata.route,
+                    response_style=transition.metadata.response_style,
+                    state=cast(AgentState, dict(state)),
+                    prior_state=(
+                        cast(AgentState, dict(prior_state))
+                        if prior_state is not None
+                        else None
+                    ),
+                    context=post_turn_context,
+                    llm_client=llm_client,
+                )
+            )
+            diagnostics = dict(state.get("diagnostics", {}) or {})
+            diagnostics["voice_post_turn_safety"] = safety_schedule.as_dict()
+            state["diagnostics"] = diagnostics
+            await self._state_store.save_state(thread_id, state)
+            return state
 
 
 __all__ = [
