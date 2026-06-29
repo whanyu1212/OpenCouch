@@ -362,7 +362,9 @@ class TestCrisisLogNode:
         assert event.name == AUDIT_CRISIS_LOG_APPEND
         assert event.attributes == {
             "audit_recorded": True,
+            "event_type": "crisis_response",
             "level": 2,
+            "classifier_path": "llm_primary",
             "resource_lookup_status": "found",
             "resource_count": 1,
             "response_path": "unknown",
@@ -755,19 +757,31 @@ class TestCrisisLogSummaries:
                 llm_failure_occurred=False,
                 response_node_completed=False,
             ),
+            _build_retention_record(
+                record_id="d",
+                detected_at="2026-04-10T11:00:00Z",
+                level=2,
+                event_type="voice_missed_crisis",
+                classifier_path="voice_post_turn",
+                response_path="not_routed",
+                llm_failure_occurred=False,
+                response_node_completed=False,
+            ),
         ]
 
         aggregate = summarize_crisis_log_records(date(2026, 4, 10), records)
 
         assert aggregate.date == "2026-04-10"
-        assert aggregate.events_total == 3
-        assert aggregate.events_by_level.level_2 == 2
+        assert aggregate.events_total == 4
+        assert aggregate.events_by_level.level_2 == 3
         assert aggregate.events_by_level.level_3 == 1
         assert aggregate.events_by_classifier_path.llm_primary == 3
+        assert aggregate.events_by_classifier_path.voice_post_turn == 1
         assert aggregate.llm_failures_total == 1
         assert aggregate.tool_fallbacks_total == 1
         assert aggregate.response_llm_overrides_total == 1
-        assert aggregate.response_node_completion_rate == pytest.approx(2 / 3)
+        assert aggregate.voice_missed_crises_total == 1
+        assert aggregate.response_node_completion_rate == pytest.approx(2 / 4)
 
     def test_daily_summary_handles_empty_records(self) -> None:
         aggregate = summarize_crisis_log_records(date(2026, 4, 10), [])
@@ -777,6 +791,7 @@ class TestCrisisLogSummaries:
         assert aggregate.llm_failures_total == 0
         assert aggregate.tool_fallbacks_total == 0
         assert aggregate.response_llm_overrides_total == 0
+        assert aggregate.voice_missed_crises_total == 0
         assert aggregate.response_node_completion_rate == 1.0
 
 
@@ -791,6 +806,8 @@ def _build_retention_record(
     response_path: str = "sdk",
     llm_failure_occurred: bool = False,
     response_node_completed: bool = True,
+    event_type: str = "crisis_response",
+    classifier_path: str = "llm_primary",
 ) -> CrisisLogRecord:
     """Build a minimal CrisisLogRecord for retention-purge tests.
 
@@ -806,7 +823,8 @@ def _build_retention_record(
         user_id_or_null=None,
         detected_at=detected_at,
         level=level,
-        classifier_path="llm_primary",
+        event_type=event_type,
+        classifier_path=classifier_path,
         confidence="medium",
         reason="retention purge test",
         override_kind="none",

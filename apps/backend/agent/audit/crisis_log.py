@@ -31,6 +31,7 @@ from agent.audit.models import (
 from agent.memory.hashing import hash_session_id
 from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
+from agent.models import CrisisAssessment
 from agent.observability.context import get_current_trace_context
 from agent.observability.decorators import trace_event
 from agent.observability.events import AUDIT_CRISIS_LOG_APPEND
@@ -195,7 +196,9 @@ async def write_crisis_log(
             AUDIT_CRISIS_LOG_APPEND,
             {
                 "audit_recorded": True,
+                "event_type": record.event_type,
                 "level": record.level,
+                "classifier_path": record.classifier_path,
                 "resource_lookup_status": record.resource_lookup_status,
                 "resource_count": record.resource_count,
                 "response_path": record.response_path,
@@ -231,6 +234,93 @@ async def record_crisis_outcome(
     return await write_crisis_log(state, context)
 
 
+async def record_voice_missed_crisis(
+    state: Mapping[str, Any],
+    context: Any,
+    *,
+    assessment: CrisisAssessment,
+) -> dict[str, Any]:
+    """Write a post-turn audit record for a voice crisis miss.
+
+    The voice post-turn classifier runs after the Realtime response has already
+    been spoken and persisted. When it detects level-2/3 risk but the Realtime
+    path did not route crisis, record a distinct audit event instead of
+    pretending a crisis response completed.
+    """
+
+    if not assessment.needs_crisis_response:
+        logger.debug("voice missed-crisis audit called for non-crisis assessment")
+        return {}
+
+    try:
+        backend = context.crisis_log_backend
+        user_id = (
+            None
+            if context.memory_mode == MemoryMode.INCOGNITO
+            else state.get("user_id")
+        )
+        diagnostics = state.get("diagnostics", {})
+        if not isinstance(diagnostics, Mapping):
+            diagnostics = {}
+        trace_context = get_current_trace_context()
+        enabled_trace_context = (
+            trace_context
+            if trace_context is not None and trace_context.enabled
+            else None
+        )
+        record = CrisisLogRecord(
+            id=str(uuid4()),
+            event_type="voice_missed_crisis",
+            session_id_opaque=hash_session_id(state.get("session_id")),
+            user_id_or_null=user_id,
+            detected_at=iso_now(),
+            level=assessment.level,
+            override_kind="none",
+            classifier_path="voice_post_turn",
+            reason=(assessment.reason or "voice_post_turn_classifier")[:500],
+            response_node_completed=False,
+            llm_failure_occurred=False,
+            response_style=str(state.get("response_style") or "voice"),
+            resource_lookup_status="not_attempted",
+            resource_count=0,
+            tool_calls=_voice_tool_calls_from_diagnostics(diagnostics),
+            response_path="not_routed",
+            fallback_reason="voice_realtime_crisis_tool_not_called",
+            trace_id=enabled_trace_context.trace_id if enabled_trace_context else None,
+            trace_session_id=(
+                enabled_trace_context.session_id if enabled_trace_context else None
+            ),
+            trace_turn_id=enabled_trace_context.turn_id
+            if enabled_trace_context
+            else None,
+            trace_runtime_mode=(
+                enabled_trace_context.runtime_mode if enabled_trace_context else "voice"
+            ),
+        )
+        await backend.aappend(record)
+        trace_event(
+            AUDIT_CRISIS_LOG_APPEND,
+            {
+                "audit_recorded": True,
+                "event_type": record.event_type,
+                "level": record.level,
+                "classifier_path": record.classifier_path,
+                "resource_lookup_status": record.resource_lookup_status,
+                "resource_count": record.resource_count,
+                "response_path": record.response_path,
+                "runtime_mode": record.trace_runtime_mode,
+                "trace_correlated": enabled_trace_context is not None,
+            },
+        )
+    except Exception:
+        logger.error(
+            "voice missed-crisis audit failed to write record; audit trail lost for this event",
+            exc_info=True,
+        )
+
+    return {}
+
+
 def _resource_lookup_status_from_state(
     state: Mapping[str, Any],
 ) -> CrisisResourceLookupStatus:
@@ -249,6 +339,13 @@ def _resource_count_from_state(state: Mapping[str, Any]) -> int:
 
 def _tool_calls_from_diagnostics(diagnostics: Mapping[str, Any]) -> list[str]:
     tool_calls = diagnostics.get("openai_crisis_tool_calls")
+    if not isinstance(tool_calls, list):
+        return []
+    return [str(tool_name) for tool_name in tool_calls]
+
+
+def _voice_tool_calls_from_diagnostics(diagnostics: Mapping[str, Any]) -> list[str]:
+    tool_calls = diagnostics.get("voice_tool_calls")
     if not isinstance(tool_calls, list):
         return []
     return [str(tool_name) for tool_name in tool_calls]

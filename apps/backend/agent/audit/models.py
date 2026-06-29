@@ -12,12 +12,13 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 CrisisOverrideOutcome = Literal["none"]
-CrisisClassifierPath = Literal["llm_primary"]
-SafetyAuditEventType = Literal["crisis_response"]
+CrisisClassifierPath = Literal["llm_primary", "voice_post_turn"]
+SafetyAuditEventType = Literal["crisis_response", "voice_missed_crisis"]
 CrisisResponsePath = Literal[
     "sdk",
     "sdk_tool_fallback",
     "response_llm_override",
+    "not_routed",
     "unknown",
 ]
 CrisisResourceLookupStatus = Literal[
@@ -71,6 +72,7 @@ class CrisisLogPathCounts(BaseModel):
     """Per-classifier-path event counts for a single day's aggregate."""
 
     llm_primary: int = Field(default=0, ge=0)
+    voice_post_turn: int = Field(default=0, ge=0)
 
 
 class CrisisLogAggregate(BaseModel):
@@ -83,6 +85,7 @@ class CrisisLogAggregate(BaseModel):
     llm_failures_total: int = Field(default=0, ge=0)
     tool_fallbacks_total: int = Field(default=0, ge=0)
     response_llm_overrides_total: int = Field(default=0, ge=0)
+    voice_missed_crises_total: int = Field(default=0, ge=0)
     response_node_completion_rate: float = Field(ge=0.0, le=1.0)
 
 

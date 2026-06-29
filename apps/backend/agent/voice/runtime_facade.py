@@ -36,6 +36,10 @@ from agent.runtime.session import turn_count_from_state
 from agent.runtime.session.active_session import ActiveSessionManager
 from agent.runtime.state_store import RuntimeStateStore
 from agent.state import AgentState, resolve_owner_id
+from agent.voice.post_turn_safety import (
+    VoicePostTurnSafetyAuditor,
+    VoicePostTurnSafetyCheck,
+)
 from agent.voice.state_transition import VoiceTurnStateInputs, build_voice_turn_state
 from llm.base import BaseLLMClient
 
@@ -145,6 +149,26 @@ class VoiceRuntimeFacade:
         self._active_session_manager = active_session_manager
         self._lock_for = lock_for
         self._memory_mode = memory_mode
+        self._post_turn_safety_auditor = VoicePostTurnSafetyAuditor()
+
+    @property
+    def post_turn_safety_pending_count(self) -> int:
+        """Return the number of pending post-turn voice safety checks."""
+
+        return self._post_turn_safety_auditor.pending_count
+
+    async def drain_post_turn_safety_checks(
+        self,
+        timeout_seconds: float | None = None,
+    ) -> int:
+        """Wait for scheduled post-turn voice safety checks to finish."""
+
+        return await self._post_turn_safety_auditor.drain(timeout_seconds)
+
+    async def aclose(self) -> None:
+        """Close voice-owned background resources."""
+
+        await self._post_turn_safety_auditor.aclose()
 
     # ── build_voice_tool_context ─────────────────────────────────
 
@@ -379,6 +403,7 @@ class VoiceRuntimeFacade:
     ) -> AgentState:
         """Persist a finalized voice turn without running the text agent."""
 
+        voice_tool_calls = list(tool_calls or [])
         async with self._lock_for(thread_id):
             self._runtime._remember_llm_client(thread_id, llm_client)
             prior_state = await self._runtime.get_state(thread_id)
@@ -406,7 +431,7 @@ class VoiceRuntimeFacade:
                     assistant_text=assistant_text,
                     route=route,
                     response_style=response_style,
-                    tool_calls=list(tool_calls or []),
+                    tool_calls=voice_tool_calls,
                     prior_state=prior_state,
                     initial_state=initial_state,
                     prior_turn_count=prior_turn_count,
@@ -454,10 +479,37 @@ class VoiceRuntimeFacade:
                         "response_style": transition.metadata.response_style,
                         "memory_mode": self._memory_mode.value,
                         "resource_lookup_status": state.get("resource_lookup_status"),
-                        "tool_call_count": len(tool_calls or []),
+                        "tool_call_count": len(voice_tool_calls),
                     },
                 )
-                return state
+
+        post_turn_context = self._runtime._context_for_turn(
+            thread_id=thread_id,
+            message=state.get("message", ""),
+            prior_state=prior_state,
+            user_id=user_id,
+            llm_client=llm_client,
+            response_llm_client=llm_client,
+            track_session=False,
+        )
+        self._post_turn_safety_auditor.schedule_check(
+            VoicePostTurnSafetyCheck(
+                thread_id=thread_id,
+                user_id=user_id,
+                user_text=user_text,
+                realtime_route=transition.metadata.route,
+                response_style=transition.metadata.response_style,
+                state=cast(AgentState, dict(state)),
+                prior_state=(
+                    cast(AgentState, dict(prior_state))
+                    if prior_state is not None
+                    else None
+                ),
+                context=post_turn_context,
+                llm_client=llm_client,
+            )
+        )
+        return state
 
 
 __all__ = [
