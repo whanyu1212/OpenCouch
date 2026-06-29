@@ -490,6 +490,7 @@ class PersistentAgentRuntime:
         await self._session_lifecycle.stop_background_tasks()
         if self._finalize_active_sessions_on_close:
             await self.finalize_active_sessions(llm_client=self._default_llm_client)
+        await self.voice.aclose()
         await self._resources.aclose()
 
     async def _ensure_runtime_schema(self) -> None:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -15,6 +17,46 @@ from api.router import api_router
 from api.routes import voice as voice_routes
 from tests.support.api_selection import runtime_selection
 from tests.support.persistence import FakeCrossRestartLLM
+
+
+class _VoiceCrisisAuditLLM(FakeCrossRestartLLM):
+    def __init__(
+        self,
+        *,
+        level: int,
+        reason: str = "voice post-turn classifier detected crisis risk",
+        delay_seconds: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.level = level
+        self.reason = reason
+        self.delay_seconds = delay_seconds
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[Any],
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> Any:
+        if response_schema.__name__ == "CrisisAssessmentSchema":
+            if self.delay_seconds:
+                await asyncio.sleep(self.delay_seconds)
+            self.crisis_calls += 1
+            return response_schema(
+                level=self.level,
+                confidence="high",
+                reason=self.reason,
+                needs_crisis_response=self.level >= 2,
+                needs_clarification=self.level == 1,
+            )
+        return await super().generate_structured(
+            prompt=prompt,
+            response_schema=response_schema,
+            system_instruction=system_instruction,
+            use_search=use_search,
+        )
 
 
 @pytest.mark.asyncio
@@ -241,9 +283,163 @@ async def test_non_crisis_voice_turn_writes_no_audit_record() -> None:
             llm_client=None,
         )
 
+        pending = await runtime.voice.drain_post_turn_safety_checks()
         count = await runtime.crisis_log_backend.arecord_count()
 
+    assert pending == 0
     assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_post_turn_voice_classifier_writes_missed_crisis_audit_record() -> None:
+    """A post-turn voice classifier miss is audited without changing latency path."""
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+    llm = _VoiceCrisisAuditLLM(
+        level=2,
+        reason="User explicitly described suicidal ideation over voice.",
+    )
+
+    async with runtime:
+        await runtime.voice.record_voice_turn(
+            thread_id="voice-missed-crisis",
+            user_id="user-1",
+            user_text="I've been thinking about ending it all.",
+            assistant_text="That sounds incredibly heavy. I'm here with you.",
+            response_style="supportive",
+            llm_client=llm,
+        )
+        pending = await runtime.voice.drain_post_turn_safety_checks()
+        records = await runtime.crisis_log_backend.alist_by_date(
+            datetime.now(timezone.utc).date()
+        )
+
+    assert pending == 0
+    assert llm.crisis_calls == 1
+    assert len(records) == 1
+    record = records[0]
+    assert record.event_type == "voice_missed_crisis"
+    assert record.level == 2
+    assert record.reason == "User explicitly described suicidal ideation over voice."
+    assert record.classifier_path == "voice_post_turn"
+    assert record.response_node_completed is False
+    assert record.response_style == "supportive"
+    assert record.resource_lookup_status == "not_attempted"
+    assert record.resource_count == 0
+    assert record.response_path == "not_routed"
+    assert record.fallback_reason == "voice_realtime_crisis_tool_not_called"
+    assert record.trace_runtime_mode == "voice"
+
+
+@pytest.mark.asyncio
+async def test_post_turn_voice_classifier_writes_no_record_for_safe_turn() -> None:
+    """A safe post-turn classifier result must not create audit noise."""
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+    llm = FakeCrossRestartLLM()
+
+    async with runtime:
+        await runtime.voice.record_voice_turn(
+            thread_id="voice-safe-post-turn",
+            user_id="user-1",
+            user_text="I had a rough day at work.",
+            assistant_text="That sounds draining. Want to talk it through?",
+            response_style="supportive",
+            llm_client=llm,
+        )
+        pending = await runtime.voice.drain_post_turn_safety_checks()
+        count = await runtime.crisis_log_backend.arecord_count()
+
+    assert pending == 0
+    assert llm.crisis_calls == 1
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_post_turn_voice_classifier_skips_existing_crisis_route() -> None:
+    """Realtime crisis routing already produces the only audit record."""
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+    llm = _VoiceCrisisAuditLLM(level=3)
+
+    async with runtime:
+        await runtime.voice.record_voice_turn(
+            thread_id="voice-existing-crisis",
+            user_id="user-1",
+            user_text="I might hurt myself tonight.",
+            assistant_text="Your safety matters. Let's get immediate support.",
+            tool_calls=[
+                {
+                    "tool_name": "lookup_crisis_resources",
+                    "status": "completed",
+                    "output": {
+                        "inferred_location": "Singapore",
+                        "found_resources": [],
+                        "resource_lookup_status": "lookup_error",
+                    },
+                }
+            ],
+            llm_client=llm,
+        )
+        pending = await runtime.voice.drain_post_turn_safety_checks()
+        records = await runtime.crisis_log_backend.alist_by_date(
+            datetime.now(timezone.utc).date()
+        )
+
+    assert pending == 0
+    assert llm.crisis_calls == 0
+    assert len(records) == 1
+    assert records[0].event_type == "crisis_response"
+    assert records[0].classifier_path == "llm_primary"
+    assert records[0].response_node_completed is True
+
+
+@pytest.mark.asyncio
+async def test_post_turn_safety_drain_waits_for_background_classifier() -> None:
+    """The voice facade exposes a deterministic drain for scheduled checks."""
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+    llm = _VoiceCrisisAuditLLM(level=2, delay_seconds=0.05)
+
+    async with runtime:
+        await runtime.voice.record_voice_turn(
+            thread_id="voice-drain-post-turn",
+            user_id="user-1",
+            user_text="I want to die.",
+            assistant_text="I'm sorry it feels this painful.",
+            response_style="supportive",
+            llm_client=llm,
+        )
+        assert runtime.voice.post_turn_safety_pending_count == 1
+        pending = await runtime.voice.drain_post_turn_safety_checks(timeout_seconds=1.0)
+        count = await runtime.crisis_log_backend.arecord_count()
+
+    assert pending == 0
+    assert count == 1
 
 
 @pytest.mark.asyncio
