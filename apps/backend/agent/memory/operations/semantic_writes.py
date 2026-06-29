@@ -62,6 +62,26 @@ class BatchSemanticWriteOutcome:
     written_items: list[SemanticFact] = field(default_factory=list)
 
 
+def _canonicalize_user_subject_for_owner(
+    write: MemoryWrite,
+    *,
+    owner_id: str,
+) -> MemoryWrite:
+    """Return a write whose user subject uses the namespace owner id.
+
+    Session-end extractors may emit a placeholder user identifier (for example
+    ``"test-user"`` in deterministic fakes). The memory namespace owner is the
+    authoritative current-user id, so normalize user-subject writes before
+    deduplication and persistence.
+    """
+
+    if write.subject.type != "User" or write.subject.identifier == owner_id:
+        return write
+    return write.model_copy(
+        update={"subject": write.subject.model_copy(update={"identifier": owner_id})}
+    )
+
+
 def memory_write_to_semantic_fact(
     write: MemoryWrite,
     *,
@@ -246,6 +266,7 @@ async def apply_semantic_write(
         was persisted.
     """
 
+    write = _canonicalize_user_subject_for_owner(write, owner_id=owner_id)
     collision_records = filter_semantic_collision_candidates(
         write,
         existing_records,
