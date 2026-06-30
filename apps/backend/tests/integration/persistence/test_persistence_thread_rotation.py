@@ -18,7 +18,7 @@ from agent.runtime import (
 from tests.support.persistence import (
     FakeCrossRestartLLM,
     postgres_database_url,
-    runtime_paths,
+    runtime_storage_paths,
 )
 
 
@@ -38,7 +38,7 @@ class _FailingTextRuntime:
 @pytest.mark.asyncio
 async def test_soft_limit_marks_session_rotation_required(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
         finalize_active_sessions_on_close=False,
     ) as runtime:
         await runtime.run_turn(
@@ -75,10 +75,10 @@ async def test_soft_limit_marks_session_rotation_required_in_postgres(
             "OPENCOUCH_TEST_POSTGRES_URL"
         )
 
-    paths = runtime_paths(tmp_path)
+    storage_paths = runtime_storage_paths(tmp_path)
 
     async with PersistentAgentRuntime(
-        **paths,
+        storage_paths=storage_paths,
         memory_backend="postgres",
         memory_database_url=memory_database_url,
         thread_persistence_backend="postgres",
@@ -97,7 +97,7 @@ async def test_soft_limit_marks_session_rotation_required_in_postgres(
         )
 
     async with PersistentAgentRuntime(
-        **paths,
+        storage_paths=storage_paths,
         memory_backend="postgres",
         memory_database_url=memory_database_url,
         thread_persistence_backend="postgres",
@@ -123,7 +123,7 @@ async def test_soft_limit_marks_session_rotation_required_in_postgres(
 @pytest.mark.asyncio
 async def test_reset_thread_refuses_active_sessions(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
         finalize_active_sessions_on_close=False,
     ) as runtime:
         await runtime.run_turn(
@@ -143,7 +143,7 @@ async def test_reset_thread_refuses_active_sessions(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_foreign_mutation_marker_reports_interrupted(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
         finalize_active_sessions_on_close=False,
     ) as runtime:
         await runtime.run_turn(
@@ -178,7 +178,7 @@ async def test_failed_run_turn_leaves_interrupted_marker(
     tmp_path: Path,
 ) -> None:
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
         finalize_active_sessions_on_close=False,
     ) as runtime:
         runtime._sdk_bridge._openai_text_runtime = cast(  # noqa: SLF001
