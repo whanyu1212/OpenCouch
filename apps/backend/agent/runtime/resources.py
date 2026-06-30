@@ -19,7 +19,7 @@ from agent.runtime.backends import (
     create_embedding_provider,
     create_memory_store,
     create_session_feedback_backend,
-    effective_thread_persistence_backend,
+    select_runtime_backends,
 )
 from agent.runtime.session.active_session import (
     ActiveSessionManager,
@@ -130,13 +130,16 @@ def build_runtime_resources(
             DEFAULT_TEXT_SESSION_DB_FILENAME
         )
 
-    resolved_thread_persistence_backend = effective_thread_persistence_backend(
+    backend_selection = select_runtime_backends(
         memory_mode=memory_mode,
+        memory_backend=memory_backend,
         thread_persistence_backend=thread_persistence_backend,
+        crisis_log_persistence_backend=crisis_log_persistence_backend,
+        session_feedback_persistence_backend=session_feedback_persistence_backend,
     )
 
     state_store = create_runtime_state_store(
-        backend=resolved_thread_persistence_backend,
+        backend=backend_selection.thread_persistence_backend,
         sqlite_path=resolved_runtime_sqlite_path,
         database_url=thread_database_url,
     )
@@ -149,23 +152,20 @@ def build_runtime_resources(
         history_limit=text_session_history_limit,
     )
     resolved_memory_store = create_memory_store(
-        memory_mode=memory_mode,
         memory_store=memory_store,
-        memory_backend=memory_backend,
+        memory_backend=backend_selection.memory_store_backend,
         memory_database_url=memory_database_url,
         memory_sqlite_path=memory_sqlite_path,
     )
     resolved_crisis_log_backend = create_crisis_log_backend(
-        memory_mode=memory_mode,
         crisis_log_backend=crisis_log_backend,
-        crisis_log_persistence_backend=crisis_log_persistence_backend,
+        crisis_log_persistence_backend=backend_selection.crisis_log_backend,
         crisis_log_database_url=crisis_log_database_url,
         crisis_log_sqlite_path=crisis_log_sqlite_path,
     )
     resolved_session_feedback_backend = create_session_feedback_backend(
-        memory_mode=memory_mode,
         session_feedback_backend=session_feedback_backend,
-        session_feedback_persistence_backend=session_feedback_persistence_backend,
+        session_feedback_persistence_backend=backend_selection.session_feedback_backend,
         session_feedback_database_url=session_feedback_database_url,
         feedback_sqlite_path=feedback_sqlite_path,
     )
@@ -174,7 +174,7 @@ def build_runtime_resources(
         embedding_provider=embedding_provider,
     )
 
-    if resolved_thread_persistence_backend == "postgres":
+    if backend_selection.thread_persistence_backend == "postgres":
         if not thread_database_url:
             raise ValueError(
                 "thread_database_url is required when "
@@ -194,7 +194,7 @@ def build_runtime_resources(
 
     return RuntimeResources(
         sqlite_path=resolved_runtime_sqlite_path,
-        thread_persistence_backend=resolved_thread_persistence_backend,
+        thread_persistence_backend=backend_selection.thread_persistence_backend,
         thread_database_url=thread_database_url,
         state_store=state_store,
         text_session_store=text_session_store,
