@@ -16,6 +16,7 @@ from agent.memory.types import (
     SessionArc,
     SummarizationResult,
 )
+from agent.runtime import RuntimeStoragePaths
 from llm.base import BaseLLMClient, StructuredResponseT
 
 _POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
@@ -236,20 +237,27 @@ class FakeCrossRestartLLM(BaseLLMClient):
         return "none"
 
 
+def runtime_storage_paths(tmp_path: Path) -> RuntimeStoragePaths:
+    """Return grouped SQLite paths for a persistence runtime test."""
+
+    return RuntimeStoragePaths(
+        sqlite_path=tmp_path / "threads.sqlite3",
+        memory_sqlite_path=tmp_path / "memory.sqlite3",
+        crisis_log_sqlite_path=tmp_path / "crisis.sqlite3",
+    )
+
+
 def runtime_paths(tmp_path: Path) -> dict[str, Path]:
-    """Return the three SQLite paths for a persistence runtime test.
+    """Return legacy SQLite path kwargs for older persistence runtime tests.
 
-    Args:
-        tmp_path (Path): Pytest temporary directory.
-
-    Returns:
-        dict[str, Path]: Keyword arguments accepted by ``PersistentAgentRuntime``.
+    Prefer ``runtime_storage_paths`` for new or touched tests.
     """
 
+    storage_paths = runtime_storage_paths(tmp_path)
     return {
-        "sqlite_path": tmp_path / "threads.sqlite3",
-        "memory_sqlite_path": tmp_path / "memory.sqlite3",
-        "crisis_log_sqlite_path": tmp_path / "crisis.sqlite3",
+        "sqlite_path": cast(Path, storage_paths.sqlite_path),
+        "memory_sqlite_path": cast(Path, storage_paths.memory_sqlite_path),
+        "crisis_log_sqlite_path": cast(Path, storage_paths.crisis_log_sqlite_path),
     }
 
 
