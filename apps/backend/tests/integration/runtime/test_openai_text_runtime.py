@@ -956,6 +956,43 @@ async def test_persistent_runtime_openai_streaming_surface(
 
 
 @pytest.mark.asyncio
+async def test_streaming_crisis_capture_precedes_response_ready(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clients may stop at response_ready without skipping crisis audit capture."""
+
+    runner = FakeOpenAISDKRunner(
+        "Please contact local emergency services now.",
+        tool_calls=[("lookup_crisis_resources", {})],
+    )
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+    ) as runtime:
+        stream = runtime.run_turn_stream(
+            thread_id="thread-stream-crisis-ready",
+            user_id="user-1",
+            message="I'm in Singapore and I will end my life tonight.",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="therapeutic",
+                crisis_level=3,
+            ),
+        )
+        try:
+            while True:
+                event = await stream.__anext__()
+                if isinstance(event, ResponseReadyEvent):
+                    assert await runtime.crisis_log_backend.arecord_count() == 1
+                    break
+        except StopAsyncIteration:
+            pytest.fail("stream ended before response_ready")
+        finally:
+            await stream.aclose()
+
+
+@pytest.mark.asyncio
 async def test_persistent_runtime_openai_memory_control_streaming_surface(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

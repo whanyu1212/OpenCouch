@@ -1330,7 +1330,6 @@ class PersistentAgentRuntime:
             final_state: AgentState | None = None
             chunks_emitted = False
             finalize_seen = False
-            response_ready_emitted = False
 
             async with self._active_session_manager.active_session_mutation(
                 thread_id,
@@ -1363,30 +1362,8 @@ class PersistentAgentRuntime:
                         yield StatusEvent(stage=event.stage)
                         if event.turn_finalized:
                             finalize_seen = True
-                            ready_output = response_ready_output(
-                                final_state,
-                                finalize_seen=finalize_seen,
-                                response_ready_emitted=response_ready_emitted,
-                            )
-                            if ready_output is not None:
-                                if not chunks_emitted:
-                                    yield ChunkEvent(text=ready_output.response_text)
-                                    chunks_emitted = True
-                                yield ResponseReadyEvent(output=ready_output)
-                                response_ready_emitted = True
                     elif isinstance(event, TextRuntimeStateEvent):
                         final_state = event.state
-                        ready_output = response_ready_output(
-                            final_state,
-                            finalize_seen=finalize_seen,
-                            response_ready_emitted=response_ready_emitted,
-                        )
-                        if ready_output is not None:
-                            if not chunks_emitted:
-                                yield ChunkEvent(text=ready_output.response_text)
-                                chunks_emitted = True
-                            yield ResponseReadyEvent(output=ready_output)
-                            response_ready_emitted = True
 
                 if final_state is None:
                     raise RuntimeError(
@@ -1412,6 +1389,18 @@ class PersistentAgentRuntime:
                 await self._active_session_manager.clear_active_session_mutation(
                     thread_id, mutation_token
                 )
+
+                ready_output = response_ready_output(
+                    final_state,
+                    finalize_seen=finalize_seen,
+                    response_ready_emitted=False,
+                )
+                if ready_output is not None:
+                    if not chunks_emitted:
+                        yield ChunkEvent(text=ready_output.response_text)
+                        chunks_emitted = True
+                    yield ResponseReadyEvent(output=ready_output)
+
                 from agent.runtime.turn import state_to_output
 
                 yield DoneEvent(output=state_to_output(final_state))

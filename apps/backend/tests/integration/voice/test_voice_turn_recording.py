@@ -275,6 +275,56 @@ async def test_voice_crisis_turn_writes_one_audit_record() -> None:
 
 
 @pytest.mark.asyncio
+async def test_voice_crisis_capture_runs_before_sdk_history_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A saved voice crisis turn should still audit if SDK bookkeeping fails."""
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+        finalize_active_sessions_on_close=False,
+    )
+
+    async with runtime:
+
+        async def fail_sdk_history(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("simulated voice SDK history failure")
+
+        monkeypatch.setattr(
+            runtime,
+            "_ensure_openai_sdk_turn_recorded",
+            fail_sdk_history,
+        )
+
+        with pytest.raises(RuntimeError, match="simulated voice SDK history failure"):
+            await runtime.voice.record_voice_turn(
+                thread_id="voice-crisis-sdk-failure",
+                user_id="user-1",
+                user_text="I might hurt myself tonight.",
+                assistant_text="I'm here with you. Your safety matters most right now.",
+                route="crisis",
+                response_style="crisis_response",
+                tool_calls=[
+                    {
+                        "tool_name": "lookup_crisis_resources",
+                        "status": "completed",
+                        "output": {"resource_lookup_status": "found"},
+                    }
+                ],
+                llm_client=None,
+            )
+
+        assert await runtime.crisis_log_backend.arecord_count() == 1
+        state = await runtime.get_state("voice-crisis-sdk-failure")
+        assert state is not None
+        assert state["route"] == "crisis"
+
+
+@pytest.mark.asyncio
 async def test_non_crisis_voice_turn_writes_no_audit_record() -> None:
     """An ordinary voice turn must not produce a crisis audit record."""
 
