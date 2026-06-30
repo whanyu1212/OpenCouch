@@ -31,9 +31,9 @@ def test_crisis_support_template_only_turn_routes_to_crisis() -> None:
     # Regression for #157: the model is instructed to call get_crisis_support_template
     # independently of lookup_crisis_resources. A crisis turn that calls ONLY the
     # template tool must still route to "crisis" so populate_voice_crisis_audit_state
-    # runs and record_crisis_outcome writes the audit record. Previously this tool was
-    # absent from _TOOL_ROUTE_PRIORITY, so the turn fell through to "therapeutic" and
-    # was never audit-logged.
+    # runs and the outer voice runtime can capture the safety event. Previously
+    # this tool was absent from _TOOL_ROUTE_PRIORITY, so the turn fell through to
+    # "therapeutic" and was never audit-logged.
     metadata = infer_voice_turn_metadata(
         route=None,
         response_style=None,

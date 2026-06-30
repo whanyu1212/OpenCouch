@@ -460,6 +460,98 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
 
 
 @pytest.mark.asyncio
+async def test_crisis_capture_runs_before_sdk_history_failure(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A persisted crisis turn should still audit if SDK history bookkeeping fails."""
+
+    runner = FakeOpenAISDKRunner(
+        "Please contact local emergency services now.",
+        tool_calls=[("lookup_crisis_resources", {})],
+    )
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+        finalize_active_sessions_on_close=False,
+    ) as runtime:
+
+        async def fail_sdk_history(*args: Any, **kwargs: Any) -> None:
+            raise RuntimeError("simulated SDK history failure")
+
+        monkeypatch.setattr(
+            runtime,
+            "_ensure_openai_sdk_turn_recorded",
+            fail_sdk_history,
+        )
+
+        with pytest.raises(RuntimeError, match="simulated SDK history failure"):
+            await runtime.run_turn(
+                thread_id="thread-crisis-sdk-failure",
+                user_id="user-1",
+                message="I'm in Singapore and I will end my life tonight.",
+                llm_client=ScriptedOpenAITextRouteLLM(
+                    route="therapeutic",
+                    crisis_level=3,
+                ),
+            )
+
+        assert await runtime.crisis_log_backend.arecord_count() == 1
+        state = await runtime.get_state("thread-crisis-sdk-failure")
+        assert state is not None
+        assert state["route"] == "crisis"
+
+
+@pytest.mark.asyncio
+async def test_streaming_context_is_created_after_mutation_setup(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Streaming must not schedule prefetch before active mutation setup succeeds."""
+
+    runner = FakeOpenAISDKRunner("unused")
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    class _FailingMutation:
+        async def __aenter__(self) -> object:
+            raise RuntimeError("simulated mutation setup failure")
+
+        async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
+            return None
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+        finalize_active_sessions_on_close=False,
+    ) as runtime:
+        context_calls = 0
+        original_context_for_turn = runtime._context_for_turn
+
+        def counting_context_for_turn(*args: Any, **kwargs: Any) -> Any:
+            nonlocal context_calls
+            context_calls += 1
+            return original_context_for_turn(*args, **kwargs)
+
+        monkeypatch.setattr(runtime, "_context_for_turn", counting_context_for_turn)
+        monkeypatch.setattr(
+            runtime._active_session_manager,
+            "active_session_mutation",
+            lambda *args, **kwargs: _FailingMutation(),
+        )
+
+        with pytest.raises(RuntimeError, match="simulated mutation setup failure"):
+            async for _event in runtime.run_turn_stream(
+                thread_id="thread-stream-mutation-failure",
+                user_id="user-1",
+                message="I feel tense before presentations.",
+                llm_client=FakeCrossRestartLLM(),
+            ):
+                pass
+
+        assert context_calls == 0
+
+
+@pytest.mark.asyncio
 async def test_persistent_runtime_openai_crisis_uses_sdk_session_not_prompt_history(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
@@ -861,6 +953,43 @@ async def test_persistent_runtime_openai_streaming_surface(
         assert state is not None
         assert len(state["transcript"]) == 2
         assert runner.stream_calls
+
+
+@pytest.mark.asyncio
+async def test_streaming_crisis_capture_precedes_response_ready(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clients may stop at response_ready without skipping crisis audit capture."""
+
+    runner = FakeOpenAISDKRunner(
+        "Please contact local emergency services now.",
+        tool_calls=[("lookup_crisis_resources", {})],
+    )
+    monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
+
+    async with PersistentAgentRuntime(
+        **runtime_paths(tmp_path),
+    ) as runtime:
+        stream = runtime.run_turn_stream(
+            thread_id="thread-stream-crisis-ready",
+            user_id="user-1",
+            message="I'm in Singapore and I will end my life tonight.",
+            llm_client=ScriptedOpenAITextRouteLLM(
+                route="therapeutic",
+                crisis_level=3,
+            ),
+        )
+        try:
+            while True:
+                event = await stream.__anext__()
+                if isinstance(event, ResponseReadyEvent):
+                    assert await runtime.crisis_log_backend.arecord_count() == 1
+                    break
+        except StopAsyncIteration:
+            pytest.fail("stream ended before response_ready")
+        finally:
+            await stream.aclose()
 
 
 @pytest.mark.asyncio

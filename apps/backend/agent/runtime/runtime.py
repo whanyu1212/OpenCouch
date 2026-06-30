@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from agent.memory.policy.candidates import SessionMemoryBuffer
+from agent.audit.capture import capture_crisis_outcome
 from agent.audit.crisis_log import CrisisLogBackend
 from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import iso_now as _iso_now
@@ -1056,6 +1057,14 @@ class PersistentAgentRuntime:
                 mutation_kind="turn",
             ) as mutation_token:
                 turn_start = time.monotonic()
+                workflow_context = self._context_for_turn(
+                    thread_id=thread_id,
+                    message=message,
+                    prior_state=prior_state,
+                    user_id=user_id,
+                    llm_client=llm_client,
+                    response_llm_client=response_llm_client,
+                )
                 turn_output = await runtime.run_turn(
                     initial_state,
                     config=self._config_for_thread(
@@ -1064,14 +1073,7 @@ class PersistentAgentRuntime:
                         user_id=user_id,
                         streaming=False,
                     ),
-                    context=self._context_for_turn(
-                        thread_id=thread_id,
-                        message=message,
-                        prior_state=prior_state,
-                        user_id=user_id,
-                        llm_client=llm_client,
-                        response_llm_client=response_llm_client,
-                    ),
+                    context=workflow_context,
                     session=sdk_session,
                     prior_state=prior_state,
                 )
@@ -1086,6 +1088,7 @@ class PersistentAgentRuntime:
                 )
 
                 await self._state_store.save_state(thread_id, final_state)
+                await capture_crisis_outcome(final_state, workflow_context)
                 await self._ensure_openai_sdk_turn_recorded(
                     thread_id,
                     user_message=message,
@@ -1327,12 +1330,19 @@ class PersistentAgentRuntime:
             final_state: AgentState | None = None
             chunks_emitted = False
             finalize_seen = False
-            response_ready_emitted = False
 
             async with self._active_session_manager.active_session_mutation(
                 thread_id,
                 mutation_kind="turn",
             ) as mutation_token:
+                workflow_context = self._context_for_turn(
+                    thread_id=thread_id,
+                    message=message,
+                    prior_state=prior_state,
+                    user_id=user_id,
+                    llm_client=llm_client,
+                    response_llm_client=response_llm_client,
+                )
                 async for event in runtime.run_turn_stream(
                     initial_state,
                     config=self._config_for_thread(
@@ -1341,14 +1351,7 @@ class PersistentAgentRuntime:
                         user_id=user_id,
                         streaming=True,
                     ),
-                    context=self._context_for_turn(
-                        thread_id=thread_id,
-                        message=message,
-                        prior_state=prior_state,
-                        user_id=user_id,
-                        llm_client=llm_client,
-                        response_llm_client=response_llm_client,
-                    ),
+                    context=workflow_context,
                     session=sdk_session,
                     prior_state=prior_state,
                 ):
@@ -1359,30 +1362,8 @@ class PersistentAgentRuntime:
                         yield StatusEvent(stage=event.stage)
                         if event.turn_finalized:
                             finalize_seen = True
-                            ready_output = response_ready_output(
-                                final_state,
-                                finalize_seen=finalize_seen,
-                                response_ready_emitted=response_ready_emitted,
-                            )
-                            if ready_output is not None:
-                                if not chunks_emitted:
-                                    yield ChunkEvent(text=ready_output.response_text)
-                                    chunks_emitted = True
-                                yield ResponseReadyEvent(output=ready_output)
-                                response_ready_emitted = True
                     elif isinstance(event, TextRuntimeStateEvent):
                         final_state = event.state
-                        ready_output = response_ready_output(
-                            final_state,
-                            finalize_seen=finalize_seen,
-                            response_ready_emitted=response_ready_emitted,
-                        )
-                        if ready_output is not None:
-                            if not chunks_emitted:
-                                yield ChunkEvent(text=ready_output.response_text)
-                                chunks_emitted = True
-                            yield ResponseReadyEvent(output=ready_output)
-                            response_ready_emitted = True
 
                 if final_state is None:
                     raise RuntimeError(
@@ -1398,6 +1379,7 @@ class PersistentAgentRuntime:
                 )
 
                 await self._state_store.save_state(thread_id, final_state)
+                await capture_crisis_outcome(final_state, workflow_context)
                 await self._ensure_openai_sdk_turn_recorded(
                     thread_id,
                     user_message=message,
@@ -1407,6 +1389,18 @@ class PersistentAgentRuntime:
                 await self._active_session_manager.clear_active_session_mutation(
                     thread_id, mutation_token
                 )
+
+                ready_output = response_ready_output(
+                    final_state,
+                    finalize_seen=finalize_seen,
+                    response_ready_emitted=False,
+                )
+                if ready_output is not None:
+                    if not chunks_emitted:
+                        yield ChunkEvent(text=ready_output.response_text)
+                        chunks_emitted = True
+                    yield ResponseReadyEvent(output=ready_output)
+
                 from agent.runtime.turn import state_to_output
 
                 yield DoneEvent(output=state_to_output(final_state))

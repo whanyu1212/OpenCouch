@@ -130,7 +130,6 @@ STAGE_LABELS: dict[str, str] = {
     "crisis_resource_lookup": "looking up crisis resources",
     "crisis_response": "generating crisis reply",
     "crisis_clarification": "checking immediate safety",
-    "crisis_log": "writing crisis log",
     "therapeutic": "generating therapeutic reply",
     "finalize": "finalizing turn",
     "session_stage": "reading context",
