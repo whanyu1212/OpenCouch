@@ -22,7 +22,6 @@ from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
 from agent.runtime.context import OpenAITextRunContext
 from agent.flows.crisis import (
     crisis_resource_tool_input_text_for_state as crisis_resource_prompt_for_state_path,
-    run_crisis_response_llm_turn as run_crisis_response_llm_turn_path,
     run_crisis_turn as run_crisis_turn_path,
     run_crisis_turn_stream as run_crisis_turn_stream_path,
 )
@@ -37,9 +36,6 @@ from agent.flows.grounded_lookup import (
 from agent.flows.therapeutic import (
     TherapeuticAgentResult as TherapeuticAgentResultPath,
     operational_context_for_prompt as operational_context_for_prompt_path,
-    resolve_therapeutic_result as resolve_therapeutic_result_path,
-    run_therapeutic_response_llm_stream as run_therapeutic_response_llm_stream_path,
-    run_therapeutic_response_llm_turn as run_therapeutic_response_llm_turn_path,
     run_therapeutic_turn as run_therapeutic_turn_path,
     run_therapeutic_turn_stream as run_therapeutic_turn_stream_path,
     therapeutic_agent_prompt_for_state as therapeutic_agent_prompt_for_state_path,
@@ -52,10 +48,7 @@ from agent.runtime.state_ops import (
     finalize_openai_turn,
 )
 from agent.runtime.prompt_utils import final_output_text
-from agent.runtime.session.history import (
-    include_prompt_history,
-    state_without_prompt_history,
-)
+from agent.runtime.session.history import state_without_prompt_history
 from agent.runtime.services import TextRuntimeServices
 from agent.runtime.text_turn_graph import (
     PreparedTurn,
@@ -75,8 +68,6 @@ from agent.state import AgentState, AgentTurnInputState
 from agent.specialists.therapeutic_response.prompts import (
     build_therapeutic_response_prompt,
 )
-from agent.skills.guided_exercises.engine.lifecycle import GuidedExerciseSkillService
-from llm.base import BaseLLMClient
 from llm.openai_client import DEFAULT_OPENAI_MODEL
 
 
@@ -606,39 +597,6 @@ class OpenAITextRuntime:
         ):
             yield event
 
-    def _guided_exercise_response_llm(
-        self,
-        state: AgentState,
-        config: TextRuntimeConfig,
-        context: WorkflowContext,
-        *,
-        session: Any | None = None,
-    ) -> Any:
-        from agent.flows.guided_exercise import guided_exercise_response_llm
-
-        return guided_exercise_response_llm(
-            self._services(),
-            state,
-            config,
-            context,
-            session=session,
-        )
-
-    @staticmethod
-    def _guided_exercise_skill_service(
-        context: WorkflowContext,
-        *,
-        response_llm: BaseLLMClient,
-        stream_writer_factory: Any | None = None,
-    ) -> GuidedExerciseSkillService:
-        from agent.flows.guided_exercise import guided_exercise_skill_service
-
-        return guided_exercise_skill_service(
-            context,
-            response_llm=response_llm,
-            stream_writer_factory=stream_writer_factory,
-        )
-
     async def _run_crisis_turn(
         self,
         state: AgentState,
@@ -678,80 +636,6 @@ class OpenAITextRuntime:
         ):
             yield event
 
-    async def _run_crisis_response_llm_turn(
-        self,
-        state: AgentState,
-        *,
-        config: TextRuntimeConfig,
-        context: WorkflowContext,
-        runtime_mode: str,
-        streamed: bool,
-        session: Any | None = None,
-    ) -> AgentState:
-        return await run_crisis_response_llm_turn_path(
-            self._services(),
-            state,
-            config=config,
-            context=context,
-            runtime_mode=runtime_mode,
-            streamed=streamed,
-            session=session,
-        )
-
-    async def _run_openai_agent(
-        self,
-        state: AgentState,
-        run_context: OpenAITextRunContext,
-        *,
-        session: Any | None = None,
-    ) -> str:
-        text, _ = await self._run_openai_agent_with(
-            state,
-            agent=self._build_agent(state),
-            input_text=self._input_text_for_state(
-                state,
-                include_recent_history=include_prompt_history(session),
-            ),
-            run_context=run_context,
-            session=session,
-        )
-        return text
-
-    async def _run_safe_response_llm_turn(
-        self,
-        state: AgentState,
-        *,
-        llm_client: BaseLLMClient,
-        session: Any | None,
-        fallback_reason: str | None = None,
-    ) -> TherapeuticAgentResultPath:
-        return await run_therapeutic_response_llm_turn_path(
-            self._services(),
-            state,
-            llm_client=llm_client,
-            session=session,
-            fallback_reason=fallback_reason,
-        )
-
-    async def _run_safe_response_llm_stream(
-        self,
-        state: AgentState,
-        *,
-        config: TextRuntimeConfig,
-        llm_client: BaseLLMClient,
-        session: Any | None,
-        fallback_reason: str | None = None,
-    ) -> AsyncIterator[TextRuntimeStreamEvent]:
-        async for event in run_therapeutic_response_llm_stream_path(
-            self._services(),
-            state,
-            config=config,
-            llm_client=llm_client,
-            session=session,
-            fallback_reason=fallback_reason,
-        ):
-            yield event
-
     async def _run_safe_agent_turn(
         self,
         state: AgentState,
@@ -766,21 +650,6 @@ class OpenAITextRuntime:
             config=config,
             context=context,
             session=session,
-        )
-
-    def _resolve_safe_agent_result(
-        self,
-        state: AgentState,
-        *,
-        run_context: OpenAITextRunContext,
-        response_text: str,
-        sdk_duration_ms: float,
-    ) -> TherapeuticAgentResultPath:
-        return resolve_therapeutic_result_path(
-            state,
-            run_context=run_context,
-            response_text=response_text,
-            sdk_duration_ms=sdk_duration_ms,
         )
 
     @trace_span(
