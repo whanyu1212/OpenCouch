@@ -21,6 +21,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from agent.memory.hashing import iso_now
+from agent.runtime.postgres import require_postgres_database_url
 from agent.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -322,12 +323,7 @@ def create_runtime_state_store(
     """Create a runtime-owned text state snapshot store."""
 
     if backend == "postgres":
-        if not database_url:
-            raise ValueError(
-                "Postgres runtime state requires a database URL. Configure "
-                "OPENCOUCH_MEMORY_DATABASE_URL or pass thread_database_url."
-            )
-        return PostgresRuntimeStateStore(database_url)
+        return PostgresRuntimeStateStore(require_postgres_database_url(database_url))
     return SqliteRuntimeStateStore(sqlite_path)
 
 
