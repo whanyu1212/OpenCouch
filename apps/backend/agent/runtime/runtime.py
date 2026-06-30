@@ -1088,6 +1088,7 @@ class PersistentAgentRuntime:
                 )
 
                 await self._state_store.save_state(thread_id, final_state)
+                await capture_crisis_outcome(final_state, workflow_context)
                 await self._ensure_openai_sdk_turn_recorded(
                     thread_id,
                     user_message=message,
@@ -1107,7 +1108,6 @@ class PersistentAgentRuntime:
                 await self._active_session_manager.clear_active_session_mutation(
                     thread_id, mutation_token
                 )
-                await capture_crisis_outcome(final_state, workflow_context)
                 return result
 
     async def end_session(
@@ -1332,19 +1332,18 @@ class PersistentAgentRuntime:
             finalize_seen = False
             response_ready_emitted = False
 
-            workflow_context = self._context_for_turn(
-                thread_id=thread_id,
-                message=message,
-                prior_state=prior_state,
-                user_id=user_id,
-                llm_client=llm_client,
-                response_llm_client=response_llm_client,
-            )
-
             async with self._active_session_manager.active_session_mutation(
                 thread_id,
                 mutation_kind="turn",
             ) as mutation_token:
+                workflow_context = self._context_for_turn(
+                    thread_id=thread_id,
+                    message=message,
+                    prior_state=prior_state,
+                    user_id=user_id,
+                    llm_client=llm_client,
+                    response_llm_client=response_llm_client,
+                )
                 async for event in runtime.run_turn_stream(
                     initial_state,
                     config=self._config_for_thread(
@@ -1403,6 +1402,7 @@ class PersistentAgentRuntime:
                 )
 
                 await self._state_store.save_state(thread_id, final_state)
+                await capture_crisis_outcome(final_state, workflow_context)
                 await self._ensure_openai_sdk_turn_recorded(
                     thread_id,
                     user_message=message,
@@ -1412,7 +1412,6 @@ class PersistentAgentRuntime:
                 await self._active_session_manager.clear_active_session_mutation(
                     thread_id, mutation_token
                 )
-                await capture_crisis_outcome(final_state, workflow_context)
                 from agent.runtime.turn import state_to_output
 
                 yield DoneEvent(output=state_to_output(final_state))
