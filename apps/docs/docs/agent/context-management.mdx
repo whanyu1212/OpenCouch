@@ -29,7 +29,7 @@ retrieval result. When it runs, it populates:
 | `session_memory.summary` | Per-turn human-readable summary of what was retrieved | Written by turn memory context |
 | `procedural_profile.procedural_rules` | Style directives from `ProceduralProfile` | Full profile load (not query-based) |
 | `procedural_profile.proactive_recall_enabled` | Recall toggle | Read from procedural profile |
-| `diagnostics` | Hit counts, store sizes, retrieval path | Written via `_merge_dicts` reducer |
+| `diagnostics` | Hit counts, store sizes, retrieval path | Added through explicit diagnostics dict merging |
 
 :::tip First-turn catch-up
 On the first turn of a new session (transcript length = 1), the
@@ -52,13 +52,13 @@ same arc never appears twice on a single turn.
 | Field | Source | Per turn? |
 |---|---|---|
 | `message` | User input | Yes |
-| `history` / `transcript` | Checkpointer + `operator.add` reducer | Accumulated across turns |
+| SDK session / `transcript` | OpenAI SDK session + app-owned state snapshot | SDK session carries model-visible history; app transcript is saved for API/CLI/audit fallback |
 | `working_memory` | Turn memory context | Re-retrieved each turn |
-| `procedural_profile` | Turn memory context | Re-loaded each turn (merged via `_merge_dicts`) |
+| `procedural_profile` | Turn memory context | Re-loaded each turn from durable procedural memory |
 | `crisis` / `crisis_audit` | Crisis gate | Fresh each turn |
 | `response_style`, `therapeutic_approach` | Dispatcher | Fresh each turn |
-| `session_progress` | Checkpointer + `_merge_dicts` reducer | `turn_count` increments while preserving sibling fields |
-| `exercise_state` | `guided_exercise_node` + dispatcher, `_merge_dicts` | `exercise_therapeutic_approach` stores the approach pinned at exercise start; active exercise state survives side-turns |
+| `session_progress` | Runtime state snapshot | `turn_count` increments while preserving sibling fields |
+| `exercise_state` | Guided-exercise flow + dispatcher | `exercise_therapeutic_approach` stores the approach pinned at exercise start; active exercise state survives side-turns |
 
 ---
 

@@ -10,10 +10,10 @@ import PromptLayersVisual from '@site/src/components/PromptLayers';
 
 Single Python backend. OpenAI Agents SDK text runtime with app-owned state and
 deterministic routing stages. OpenAI Realtime powers browser voice through the
-same app-owned memory, policy, and tool boundaries. Three memory
-layers backed by Postgres-first durable persistence with a legacy SQLite
-fallback. Shared runtime for CLI, API, web text, and voice
-persistence.
+same app-owned memory, policy, and tool boundaries. Three memory layers are
+backed by Postgres as the durable persistence target; in-memory stores cover
+incognito/tests, and SQLite remains only as legacy compatibility pending
+removal. Shared runtime for CLI, API, web text, and voice persistence.
 
 ---
 
@@ -38,12 +38,12 @@ memory retrieval and all operational gates are skipped entirely.
 | Execution | OpenAI Agents SDK runner with app-owned runtime state | `TextTurnGraph` resolves one route plan with deterministic ordering; SDK sessions carry short-term model-visible history while OpenCouch owns product state |
 | LLM | `BaseLLMClient` protocol | OpenAI client behind a thin protocol; `WorkflowContext` exposes both control LLM and optional response LLM |
 | Embedding | `EmbeddingProvider` protocol | OpenAI `text-embedding-3-large` when an API key is present; null provider when no API key |
-| Storage | Postgres-first durable persistence with legacy SQLite fallback | Dockerized Postgres is the recommended local/runtime path; SQLite remains for compatibility fallback and focused tests |
-| Memory | `MemoryStore` protocol | In-memory for incognito/tests; Postgres for durable local/runtime paths; SQLite legacy fallback |
+| Storage | Postgres durable persistence target | Dockerized Postgres is the recommended local/runtime path and the intended cloud path; SQLite is legacy compatibility pending removal |
+| Memory | `MemoryStore` protocol | In-memory for incognito/tests; Postgres for durable local/runtime paths; SQLite legacy compatibility only |
 | Retrieval | Hybrid RRF (k=60) | Embedding cosine + token-recall fused via Reciprocal Rank Fusion; degrades gracefully to token-recall on embedding failure |
 | Prompt sources | `agent/prompts/sources/*.md` files | Reviewed prompt fragments; composed at runtime via `compose_sources()` |
 | Context | `WorkflowContext` frozen dataclass | Attribute access, type-safe, immutable per turn; carries `session_memory_buffer` for session-end candidate promotion |
-| Reducers | `operator.add` + `_merge_dicts` | Transcript accumulation + parallel diagnostics + per-channel session-state merging (exercise, progress, procedural profile) |
+| State merging | Explicit runtime merge helpers | App-owned state snapshots preserve transcript, progress, exercise continuity, memory-control confirmations, and diagnostics without a separate graph execution engine |
 | Audit separation | `agent/audit/` package | Crisis log + session feedback live outside prompt memory; cannot be disabled by user recall toggles |
 | Observability | Opik + local diagnostics | Opik for primary trace-level debugging and evaluation review; in-CLI diagnostics for per-turn visibility |
 | Crisis log | Always-on | Privacy asymmetry — incognito scrubs user_id but still records, opaque (SHA-256) session id |
@@ -52,19 +52,23 @@ memory retrieval and all operational gates are skipped entirely.
 
 ## Persistence
 
-:::info Durable persistence backends
+:::info Durable persistence direction
 Dockerized Postgres is the recommended local/runtime persistence path for
-thread checkpoints, active-session state, memory, crisis log, session
-feedback, and voice finalization status. Legacy SQLite files under `.store/`
-remain available for compatibility fallback and focused migration tests.
+thread state snapshots, active-session state, memory, crisis log, session
+feedback, SDK text sessions, and voice finalization status. This is also the
+intended managed-database path for cloud deployment. Legacy SQLite files under
+`.store/` remain only for compatibility and migration-focused tests until the
+follow-up removal work lands.
 :::
 
-| Store | Primary backend | Legacy fallback | What it persists |
+| Store | Durable target | Legacy compatibility | What it persists |
 |---|---|---|---|
-| Thread checkpoints | Postgres checkpointer | `threads.sqlite3` | Conversation state snapshots |
+| Runtime thread state | Postgres runtime state store | `threads.sqlite3` | App-owned conversation state snapshots |
+| SDK text sessions | SQLAlchemy/Postgres SDK session backend | `text_sessions.sqlite3` | Model-visible short-term message history |
 | Memory | `PostgresMemoryStore` | `SqliteMemoryStore` | Semantic facts, episodic arcs, procedural profiles |
 | Crisis log | `PostgresCrisisLogBackend` | `SqliteCrisisLogBackend` | Crisis event audit trail |
 | Session feedback | `PostgresSessionFeedbackBackend` | `SqliteSessionFeedbackBackend` | End-of-session thumbs ratings |
+| Active sessions | Postgres active-session store | `opencouch_active_sessions` in SQLite runtime DB | Timeout/finalization recovery metadata |
 
 ---
 
@@ -76,7 +80,7 @@ transport loop.
 | Area | Text agent | Realtime voice |
 |---|---|---|
 | Live turn loop | `OpenAITextRuntime` runs one SDK turn per message through app-owned routing and specialist agents. | OpenAI Realtime owns the live speech loop; the browser returns tool outputs over the data channel and posts finalized transcripts to the backend. |
-| Short-term conversation | SDK session plus reducer-backed runtime state. | Realtime session context plus final transcript recording after each exchange. |
+| Short-term conversation | SDK session plus app-owned runtime state snapshot. | Realtime session context plus final transcript recording after each exchange. |
 | Safety and lookup policy | Crisis gate and turn triage run before the text specialist response. | Compact session instructions and Realtime tool schemas require crisis-resource or grounded-lookup tools when needed. |
 | Tools | SDK function tools attached to the owning specialist agent or runtime branch. | Realtime function schemas that call the same backend service functions. |
 | Persistence | `run_turn` / `run_turn_stream` save text state and emit streaming status events. | `record_voice_turn` appends finalized transcript entries; `end_session` finalizes persistent voice sessions. |
@@ -132,9 +136,9 @@ composition logic.
 | `agent/specialists/` | Triage, therapeutic, crisis, and guided-exercise specialist agent definitions |
 | `agent/tools/` | SDK tool surfaces and fallback deltas for memory control, crisis, guided exercise, and grounded lookup |
 | `agent/skills/` | Therapeutic response skills and guided-exercise skill catalog/state machine |
-| `agent/memory/` | Store protocol, Postgres/SQLite backends, embeddings, retrieval, dedup, LLM-primary write policy, reconciliation, procedural profile, and service-backed memory logic |
+| `agent/memory/` | Store protocol, Postgres durable backend, legacy SQLite backend, embeddings, retrieval, dedup, LLM-primary write policy, reconciliation, procedural profile, and service-backed memory logic |
 | `agent/audit/` | Minimal safety-event capture plus operator-facing crisis ledger backends |
-| `agent/feedback/` | Session feedback records and in-memory, Postgres, and SQLite backends |
+| `agent/feedback/` | Session feedback records and in-memory, Postgres, and legacy SQLite backends |
 | `agent/memory/control/` | User-facing memory-control actions and operations |
 | `agent/prompts/` | Markdown prompt sources + composition helpers + crisis prompt builders |
 | `llm/` | `BaseLLMClient` protocol, factory, and OpenAI client |
@@ -149,7 +153,7 @@ composition logic.
 
 | Topic | Page |
 |---|---|
-| Agent graph | [Graph](/docs/agent/graph) |
+| Agent runtime | [Runtime](/docs/agent/graph) |
 | Tools | [Tools](/docs/agent/tools) |
 | State schema | [State](/docs/agent/state) |
 | Memory | [Memory](/docs/memory/overview) |

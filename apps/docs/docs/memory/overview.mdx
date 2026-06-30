@@ -22,8 +22,8 @@ extract directly into long-term memory. They:
 2. run LLM-primary write policy with hard local safety/storage guards
 3. either commit immediately, hold for session end, require repetition, or drop
 
-Diagnostics still merge via `_merge_dicts`, so the two extractor lanes
-can report into the same turn without racing.
+Diagnostics still use explicit shallow dict merging, so the two extractor
+lanes can report into the same turn without racing.
 :::
 
 :::info Working memory carries structured context
@@ -117,7 +117,7 @@ The `--user-id` flag decouples memory identity from thread identity
 |---|---|
 | `agent/memory/store/__init__.py` | `MemoryStore` protocol — `aput`, `aput_batch`, `asearch_similar`, `alatest`, plus the in-memory `OpenCouchMemoryStore` |
 | `agent/memory/store/postgres.py` | Primary durable Postgres backend with hybrid retrieval support |
-| `agent/memory/store/sqlite.py` | SQLite fallback backend with embedding BLOB storage and transactional batch writes |
+| `agent/memory/store/sqlite.py` | Legacy SQLite backend pending removal; retained for compatibility and migration tests |
 | `agent/memory/modes.py` | `MemoryMode` enum (`INCOGNITO`, `LOCAL`, `SYNCED`) |
 | `agent/memory/retrieval/` | `ranking.py` (RRF fusion `k=60`, lexical/dense rank, cosine similarity) and `service.py` (`load_memory_for_turn` orchestration) |
 | `agent/memory/providers/embeddings.py` | `EmbeddingProvider` protocol + OpenAI / Null providers |
@@ -140,7 +140,7 @@ The `--user-id` flag decouples memory identity from thread identity
 | `agent/audit/capture.py` | Bounded runtime capture seam for minimal safety events |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
 | `agent/audit/postgres_crisis_log.py` | Primary durable Postgres crisis log with retention purge |
-| `agent/audit/sqlite_crisis_log.py` | SQLite crisis log fallback backend |
+| `agent/audit/sqlite_crisis_log.py` | Legacy SQLite crisis log backend pending removal |
 
 ### Feedback package (`agent/feedback/`)
 
@@ -149,7 +149,7 @@ The `--user-id` flag decouples memory identity from thread identity
 | `agent/feedback/models.py` | `FeedbackLabel`, `FeedbackSource`, and `SessionFeedbackRecord` |
 | `agent/feedback/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
 | `agent/feedback/postgres_session_feedback.py` | Primary durable Postgres session feedback store |
-| `agent/feedback/sqlite_session_feedback.py` | SQLite session feedback fallback backend |
+| `agent/feedback/sqlite_session_feedback.py` | Legacy SQLite session feedback backend pending removal |
 
 ### Runtime integration
 

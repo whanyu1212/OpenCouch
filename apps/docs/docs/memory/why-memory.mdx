@@ -56,5 +56,6 @@ Summaries older than 30 days stop appearing in active context but remain
 stored for your review.
 
 **Can I export my data?**
-Durable memory lives in the configured local backend you control. With the recommended Postgres path, back up the local database; with the legacy SQLite fallback, copy, back up,
-or inspect with any SQLite tool.
+Durable memory lives in the configured backend you control. The supported durable
+path is Postgres, so back up or export that database. Legacy SQLite files may
+still exist for older local installs until the removal work lands.

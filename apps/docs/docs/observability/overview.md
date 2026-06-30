@@ -19,15 +19,16 @@ inspection is available on demand through commands like `/status`,
 Voice has a different observability shape because OpenAI Realtime owns
 the live speech loop. The backend still records app-owned tools,
 transcript persistence, inferred turn metadata, and finalization state, but there is no
-per-turn text-runtime graph trace for a spoken exchange.
+per-turn text-runtime route trace for a spoken exchange.
 
 ---
 
 ## How diagnostics flow
 
-Each node writes its own keys into `state["diagnostics"]` via the
-`_merge_dicts` reducer. Nodes return only their own keys — the
-reducer handles merging automatically. No manual dict spreading.
+Each runtime stage writes its own keys into `state["diagnostics"]`. Dict-shaped
+state channels are shallow-merged by explicit runtime helpers when stages return
+partial updates, and some flows locally aggregate diagnostics before applying a
+single state delta.
 
 ```text
 crisis_gate                load_memory
@@ -127,7 +128,7 @@ labels, classifier provenance, and structural metadata are kept.
 | `agent/audit/capture.py` | Runtime-facing bounded/best-effort capture seam |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory / null backends; lower-level `write_crisis_log` helper |
 | `agent/audit/postgres_crisis_log.py` | Primary durable Postgres backend |
-| `agent/audit/sqlite_crisis_log.py` | SQLite fallback backend |
+| `agent/audit/sqlite_crisis_log.py` | Legacy SQLite backend pending removal |
 | `agent/audit/summary.py` | Daily safety-summary aggregation over stored records |
 
 Retention is operator-driven (see
@@ -231,7 +232,7 @@ render without a mapping update.
 | `procedural_count` | load_memory | Rules loaded from profile |
 | `proactive_recall` | load_memory | Recall toggle state |
 | `retrieval_path` | load_memory | `hybrid_rrf` / `token_recall` / `token_recall_after_embed_error` |
-| `turn_total_ms` | runtime | Total turn wall-clock (stamped outside the graph) |
+| `turn_total_ms` | runtime | Total turn wall-clock (stamped outside the route flow) |
 
 ---
 
@@ -252,8 +253,9 @@ return {
 }
 ```
 
-:::tip No spreading needed
-The `diagnostics` field uses a `_merge_dicts` reducer — return only
-your own keys and the reducer handles merging with other nodes'
-diagnostics automatically. Never `**state.get("diagnostics", {})`.
+:::tip Prefer narrow diagnostics deltas
+Return only the diagnostics keys your stage owns when using
+`apply_state_delta`; the runtime's dict-channel merge preserves sibling keys.
+If a flow needs multiple intermediate writes, aggregate them locally and apply
+one diagnostics delta at the boundary.
 :::

@@ -25,6 +25,11 @@ memory actions, and transcript fallback for API/CLI history.
 Active-session coordination is stored in `opencouch_active_sessions` and is
 independent from both runtime state and SDK session history.
 
+Durable persistence direction: Postgres is the intended durable backend for
+runtime state, memory, audit, feedback, and active-session recovery. In-memory
+stores remain the incognito/test path. SQLite stores are legacy compatibility
+until the follow-up removal work lands.
+
 ## Agent Shape
 
 The serving text runtime uses three specialist roles:

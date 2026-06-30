@@ -6,13 +6,13 @@ sidebar_position: 4
 
 # Execution Flows
 
-The [Agent Graph](/docs/agent/graph) page describes the **topology** — how
-the app-owned `TextTurnGraph` resolves one typed route plan per turn. This
+The [Text Agent Runtime](/docs/agent/graph) page describes the **topology** — how
+the app-owned `TextTurnGraph` route planner resolves one typed route plan per turn. This
 page describes the **execution layer** underneath it: the code in
 `agent/flows/` that actually runs once a route is chosen.
 
-There is no separate graph engine. The "graph" is a deterministic,
-app-owned router (`agent/runtime/text_turn_graph.py`) that produces a
+There is no separate graph engine. The historical "graph" name refers to a
+deterministic app-owned router (`agent/runtime/text_turn_graph.py`) that produces a
 `TextRoutePlan`, and the runtime calls the matching flow. Each flow then
 delegates natural-language generation to an OpenAI Agents SDK specialist,
 merges any tool results back into state, and finalizes the turn.
@@ -52,7 +52,7 @@ A flow then:
    plain control LLM) with a branch-specific input prompt.
 3. Merges the result — response text plus any tool results — into `state`
    via `apply_state_delta(state, delta)` (`agent/runtime/state_ops.py`).
-   Reducer keys such as `diagnostics` shallow-merge; other keys replace.
+   Dict channels such as `diagnostics` shallow-merge; other keys replace.
 4. Calls `services.finalize_turn(...)`, which stamps `response_text`,
    `runtime_mode`, `response_style`, `selected_agent`, and `sdk_duration_ms`,
    and returns the final `AgentState` the caller persists.

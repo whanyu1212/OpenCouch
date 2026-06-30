@@ -58,11 +58,11 @@
   color: #78b8af;
 }
 
-.lcReducer {
+.lcPersisted {
   background: rgba(168, 85, 247, 0.12);
   color: #7c3aed;
 }
-[data-theme='dark'] .lcReducer {
+[data-theme='dark'] .lcPersisted {
   background: rgba(192, 132, 252, 0.14);
   color: #c4b5fd;
 }
