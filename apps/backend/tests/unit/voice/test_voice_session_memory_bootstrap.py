@@ -13,8 +13,14 @@ from typing import Any
 import pytest
 
 from agent.memory.modes import MemoryMode
+from agent.runtime import PersistentAgentRuntime
 from agent.voice import runtime_facade as facade_module
 from agent.voice.runtime_facade import VoiceRuntimeFacade
+
+
+@dataclass
+class _StubProceduralRule:
+    rule: str
 
 
 @dataclass
@@ -27,13 +33,11 @@ class _FakeBackingRuntime:
     """Minimal stand-in for the runtime back-pointer the facade uses."""
 
     def _build_turn_initial_state(self, **kwargs: object) -> dict[str, Any]:
-        return {
-            "user_id": kwargs.get("user_id"),
-            "session_id": kwargs.get("thread_id"),
-            "channel": kwargs.get("channel"),
-            "message": kwargs.get("message"),
-            "transcript": [],
-        }
+        del kwargs
+        raise AssertionError(
+            "voice_session_memory_context must resolve the bootstrap owner "
+            "without building an AgentInput turn."
+        )
 
 
 class _FakeFacade:
@@ -72,9 +76,15 @@ async def test_voice_bootstrap_does_not_call_load_memory_for_turn(
         "session bootstrap should only fetch the procedural profile."
     )
 
+    seen_user_id: str | None = None
+
     async def fake_profile(_store: object, *, user_id: str) -> _StubProceduralProfile:
-        del user_id
-        return _StubProceduralProfile(proactive_recall_enabled=True)
+        nonlocal seen_user_id
+        seen_user_id = user_id
+        return _StubProceduralProfile(
+            proactive_recall_enabled=True,
+            rules=[_StubProceduralRule(rule="Reply briefly.")],
+        )
 
     monkeypatch.setattr(facade_module, "aget_procedural_profile", fake_profile)
 
@@ -86,6 +96,42 @@ async def test_voice_bootstrap_does_not_call_load_memory_for_turn(
     )
 
     assert isinstance(result, str)
+    assert seen_user_id == "alice"
+    assert "Saved response preferences:\n- Reply briefly." in result
+    assert "Proactive memory recall is enabled." in result
+
+
+@pytest.mark.asyncio
+async def test_voice_bootstrap_real_runtime_uses_thread_id_without_user_utterance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Persistent bootstrap must not require a non-empty user message."""
+
+    seen_user_id: str | None = None
+
+    async def fake_profile(_store: object, *, user_id: str) -> _StubProceduralProfile:
+        nonlocal seen_user_id
+        seen_user_id = user_id
+        return _StubProceduralProfile(proactive_recall_enabled=False)
+
+    monkeypatch.setattr(facade_module, "aget_procedural_profile", fake_profile)
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+    async with runtime:
+        result = await runtime.voice.voice_session_memory_context(
+            thread_id="voice-thread",
+            user_id=None,
+            memory_mode="persistent",
+        )
+
+    assert isinstance(result, str)
+    assert seen_user_id == "voice-thread"
 
 
 @pytest.mark.asyncio
