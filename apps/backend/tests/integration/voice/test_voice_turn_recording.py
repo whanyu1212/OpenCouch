@@ -275,6 +275,53 @@ async def test_voice_crisis_turn_writes_one_audit_record() -> None:
 
 
 @pytest.mark.asyncio
+async def test_voice_non_crisis_followup_does_not_reaudit_prior_crisis() -> None:
+    """A later ordinary voice turn must not re-audit stale prior crisis state."""
+
+    runtime = PersistentAgentRuntime(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+        memory_mode=MemoryMode.LOCAL,
+    )
+
+    async with runtime:
+        await runtime.voice.record_voice_turn(
+            thread_id="voice-crisis-followup",
+            user_id="user-1",
+            user_text="I might hurt myself tonight.",
+            assistant_text="Your safety matters. Let's get immediate support.",
+            tool_calls=[
+                {
+                    "tool_name": "lookup_crisis_resources",
+                    "status": "completed",
+                    "output": {
+                        "inferred_location": "Singapore",
+                        "found_resources": [],
+                        "resource_lookup_status": "lookup_error",
+                    },
+                }
+            ],
+            llm_client=None,
+        )
+        await runtime.voice.record_voice_turn(
+            thread_id="voice-crisis-followup",
+            user_id="user-1",
+            user_text="I made tea and feel steadier now.",
+            assistant_text="I'm glad you're feeling a little steadier.",
+            response_style="supportive",
+            llm_client=None,
+        )
+        records = await runtime.crisis_log_backend.alist_by_date(
+            datetime.now(timezone.utc).date()
+        )
+
+    assert len(records) == 1
+    assert records[0].event_type == "crisis_response"
+
+
+@pytest.mark.asyncio
 async def test_voice_crisis_capture_runs_before_sdk_history_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

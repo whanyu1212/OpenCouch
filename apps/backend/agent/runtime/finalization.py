@@ -55,6 +55,7 @@ async def finalize_successful_turn(
     active_session_manager: ActiveSessionManager,
     mutation_token: str,
     ensure_sdk_turn_recorded: EnsureSdkTurnRecorded,
+    capture_safety_event: bool = True,
 ) -> SafetyEventCaptureResult:
     """Persist and finalize a successful turn while preserving ordering.
 
@@ -67,15 +68,27 @@ async def finalize_successful_turn(
     3. reconcile SDK history;
     4. clear the active-session mutation marker.
 
+    ``capture_safety_event`` should stay ``True`` for text turns, whose crisis
+    state is recomputed every turn. Voice callers may set it ``False`` for a
+    current non-crisis Realtime turn because voice state can intentionally carry
+    prior crisis fields for other lifecycle bookkeeping.
+
     The returned safety-capture result is available for tests and future
     diagnostics; current callers rely on the capture module's emitted events.
     """
 
     await state_store.save_state(thread_id, final_state)
-    capture_result = await capture_post_save_safety_event(
-        final_state,
-        workflow_context,
-    )
+    if capture_safety_event:
+        capture_result = await capture_post_save_safety_event(
+            final_state,
+            workflow_context,
+        )
+    else:
+        capture_result = SafetyEventCaptureResult(
+            kind="crisis_response",
+            status="skipped",
+            reason="safety_capture_not_required",
+        )
     await ensure_sdk_turn_recorded(
         thread_id,
         user_message=user_message,

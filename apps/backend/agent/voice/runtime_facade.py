@@ -460,6 +460,7 @@ class VoiceRuntimeFacade:
                     ensure_sdk_turn_recorded=(
                         self._runtime._ensure_openai_sdk_turn_recorded
                     ),
+                    capture_safety_event=transition.metadata.route == "crisis",
                 )
                 trace_event(
                     VOICE_RESPONSE_FINALIZED,

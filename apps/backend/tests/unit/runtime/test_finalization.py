@@ -95,6 +95,56 @@ async def test_finalize_successful_turn_runs_shared_ordering_contract(
 
 
 @pytest.mark.asyncio
+async def test_finalize_successful_turn_can_skip_safety_capture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    state = cast(AgentState, {"response_text": "final response"})
+
+    async def capture_safety_event(
+        final_state: AgentState,
+        workflow_context: WorkflowContext,
+    ) -> SafetyEventCaptureResult:
+        del final_state, workflow_context
+        calls.append("capture_safety")
+        return SafetyEventCaptureResult(kind="crisis_response", status="captured")
+
+    async def ensure_sdk_turn_recorded(
+        thread_id: str,
+        *,
+        user_message: str,
+        final_state: AgentState,
+    ) -> None:
+        del thread_id, user_message, final_state
+        calls.append("sdk_history")
+
+    monkeypatch.setattr(
+        finalization_module,
+        "capture_post_save_safety_event",
+        capture_safety_event,
+    )
+
+    result = await finalize_successful_turn(
+        thread_id="thread-1",
+        user_message="hello",
+        final_state=state,
+        workflow_context=cast(WorkflowContext, object()),
+        state_store=cast(RuntimeStateStore, _RecordingStateStore(calls)),
+        active_session_manager=cast(
+            ActiveSessionManager,
+            _RecordingActiveSessionManager(calls),
+        ),
+        mutation_token="mutation-token",
+        ensure_sdk_turn_recorded=ensure_sdk_turn_recorded,
+        capture_safety_event=False,
+    )
+
+    assert result.status == "skipped"
+    assert result.reason == "safety_capture_not_required"
+    assert calls == ["save_state", "sdk_history", "clear_mutation"]
+
+
+@pytest.mark.asyncio
 async def test_finalize_successful_turn_captures_before_sdk_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
