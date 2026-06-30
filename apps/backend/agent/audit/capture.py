@@ -66,7 +66,11 @@ async def capture_crisis_outcome(
 
     return await _capture_with_timeout(
         "crisis_response",
-        lambda: record_crisis_outcome(state, context),
+        lambda: record_crisis_outcome(
+            state,
+            context,
+            raise_on_failure=True,
+        ),
         timeout_seconds=timeout_seconds,
     )
 
@@ -89,6 +93,7 @@ async def capture_voice_missed_crisis(
             state,
             context,
             assessment=assessment,
+            raise_on_failure=True,
         ),
         timeout_seconds=timeout_seconds,
     )

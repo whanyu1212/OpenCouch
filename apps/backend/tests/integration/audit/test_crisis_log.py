@@ -542,6 +542,29 @@ class TestCrisisLogNode:
         assert "safety event capture timed out" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_capture_seam_reports_backend_failure(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Capture status must fail when the lower-level append never persists."""
+
+        class FailingBackend(InMemoryCrisisLogBackend):
+            async def aappend(self, record: CrisisLogRecord) -> None:  # type: ignore[override]
+                raise RuntimeError("simulated backend failure")
+
+        backend = FailingBackend()
+        runtime = _MockRuntime(crisis_log_backend=backend)
+        state = _build_crisis_state()
+
+        with caplog.at_level(logging.WARNING, logger="agent.audit.capture"):
+            result = await capture_crisis_outcome(state, runtime.context)
+
+        assert result.status == "failed"
+        assert result.reason == "exception"
+        assert await backend.arecord_count() == 0
+        assert "safety event capture failed" in caplog.text
+
+    @pytest.mark.asyncio
     async def test_backend_failure_is_logged_but_does_not_crash(
         self,
         caplog: pytest.LogCaptureFixture,

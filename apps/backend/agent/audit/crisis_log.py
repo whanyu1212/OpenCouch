@@ -107,8 +107,18 @@ class CrisisLogBackend(Protocol):
 async def write_crisis_log(
     state: Mapping[str, Any],
     context: Any,
+    *,
+    raise_on_failure: bool = False,
 ) -> dict[str, Any]:
-    """Build and append one minimal crisis safety event record."""
+    """Build and append one minimal crisis safety event record.
+
+    Args:
+        state: Finalized or in-progress turn state.
+        context: Runtime context exposing the crisis ledger backend.
+        raise_on_failure: When ``True``, re-raise write failures after logging so
+            bounded capture callers can report an accurate failed status. The
+            default preserves the legacy best-effort/no-crash writer contract.
+    """
 
     crisis = state.get("crisis")
     needs_crisis_response = (
@@ -215,6 +225,8 @@ async def write_crisis_log(
             "crisis log failed to write record; audit trail lost for this event",
             exc_info=True,
         )
+        if raise_on_failure:
+            raise
 
     return {}
 
@@ -222,6 +234,8 @@ async def write_crisis_log(
 async def record_crisis_outcome(
     state: Mapping[str, Any],
     context: Any,
+    *,
+    raise_on_failure: bool = False,
 ) -> dict[str, Any]:
     """Write the minimal crisis event record for a finalized turn.
 
@@ -230,7 +244,11 @@ async def record_crisis_outcome(
     conversation path only waits for the configured best-effort capture window.
     """
 
-    return await write_crisis_log(state, context)
+    return await write_crisis_log(
+        state,
+        context,
+        raise_on_failure=raise_on_failure,
+    )
 
 
 async def record_voice_missed_crisis(
@@ -238,6 +256,7 @@ async def record_voice_missed_crisis(
     context: Any,
     *,
     assessment: CrisisAssessment,
+    raise_on_failure: bool = False,
 ) -> dict[str, Any]:
     """Write a post-turn audit record for a voice crisis miss.
 
@@ -316,6 +335,8 @@ async def record_voice_missed_crisis(
             "voice missed-crisis audit failed to write record; audit trail lost for this event",
             exc_info=True,
         )
+        if raise_on_failure:
+            raise
 
     return {}
 
