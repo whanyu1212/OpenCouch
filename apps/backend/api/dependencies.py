@@ -200,20 +200,12 @@ def _build_runtime(
             memory_sqlite_path=str(DEFAULT_MEMORY_DB_PATH),
             crisis_log_sqlite_path=str(DEFAULT_CRISIS_LOG_DB_PATH),
         ),
-        persistence_config=RuntimePersistenceConfig(
+        persistence_config=RuntimePersistenceConfig.for_shared_backend(
             memory_mode=memory_mode,
-            memory_backend=settings.persistence_backend,
-            memory_database_url=settings.memory_database_url,
+            persistence_backend=settings.persistence_backend,
+            database_url=settings.memory_database_url,
             text_session_backend=settings.text_session_backend,
-            text_session_database_url=(
-                settings.text_session_database_url or settings.memory_database_url
-            ),
-            thread_persistence_backend=settings.persistence_backend,
-            thread_database_url=settings.memory_database_url,
-            crisis_log_persistence_backend=settings.persistence_backend,
-            crisis_log_database_url=settings.memory_database_url,
-            session_feedback_persistence_backend=settings.persistence_backend,
-            session_feedback_database_url=settings.memory_database_url,
+            text_session_database_url=settings.text_session_database_url,
         ),
         dependencies=RuntimeDependencies(
             default_llm_client=llm_client,

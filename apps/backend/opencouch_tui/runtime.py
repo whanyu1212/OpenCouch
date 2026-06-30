@@ -13,6 +13,7 @@ from agent.runtime import (
     DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
+    RuntimePersistenceConfig,
     ThreadSummary,
 )
 from agent.state import AgentState
@@ -122,30 +123,17 @@ class ConsoleRuntime:
             else MemoryMode.LOCAL
         )
         is_guest_mode = runtime_memory_mode == MemoryMode.INCOGNITO
-        runtime_persistence_backend: PersistenceBackend = (
-            "sqlite" if is_guest_mode else settings.persistence_backend
-        )
-        runtime_database_url = None if is_guest_mode else settings.memory_database_url
-        runtime_text_session_database_url = (
-            None
-            if is_guest_mode
-            else settings.text_session_database_url or settings.memory_database_url
-        )
         effective_user_id = None if is_guest_mode else self.config.user_id
 
         runtime = PersistentAgentRuntime(
             ":memory:" if is_guest_mode else self.config.sqlite_path,
-            memory_mode=runtime_memory_mode,
-            memory_backend=runtime_persistence_backend,
-            memory_database_url=runtime_database_url,
-            text_session_backend=settings.text_session_backend,
-            text_session_database_url=runtime_text_session_database_url,
-            thread_persistence_backend=runtime_persistence_backend,
-            thread_database_url=runtime_database_url,
-            crisis_log_persistence_backend=runtime_persistence_backend,
-            crisis_log_database_url=runtime_database_url,
-            session_feedback_persistence_backend=runtime_persistence_backend,
-            session_feedback_database_url=runtime_database_url,
+            persistence_config=RuntimePersistenceConfig.for_shared_backend(
+                memory_mode=runtime_memory_mode,
+                persistence_backend=settings.persistence_backend,
+                database_url=settings.memory_database_url,
+                text_session_backend=settings.text_session_backend,
+                text_session_database_url=settings.text_session_database_url,
+            ),
             memory_sqlite_path=self.config.memory_sqlite_path,
             crisis_log_sqlite_path=self.config.crisis_log_sqlite_path,
             default_llm_client=llm_client,
