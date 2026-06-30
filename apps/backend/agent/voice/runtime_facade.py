@@ -19,7 +19,7 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
-from agent.audit.crisis_log import record_crisis_outcome
+from agent.audit.capture import capture_crisis_outcome
 from agent.audit.models import CrisisResourceLookupStatus
 from agent.memory.modes import MemoryMode
 from agent.memory.operations.procedural_profile import aget_procedural_profile
@@ -441,19 +441,6 @@ class VoiceRuntimeFacade:
                     session_transcript_soft_limit=None,
                 )
                 await self._state_store.save_state(thread_id, state)
-                # Audit after save_state (synthesis happened before it) so the
-                # persisted turn and its crisis record can never diverge.
-                if transition.metadata.route == "crisis":
-                    crisis_context = self._runtime._context_for_turn(
-                        thread_id=thread_id,
-                        message=state.get("message", ""),
-                        prior_state=prior_state,
-                        user_id=user_id,
-                        llm_client=llm_client,
-                        response_llm_client=llm_client,
-                        track_session=False,
-                    )
-                    await record_crisis_outcome(state, crisis_context)
                 await self._runtime._ensure_openai_sdk_turn_recorded(
                     thread_id,
                     user_message=user_text,
@@ -505,6 +492,8 @@ class VoiceRuntimeFacade:
             diagnostics["voice_post_turn_safety"] = safety_schedule.as_dict()
             state["diagnostics"] = diagnostics
             await self._state_store.save_state(thread_id, state)
+            if transition.metadata.route == "crisis":
+                await capture_crisis_outcome(state, post_turn_context)
             return state
 
 

@@ -111,27 +111,30 @@ general observability bucket — audit rows are never loaded into
 point: safety records can be reviewed after the fact without leaking back into
 the assistant's replies.
 
-The crisis path writes in one direction only. After the crisis-response branch
-completes, `write_crisis_log` builds a single `CrisisLogRecord` and the
-configured `CrisisLogBackend` appends it. Records answer operator questions —
-did the classifier fire, at what level, through which classifier path; did
-resource lookup run, find resources, or fall back; did the runtime use the SDK,
-the SDK tool-fallback, or a response-LLM override — **without storing raw user
-text**. Only classification labels, classifier provenance, and structural
-metadata are kept.
+The crisis path captures safety events in one direction only. After the
+response is finalized and conversation state is persisted,
+`capture_crisis_outcome` gets a small best-effort timeout window to call
+`write_crisis_log`, which builds a single `CrisisLogRecord` for the configured
+`CrisisLogBackend`. Records answer operator questions — did the classifier fire,
+at what level, through which classifier path; did resource lookup run, find
+resources, or fall back; did the runtime use the SDK, the SDK tool-fallback, or
+a response-LLM override — **without storing raw user text**. Only classification
+labels, classifier provenance, and structural metadata are kept.
 
 | File | Purpose |
 |---|---|
 | `agent/audit/models.py` | `CrisisLogRecord`, classifier-path enums, and aggregate/summary models |
-| `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory / null backends; `write_crisis_log` helper |
+| `agent/audit/capture.py` | Runtime-facing bounded/best-effort capture seam |
+| `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory / null backends; lower-level `write_crisis_log` helper |
 | `agent/audit/postgres_crisis_log.py` | Primary durable Postgres backend |
 | `agent/audit/sqlite_crisis_log.py` | SQLite fallback backend |
 | `agent/audit/summary.py` | Daily safety-summary aggregation over stored records |
 
 Retention is operator-driven (see
 [Memory privacy](/docs/memory/privacy)) — backends expose a
-purge-before-cutoff path, and the TUI adds a manual `/memory purge-crisis [days]`
-command. No automatic expiry ships.
+purge-before-cutoff path, the TUI adds a manual `/memory purge-crisis [days]`
+command, and `scripts/audit_crisis_ledger.py` provides ad hoc summary/export/purge
+commands outside the conversation runtime. No automatic expiry ships.
 
 ---
 
@@ -193,7 +196,6 @@ consistent text:
 | `grounded_lookup` | looking up factual answer |
 | `crisis_resource_lookup` | looking up crisis resources |
 | `crisis_response` | generating crisis reply |
-| `crisis_log` | writing crisis log |
 | `load_memory` | loading memory |
 | `memory_profile_load` | loading profile memory |
 | `memory_graph_load` | querying graph memory |

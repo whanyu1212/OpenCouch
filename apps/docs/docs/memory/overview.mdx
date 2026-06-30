@@ -137,6 +137,7 @@ The `--user-id` flag decouples memory identity from thread identity
 | File | Purpose |
 |---|---|
 | `agent/audit/models.py` | `CrisisLogRecord` and classifier-path enums |
+| `agent/audit/capture.py` | Bounded runtime capture seam for minimal safety events |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
 | `agent/audit/postgres_crisis_log.py` | Primary durable Postgres crisis log with retention purge |
 | `agent/audit/sqlite_crisis_log.py` | SQLite crisis log fallback backend |

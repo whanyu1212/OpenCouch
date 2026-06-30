@@ -67,8 +67,9 @@ turn is already classified as `crisis_response` or `crisis_clarification`.
   answers from verified resources. If the model does **not** call the tool,
   the flow synthesizes a resource-lookup result with the app-owned
   `build_crisis_resource_lookup_delta`, then re-runs the SDK agent with
-  resource tools disabled to produce the final reply. It records a crisis
-  audit entry via `record_crisis_outcome(...)`.
+  resource tools disabled to produce the final reply. The flow itself does not
+  write audit records; the outer runtime captures a minimal safety event after
+  final response/state persistence via `capture_crisis_outcome(...)`.
 - **`crisis_clarification`** produces a brief `clarifying` reply without
   forcing a resource lookup.
 

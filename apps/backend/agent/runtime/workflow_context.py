@@ -67,9 +67,9 @@ class WorkflowContext:
         memory_store: Shared semantic, episodic, and procedural memory store.
             The runtime turn memory context reads from it; explicit memory
             tools and exercise services may write to it when memory mode allows.
-        crisis_log_backend: Always-on audit backend used by crisis-response
-            side effects. This remains available even when user memory is
-            incognito.
+        crisis_log_backend: Safety-event ledger backend used by the bounded
+            post-response capture seam. This remains available even when user
+            memory is incognito.
         memory_mode: Current persistence tier. Memory-aware nodes use this to
             decide whether durable memory reads/writes are allowed.
         response_llm: Optional response-writing LLM. Therapeutic response nodes

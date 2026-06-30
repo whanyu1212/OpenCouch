@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from agent.audit.capture import capture_crisis_outcome
 from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
@@ -131,6 +132,13 @@ async def run_agent(
     crisis_log = crisis_log_backend or InMemoryCrisisLogBackend()
     initial_state = build_initial_state(agent_input, include_input_history=True)
     runtime = OpenAITextRuntime()
+    workflow_context = WorkflowContext(
+        llm_client=llm_client,
+        response_llm=llm_client,
+        memory_store=store,
+        crisis_log_backend=crisis_log,
+        memory_mode=memory_mode,
+    )
     final_state = await runtime.run_turn(
         initial_state,
         config={
@@ -141,15 +149,10 @@ async def run_agent(
                 "streaming": False,
             },
         },
-        context=WorkflowContext(
-            llm_client=llm_client,
-            response_llm=llm_client,
-            memory_store=store,
-            crisis_log_backend=crisis_log,
-            memory_mode=memory_mode,
-        ),
+        context=workflow_context,
         prior_state=None,
     )
+    await capture_crisis_outcome(final_state, workflow_context)
 
     return state_to_output(final_state)
 

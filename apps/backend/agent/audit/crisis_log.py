@@ -1,10 +1,10 @@
-"""Always-on crisis safety log backends.
+"""Crisis safety ledger record writers and backends.
 
-The crisis log is separate from prompt memory and writes regardless of
-memory mode. Crisis-response side effects append records only after the
-response branch completes;
-retention purges are operator- or maintenance-driven and never happen
-during normal turn processing.
+The crisis ledger is separate from prompt memory and writes regardless of
+memory mode. Runtime code captures only minimal structured safety events through
+``agent.audit.capture`` after response/state finalization; retention purges,
+exports, summaries, and review are operator- or maintenance-driven and never
+happen during normal turn processing.
 
 Concrete backends share the same async protocol:
 
@@ -108,7 +108,7 @@ async def write_crisis_log(
     state: Mapping[str, Any],
     context: Any,
 ) -> dict[str, Any]:
-    """Write a crisis event record to the always-on safety audit log."""
+    """Build and append one minimal crisis safety event record."""
 
     crisis = state.get("crisis")
     needs_crisis_response = (
@@ -223,12 +223,11 @@ async def record_crisis_outcome(
     state: Mapping[str, Any],
     context: Any,
 ) -> dict[str, Any]:
-    """Write the crisis audit record for a finalized turn, channel-neutral.
+    """Write the minimal crisis event record for a finalized turn.
 
-    Thin wrapper over :func:`write_crisis_log` so non-text channels (voice)
-    can audit a crisis through the same seam without importing the text
-    flow. ``write_crisis_log`` self-guards non-crisis turns, so callers may
-    invoke this unconditionally on any finalized turn.
+    This lower-level writer is channel-neutral but not timeout-bounded. Runtime
+    callers should prefer ``agent.audit.capture.capture_crisis_outcome`` so the
+    conversation path only waits for the configured best-effort capture window.
     """
 
     return await write_crisis_log(state, context)

@@ -13,8 +13,10 @@ alist_by_date + record_count) without hitting any LLM providers.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
+import time
 from collections.abc import AsyncIterator
 from datetime import date
 from typing import Any, cast
@@ -22,6 +24,7 @@ from typing import Any, cast
 import pytest
 
 from agent.runtime import run_agent
+from agent.audit.capture import capture_crisis_outcome
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
@@ -492,6 +495,51 @@ class TestCrisisLogNode:
 
         assert delta == {}
         assert await backend.arecord_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_capture_seam_skips_non_crisis_turn(self) -> None:
+        """The runtime capture seam should not call the backend for safe turns."""
+
+        backend = InMemoryCrisisLogBackend()
+        runtime = _MockRuntime(crisis_log_backend=backend)
+        state = _build_crisis_state(level=0, needs_crisis_response=False)
+
+        result = await capture_crisis_outcome(state, runtime.context)
+
+        assert result.status == "skipped"
+        assert result.reason == "not_crisis_response"
+        assert await backend.arecord_count() == 0
+
+    @pytest.mark.asyncio
+    async def test_capture_seam_bounds_backend_latency(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Slow event storage should time out instead of holding the turn open."""
+
+        class SlowBackend(InMemoryCrisisLogBackend):
+            async def aappend(self, record: CrisisLogRecord) -> None:  # type: ignore[override]
+                await asyncio.sleep(0.2)
+                await super().aappend(record)
+
+        backend = SlowBackend()
+        runtime = _MockRuntime(crisis_log_backend=backend)
+        state = _build_crisis_state(level=3)
+
+        start = time.monotonic()
+        with caplog.at_level(logging.WARNING, logger="agent.audit.capture"):
+            result = await capture_crisis_outcome(
+                state,
+                runtime.context,
+                timeout_seconds=0.01,
+            )
+        elapsed = time.monotonic() - start
+
+        assert result.status == "timeout"
+        assert result.reason == "timeout"
+        assert elapsed < 0.15
+        assert await backend.arecord_count() == 0
+        assert "safety event capture timed out" in caplog.text
 
     @pytest.mark.asyncio
     async def test_backend_failure_is_logged_but_does_not_crash(
@@ -1026,22 +1074,25 @@ class TestCrisisStatusLiteralConsolidation:
 
 
 class TestCrisisAuditSeam:
-    """The text crisis path audits through the channel-neutral wrapper.
+    """The text crisis branch should not own runtime audit persistence.
 
-    ``record_crisis_outcome`` is a passthrough over ``write_crisis_log``,
-    so a regression that routes text back to the lower-level function
-    would still pass every behavior test. This source-level pin guards
-    the seam itself: both channels must audit through one entry point.
+    Crisis flow builds the response state only. The outer runtime owns bounded
+    post-finalization capture through ``capture_crisis_outcome`` so audit writes
+    cannot hold the live response branch open indefinitely.
     """
 
-    def test_text_flow_uses_record_crisis_outcome(self) -> None:
+    def test_text_flow_does_not_write_crisis_audit_directly(self) -> None:
         import inspect
 
         from agent.flows import crisis as crisis_flow
+        from agent.runtime import runtime as persistent_runtime
+        from agent.runtime import turn as one_shot_turn
 
-        source = inspect.getsource(crisis_flow)
-        assert "record_crisis_outcome" in source
-        assert "write_crisis_log" not in source
+        crisis_source = inspect.getsource(crisis_flow)
+        assert "record_crisis_outcome" not in crisis_source
+        assert "write_crisis_log" not in crisis_source
+        assert "capture_crisis_outcome" in inspect.getsource(persistent_runtime)
+        assert "capture_crisis_outcome" in inspect.getsource(one_shot_turn)
 
 
 class TestCrisisRecordSerializationSeam:

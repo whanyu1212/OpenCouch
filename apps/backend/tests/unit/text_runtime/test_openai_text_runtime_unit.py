@@ -1075,7 +1075,9 @@ async def test_openai_runtime_uses_crisis_agent_for_crisis_response() -> None:
         "get_crisis_support_template",
     ]
     assert "Required tool: lookup_crisis_resources" in runner.run_calls[0]["input_text"]
-    assert await context.crisis_log_backend.arecord_count() == 1
+    # The low-level text flow builds crisis response state only; outer runtime
+    # persistence owns bounded safety-event capture.
+    assert await context.crisis_log_backend.arecord_count() == 0
 
 
 @pytest.mark.asyncio
@@ -1287,7 +1289,9 @@ async def test_openai_runtime_streams_crisis_response_turn() -> None:
         TextRuntimeStatusEvent(stage="crisis_response", turn_finalized=False),
         TextRuntimeChunkEvent(text="streamed crisis reply"),
     ]
-    assert TextRuntimeStatusEvent(stage="crisis_log", turn_finalized=False) in events
+    assert (
+        TextRuntimeStatusEvent(stage="crisis_log", turn_finalized=False) not in events
+    )
     assert events[-2] == TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
     assert isinstance(events[-1], TextRuntimeStateEvent)
     assert events[-1].state["route"] == "crisis"
@@ -1298,7 +1302,7 @@ async def test_openai_runtime_streams_crisis_response_turn() -> None:
     ]
     assert events[-1].state["diagnostics"]["openai_crisis_tool_fallback"] is False
     assert runner.stream_calls
-    assert await context.crisis_log_backend.arecord_count() == 1
+    assert await context.crisis_log_backend.arecord_count() == 0
 
 
 @pytest.mark.asyncio

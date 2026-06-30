@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, cast
 
-from agent.audit.crisis_log import record_voice_missed_crisis
+from agent.audit.capture import capture_voice_missed_crisis
 from agent.guardrails.service import CrisisRiskService
 from agent.models import Channel
 from agent.observability.decorators import trace_event
@@ -238,7 +238,7 @@ class VoicePostTurnSafetyAuditor:
         missed_crisis = assessment.level >= 2 and assessment.needs_crisis_response
 
         if missed_crisis:
-            await record_voice_missed_crisis(
+            await capture_voice_missed_crisis(
                 check.state,
                 check.context,
                 assessment=assessment,
