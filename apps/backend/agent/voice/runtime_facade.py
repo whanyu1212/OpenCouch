@@ -363,15 +363,7 @@ class VoiceRuntimeFacade:
         if memory_mode == "incognito" or self._memory_mode == MemoryMode.INCOGNITO:
             return ""
 
-        initial_state = self._runtime._build_turn_initial_state(
-            thread_id=thread_id,
-            message="",
-            channel=Channel.VOICE,
-            user_id=user_id,
-            installed_skills=None,
-            prior_turn_count=0,
-        )
-        owner_id = resolve_owner_id(cast(AgentState, initial_state))
+        owner_id = resolve_owner_id({"user_id": user_id, "session_id": thread_id})
         profile = await aget_procedural_profile(self._memory_store, user_id=owner_id)
         delta: dict[str, Any] = {
             "working_memory": [],
