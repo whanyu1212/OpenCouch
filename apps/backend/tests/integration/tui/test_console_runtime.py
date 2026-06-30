@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -98,6 +99,86 @@ async def test_console_runtime_reports_recoverable_turn_errors(monkeypatch) -> N
     assert error.prefix == "Turn failed"
     assert error.exception_type == "RuntimeError"
     assert "crisis gate failed" in error.message
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("memory_mode", "expected_thread_path", "expected_user_id"),
+    [
+        ("guest", ":memory:", None),
+        ("persistent", "/tmp/thread.sqlite3", "alice"),
+    ],
+)
+async def test_console_runtime_uses_grouped_storage_paths(
+    memory_mode: str,
+    expected_thread_path: str | None,
+    expected_user_id: str | None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TUI wiring should use grouped storage paths, not legacy path kwargs."""
+
+    from agent.runtime import RuntimeStoragePaths
+    from opencouch_tui.runtime import ConsoleConfig, ConsoleRuntime
+
+    captured: dict[str, Any] = {}
+
+    class _RecordingPersistentRuntime:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            captured["args"] = args
+            captured["kwargs"] = kwargs
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def get_history(self, thread_id):
+            return []
+
+        async def get_state(self, thread_id):
+            return None
+
+    monkeypatch.setattr(
+        "opencouch_tui.runtime.get_settings",
+        lambda: SimpleNamespace(
+            persistence_backend="sqlite",
+            memory_database_url=None,
+            text_session_backend="disabled",
+            text_session_database_url=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.runtime.PersistentAgentRuntime",
+        _RecordingPersistentRuntime,
+    )
+
+    async with ConsoleRuntime(
+        ConsoleConfig(
+            requested_mode="deterministic",
+            thread_id="tui-storage-paths",
+            user_id="alice",
+            memory_mode=memory_mode,
+            sqlite_path="/tmp/thread.sqlite3",
+            memory_sqlite_path="/tmp/memory.sqlite3",
+            crisis_log_sqlite_path="/tmp/crisis.sqlite3",
+        )
+    ) as runtime:
+        session = runtime.session
+
+    assert captured["args"] == ()
+    kwargs = captured["kwargs"]
+    assert "storage_paths" in kwargs
+    assert "sqlite_path" not in kwargs
+    assert "memory_sqlite_path" not in kwargs
+    assert "crisis_log_sqlite_path" not in kwargs
+    storage_paths = kwargs["storage_paths"]
+    assert isinstance(storage_paths, RuntimeStoragePaths)
+    assert storage_paths.sqlite_path == expected_thread_path
+    assert storage_paths.memory_sqlite_path == "/tmp/memory.sqlite3"
+    assert storage_paths.crisis_log_sqlite_path == "/tmp/crisis.sqlite3"
+    assert session is not None
+    assert session.user_id == expected_user_id
 
 
 def test_console_config_defaults_are_tui_safe() -> None:

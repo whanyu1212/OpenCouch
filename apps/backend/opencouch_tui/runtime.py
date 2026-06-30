@@ -14,6 +14,7 @@ from agent.runtime import (
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
     RuntimePersistenceConfig,
+    RuntimeStoragePaths,
     ThreadSummary,
 )
 from agent.state import AgentState
@@ -126,7 +127,11 @@ class ConsoleRuntime:
         effective_user_id = None if is_guest_mode else self.config.user_id
 
         runtime = PersistentAgentRuntime(
-            ":memory:" if is_guest_mode else self.config.sqlite_path,
+            storage_paths=RuntimeStoragePaths(
+                sqlite_path=":memory:" if is_guest_mode else self.config.sqlite_path,
+                memory_sqlite_path=self.config.memory_sqlite_path,
+                crisis_log_sqlite_path=self.config.crisis_log_sqlite_path,
+            ),
             persistence_config=RuntimePersistenceConfig.for_shared_backend(
                 memory_mode=runtime_memory_mode,
                 persistence_backend=settings.persistence_backend,
@@ -134,8 +139,6 @@ class ConsoleRuntime:
                 text_session_backend=settings.text_session_backend,
                 text_session_database_url=settings.text_session_database_url,
             ),
-            memory_sqlite_path=self.config.memory_sqlite_path,
-            crisis_log_sqlite_path=self.config.crisis_log_sqlite_path,
             default_llm_client=llm_client,
             finalize_active_sessions_on_close=False,
         )
