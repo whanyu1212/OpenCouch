@@ -145,6 +145,24 @@ class RuntimeBehaviorConfig:
     speculative_memory_prefetch: bool | object = _UNSET
 
 
+@dataclass(slots=True)
+class PreparedTextTurn:
+    """Shared persistent text-turn inputs prepared before route execution."""
+
+    text_runtime: OpenAITextRuntime
+    prior_state: AgentState | None
+    initial_state: AgentTurnInputState
+    sdk_session: Any | None
+
+
+@dataclass(slots=True)
+class TextTurnExecutionContext:
+    """Per-turn context/config built after active-session mutation setup."""
+
+    workflow_context: WorkflowContext
+    config: TextRuntimeConfig
+
+
 class PersistentAgentRuntime:
     """Session-persisted runtime with mode-aware persistence backends."""
 
@@ -991,6 +1009,85 @@ class PersistentAgentRuntime:
             prior_turn_count=prior_turn_count,
         )
 
+    async def _prepare_text_turn(
+        self,
+        *,
+        thread_id: str,
+        message: str,
+        channel: Channel,
+        user_id: str | None,
+        installed_skills: list[str] | None,
+        llm_client: BaseLLMClient | None,
+        expected_liveness: ExpectedSessionLiveness | None,
+    ) -> PreparedTextTurn:
+        """Prepare shared persistent state and SDK session inputs for a text turn."""
+
+        text_runtime = self._get_openai_text_runtime()
+        self._remember_llm_client(thread_id, llm_client)
+
+        # Runtime state restores transcript and can bootstrap an empty OpenAI SDK
+        # session during migration or local session-db loss.
+        prior_state = await self.get_state(thread_id)
+        await self._prepare_session_for_turn(
+            thread_id=thread_id,
+            prior_state=prior_state,
+            llm_client=llm_client,
+            expected_liveness=expected_liveness,
+        )
+        prior_state = await self.get_state(thread_id)
+        prior_turn_count = turn_count_from_state(prior_state)
+
+        initial_state = self._build_turn_initial_state(
+            thread_id=thread_id,
+            message=message,
+            channel=channel,
+            user_id=user_id,
+            installed_skills=installed_skills,
+            prior_turn_count=prior_turn_count,
+        )
+        sdk_session = await self._sdk_bridge.session_for_thread(
+            thread_id,
+            current_user_message=message,
+            prior_state=prior_state,
+        )
+        return PreparedTextTurn(
+            text_runtime=text_runtime,
+            prior_state=prior_state,
+            initial_state=initial_state,
+            sdk_session=sdk_session,
+        )
+
+    def _text_turn_execution_context(
+        self,
+        *,
+        thread_id: str,
+        message: str,
+        channel: Channel,
+        user_id: str | None,
+        llm_client: BaseLLMClient | None,
+        response_llm_client: BaseLLMClient | None,
+        prior_state: AgentState | None,
+        streaming: bool,
+    ) -> TextTurnExecutionContext:
+        """Build context/config once active-session mutation setup succeeds."""
+
+        return TextTurnExecutionContext(
+            workflow_context=self._context_for_turn(
+                thread_id=thread_id,
+                message=message,
+                prior_state=prior_state,
+                user_id=user_id,
+                llm_client=llm_client,
+                response_llm_client=response_llm_client,
+            ),
+            config=self._config_for_thread(
+                thread_id,
+                channel=channel,
+                user_id=user_id,
+                streaming=streaming,
+            ),
+        )
+
     async def run_turn(
         self,
         *,
@@ -1023,33 +1120,14 @@ class PersistentAgentRuntime:
         """
 
         async with self._thread_lock(thread_id):
-            runtime = self._get_openai_text_runtime()
-            self._remember_llm_client(thread_id, llm_client)
-
-            # Runtime state restores transcript and can bootstrap an empty
-            # OpenAI SDK session during migration or local session-db loss.
-            prior_state = await self.get_state(thread_id)
-            await self._prepare_session_for_turn(
-                thread_id=thread_id,
-                prior_state=prior_state,
-                llm_client=llm_client,
-                expected_liveness=expected_liveness,
-            )
-            prior_state = await self.get_state(thread_id)
-            prior_turn_count = turn_count_from_state(prior_state)
-
-            initial_state = self._build_turn_initial_state(
+            prepared = await self._prepare_text_turn(
                 thread_id=thread_id,
                 message=message,
                 channel=channel,
                 user_id=user_id,
                 installed_skills=installed_skills,
-                prior_turn_count=prior_turn_count,
-            )
-            sdk_session = await self._sdk_bridge.session_for_thread(
-                thread_id,
-                current_user_message=message,
-                prior_state=prior_state,
+                llm_client=llm_client,
+                expected_liveness=expected_liveness,
             )
 
             async with self._active_session_manager.active_session_mutation(
@@ -1057,25 +1135,22 @@ class PersistentAgentRuntime:
                 mutation_kind="turn",
             ) as mutation_token:
                 turn_start = time.monotonic()
-                workflow_context = self._context_for_turn(
+                execution = self._text_turn_execution_context(
                     thread_id=thread_id,
                     message=message,
-                    prior_state=prior_state,
+                    channel=channel,
                     user_id=user_id,
                     llm_client=llm_client,
                     response_llm_client=response_llm_client,
+                    prior_state=prepared.prior_state,
+                    streaming=False,
                 )
-                turn_output = await runtime.run_turn(
-                    initial_state,
-                    config=self._config_for_thread(
-                        thread_id,
-                        channel=channel,
-                        user_id=user_id,
-                        streaming=False,
-                    ),
-                    context=workflow_context,
-                    session=sdk_session,
-                    prior_state=prior_state,
+                turn_output = await prepared.text_runtime.run_turn(
+                    prepared.initial_state,
+                    config=execution.config,
+                    context=execution.workflow_context,
+                    session=prepared.sdk_session,
+                    prior_state=prepared.prior_state,
                 )
                 final_state = cast(AgentState, dict(turn_output))
 
@@ -1091,7 +1166,7 @@ class PersistentAgentRuntime:
                     thread_id=thread_id,
                     user_message=message,
                     final_state=final_state,
-                    workflow_context=workflow_context,
+                    workflow_context=execution.workflow_context,
                     state_store=self._state_store,
                     active_session_manager=self._active_session_manager,
                     mutation_token=mutation_token,
@@ -1297,33 +1372,14 @@ class PersistentAgentRuntime:
         """
 
         async with self._thread_lock(thread_id):
-            runtime = self._get_openai_text_runtime()
-            self._remember_llm_client(thread_id, llm_client)
-
-            # Runtime state restores transcript and can bootstrap an empty
-            # OpenAI SDK session during migration or local session-db loss.
-            prior_state = await self.get_state(thread_id)
-            await self._prepare_session_for_turn(
-                thread_id=thread_id,
-                prior_state=prior_state,
-                llm_client=llm_client,
-                expected_liveness=expected_liveness,
-            )
-            prior_state = await self.get_state(thread_id)
-            prior_turn_count = turn_count_from_state(prior_state)
-
-            initial_state = self._build_turn_initial_state(
+            prepared = await self._prepare_text_turn(
                 thread_id=thread_id,
                 message=message,
                 channel=channel,
                 user_id=user_id,
                 installed_skills=installed_skills,
-                prior_turn_count=prior_turn_count,
-            )
-            sdk_session = await self._sdk_bridge.session_for_thread(
-                thread_id,
-                current_user_message=message,
-                prior_state=prior_state,
+                llm_client=llm_client,
+                expected_liveness=expected_liveness,
             )
 
             turn_start = time.monotonic()
@@ -1335,25 +1391,22 @@ class PersistentAgentRuntime:
                 thread_id,
                 mutation_kind="turn",
             ) as mutation_token:
-                workflow_context = self._context_for_turn(
+                execution = self._text_turn_execution_context(
                     thread_id=thread_id,
                     message=message,
-                    prior_state=prior_state,
+                    channel=channel,
                     user_id=user_id,
                     llm_client=llm_client,
                     response_llm_client=response_llm_client,
+                    prior_state=prepared.prior_state,
+                    streaming=True,
                 )
-                async for event in runtime.run_turn_stream(
-                    initial_state,
-                    config=self._config_for_thread(
-                        thread_id,
-                        channel=channel,
-                        user_id=user_id,
-                        streaming=True,
-                    ),
-                    context=workflow_context,
-                    session=sdk_session,
-                    prior_state=prior_state,
+                async for event in prepared.text_runtime.run_turn_stream(
+                    prepared.initial_state,
+                    config=execution.config,
+                    context=execution.workflow_context,
+                    session=prepared.sdk_session,
+                    prior_state=prepared.prior_state,
                 ):
                     if isinstance(event, TextRuntimeChunkEvent):
                         yield ChunkEvent(text=event.text)
@@ -1382,7 +1435,7 @@ class PersistentAgentRuntime:
                     thread_id=thread_id,
                     user_message=message,
                     final_state=final_state,
-                    workflow_context=workflow_context,
+                    workflow_context=execution.workflow_context,
                     state_store=self._state_store,
                     active_session_manager=self._active_session_manager,
                     mutation_token=mutation_token,
