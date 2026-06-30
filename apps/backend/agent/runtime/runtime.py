@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from agent.memory.policy.candidates import SessionMemoryBuffer
-from agent.audit.capture import capture_crisis_outcome
 from agent.audit.crisis_log import CrisisLogBackend
+from agent.runtime.finalization import finalize_successful_turn
 from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.providers.embeddings import EmbeddingProvider
@@ -1087,12 +1087,15 @@ class PersistentAgentRuntime:
                     session_transcript_soft_limit=session_transcript_soft_limit,
                 )
 
-                await self._state_store.save_state(thread_id, final_state)
-                await capture_crisis_outcome(final_state, workflow_context)
-                await self._ensure_openai_sdk_turn_recorded(
-                    thread_id,
+                await finalize_successful_turn(
+                    thread_id=thread_id,
                     user_message=message,
                     final_state=final_state,
+                    workflow_context=workflow_context,
+                    state_store=self._state_store,
+                    active_session_manager=self._active_session_manager,
+                    mutation_token=mutation_token,
+                    ensure_sdk_turn_recorded=self._ensure_openai_sdk_turn_recorded,
                 )
 
                 from agent.runtime.turn import state_to_output
@@ -1105,9 +1108,6 @@ class PersistentAgentRuntime:
                     ),
                 )
 
-                await self._active_session_manager.clear_active_session_mutation(
-                    thread_id, mutation_token
-                )
                 return result
 
     async def end_session(
@@ -1378,16 +1378,15 @@ class PersistentAgentRuntime:
                     session_transcript_soft_limit=session_transcript_soft_limit,
                 )
 
-                await self._state_store.save_state(thread_id, final_state)
-                await capture_crisis_outcome(final_state, workflow_context)
-                await self._ensure_openai_sdk_turn_recorded(
-                    thread_id,
+                await finalize_successful_turn(
+                    thread_id=thread_id,
                     user_message=message,
                     final_state=final_state,
-                )
-
-                await self._active_session_manager.clear_active_session_mutation(
-                    thread_id, mutation_token
+                    workflow_context=workflow_context,
+                    state_store=self._state_store,
+                    active_session_manager=self._active_session_manager,
+                    mutation_token=mutation_token,
+                    ensure_sdk_turn_recorded=self._ensure_openai_sdk_turn_recorded,
                 )
 
                 ready_output = response_ready_output(

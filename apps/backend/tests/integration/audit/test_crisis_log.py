@@ -1099,22 +1099,23 @@ class TestCrisisStatusLiteralConsolidation:
 class TestCrisisAuditSeam:
     """The text crisis branch should not own runtime audit persistence.
 
-    Crisis flow builds the response state only. The outer runtime owns bounded
-    post-finalization capture through ``capture_crisis_outcome`` so audit writes
-    cannot hold the live response branch open indefinitely.
+    Crisis flow builds the response state only. The outer runtime finalization
+    boundary owns bounded post-finalization capture through
+    ``capture_crisis_outcome`` so audit writes cannot hold the live response
+    branch open indefinitely.
     """
 
     def test_text_flow_does_not_write_crisis_audit_directly(self) -> None:
         import inspect
 
         from agent.flows import crisis as crisis_flow
-        from agent.runtime import runtime as persistent_runtime
+        from agent.runtime import finalization as runtime_finalization
         from agent.runtime import turn as one_shot_turn
 
         crisis_source = inspect.getsource(crisis_flow)
         assert "record_crisis_outcome" not in crisis_source
         assert "write_crisis_log" not in crisis_source
-        assert "capture_crisis_outcome" in inspect.getsource(persistent_runtime)
+        assert "capture_crisis_outcome" in inspect.getsource(runtime_finalization)
         assert "capture_crisis_outcome" in inspect.getsource(one_shot_turn)
 
 
