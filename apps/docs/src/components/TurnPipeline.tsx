@@ -48,7 +48,7 @@ export default function TurnPipeline() {
       {/* ── Shared terminal ────────────────────────────── */}
       <div className={styles.section}>
         <div className={styles.sectionHeader}>both paths converge</div>
-        <Node num="6" label="turn_finalization" desc="Append response to transcript via operator.add reducer. No I/O — no retry. Stream emits response_ready here." accent="var(--oc-accent)" />
+        <Node num="6" label="turn_finalization" desc="Append response to the app-owned transcript snapshot. No I/O — no retry. Stream emits response_ready here." accent="var(--oc-accent)" />
         <div className={styles.parallelGroup}>
           <div className={styles.parallelTag}>runtime side effects after response</div>
           <div className={styles.parallelNodes}>

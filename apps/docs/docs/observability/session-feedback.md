@@ -7,9 +7,9 @@ sidebar_position: 2
 
 An explicit end-of-session feedback collector that captures a thumbs
 rating when the user finishes a session. The data is stored in a
-dedicated persistence backend — Postgres for the recommended local
-Docker path, SQLite only as a legacy compatibility fallback —
-always-on, session-opaque, incognito-safe.
+dedicated persistence backend — Postgres for the recommended durable path,
+in-memory for incognito, and SQLite only as legacy compatibility pending
+removal — always-on, session-opaque, incognito-safe.
 
 ---
 
@@ -24,7 +24,7 @@ A single `SessionFeedbackRecord` per end-session event, containing:
 | `user_id_or_null` | `state.user_id` (LOCAL/SYNCED) or `None` (incognito) | Server-derived, scrubbed in incognito |
 | `recorded_at` | ISO-8601 with `Z` suffix | `iso_now()` at write time |
 | `label` | `"positive"` / `"negative"` / `"skip"` | User's explicit choice |
-| `turn_count_at_end` | `session_progress.turn_count` from the latest checkpoint | Read from checkpoint |
+| `turn_count_at_end` | `session_progress.turn_count` from the latest runtime state snapshot | Read from runtime state |
 | `source` | `"cli_end"` / `"cli_exit"` / `"api_end"` | Which end-session surface captured it |
 | `schema_version` | `1` | Fixed for Phase 1 |
 
@@ -37,12 +37,13 @@ privacy boundary — mirroring the crisis log's
 
 | Memory mode | Backend | Persistence |
 |---|---|---|
-| **LOCAL / SYNCED** | `PostgresSessionFeedbackBackend` when `OPENCOUCH_PERSISTENCE_BACKEND=postgres`; otherwise `SqliteSessionFeedbackBackend` fallback | Survives CLI / server restarts |
+| **LOCAL / SYNCED** | `PostgresSessionFeedbackBackend` for the supported durable path; `SqliteSessionFeedbackBackend` exists only for legacy compatibility pending removal | Survives CLI / server restarts when backed by Postgres |
 | **INCOGNITO** | `InMemorySessionFeedbackBackend` | Dies at process exit |
 
-For the recommended local Docker setup, feedback lives in the shared
-Postgres persistence layer. The `.store/session_feedback.sqlite3` file
-remains only for legacy SQLite compatibility.
+For the recommended local Docker setup and future managed deployment,
+feedback lives in the shared Postgres persistence layer. The
+`.store/session_feedback.sqlite3` file remains only for legacy SQLite
+compatibility until the backend is removed.
 
 Default retention: **180 days** (wider than crisis log's 90 because
 feedback analytics benefit from a longer lookback). Enforced via
@@ -134,8 +135,8 @@ records = await runtime.session_feedback_backend.alist_by_session(session_id_opa
 
 | Failure | Behavior |
 |---|---|
-| Backend write error (SQLite outage, disk full) | `record_session_feedback()` returns `None`, logs WARNING, caller continues to summarization |
-| State lookup error (checkpointer crash) | Same — returns `None`, logs WARNING |
+| Backend write error (database outage, disk full) | `record_session_feedback()` returns `None`, logs WARNING, caller continues to summarization |
+| State lookup error (runtime state store failure) | Same — returns `None`, logs WARNING |
 | Invalid label via HTTP | 422 before any code runs |
 | CLI prompt interrupted (Ctrl-C, EOF) | No record, summarization proceeds |
 | Incognito mode | Records written to in-memory backend, scrubbed of user_id, ephemeral |
@@ -164,7 +165,7 @@ constraint on the opaque `id`.
 | `agent/feedback/models.py` | `FeedbackLabel`, `FeedbackSource`, `SessionFeedbackRecord` |
 | `agent/feedback/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory + null backends |
 | `agent/feedback/postgres_session_feedback.py` | Primary durable Postgres feedback backend |
-| `agent/feedback/sqlite_session_feedback.py` | SQLite fallback backend with CHECK constraints and retention purge |
+| `agent/feedback/sqlite_session_feedback.py` | Legacy SQLite backend with CHECK constraints and retention purge, pending removal |
 | `agent/runtime/runtime.py` | `record_session_feedback()` method, backend selection, lifecycle |
 | `api/models.py` | `EndSessionRequest.feedback`, `MemoryStatusResponse.session_feedback_count` |
 | `api/routes/threads.py` | `POST /api/threads/{id}/end` body handling |

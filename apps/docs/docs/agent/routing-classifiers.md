@@ -14,7 +14,7 @@ of the intended design.
 
 | Step | Primary mechanism | Deterministic role |
 |---|---|---|
-| Crisis gate | LLM crisis classifier | Truth-table normalization and graph routing |
+| Crisis gate | LLM crisis classifier | Truth-table normalization and route selection |
 | Memory control gate | LLM classifier for memory commands | Slash commands plus explicit confirmation/cancel gates |
 | Grounded lookup gate | LLM classifier for explicit factual lookup requests | Structured output validation and routing |
 | Therapeutic dispatcher | LLM classifier for response style + therapeutic approach | Active-flow consistency and schema validation |
@@ -42,8 +42,8 @@ default. Current examples:
 
 ## Worked example
 
-The app-owned `TextTurnGraph` resolves one route plan per turn in a fixed
-precedence, short-circuiting at the first match:
+The app-owned `TextTurnGraph` route planner resolves one route plan per turn in
+a fixed precedence, short-circuiting at the first match:
 
 1. **Eligibility** — empty/ineligible turns produce no plan.
 2. **Crisis gate** — if the crisis classifier set a crisis runtime mode, route

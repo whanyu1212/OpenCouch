@@ -7,16 +7,17 @@ import StateFields from '@site/src/components/StateFields';
 
 # Agent State
 
-One `AgentState` dict is the app-owned turn snapshot. Runtime stages
-read from it and return **partial deltas**; reducer-backed fields
-accumulate across turns, while ordinary fields are last-write-wins.
+One `AgentState` dict is the app-owned turn snapshot. Runtime stages read from
+it and return **partial deltas**. Explicit runtime merge helpers preserve the
+long-lived dict channels that need cross-turn continuity, while ordinary fields
+are last-write-wins.
 
 ## Mental model
 
 | Lifecycle | What it means | Examples |
 |---|---|---|
 | **input** | Set once by the caller at turn start | `message`, `user_id`, `channel` |
-| **reducer** | Annotated with a reducer; survives the turn and accumulates across turns via the checkpointer | `history`, `session_progress`, `exercise_state`, `diagnostics` |
+| **persisted/merged** | Saved in the app-owned state snapshot and shallow-merged when a stage returns a partial nested update | `transcript`, `session_progress`, `exercise_state`, `diagnostics` |
 | **loaded** | Re-fetched each turn from the memory store | `working_memory`, `procedural_profile.*` |
 | **turn-scoped** | Fresh each turn, last-write-wins | `crisis`, `route`, `response_text` |
 
@@ -42,8 +43,8 @@ strings. Two entry types:
 
 Formatting via `format_working_memory_entries()` happens at three
 surfaces only: the therapeutic prompt builder, the dispatcher
-prompt, and the CLI's context panel. Legacy `str` entries from
-older checkpoints pass through unchanged.
+prompt, and the CLI's context panel. Legacy `str` entries from older state
+snapshots pass through unchanged.
 
 ## Public contract
 
@@ -80,16 +81,18 @@ persists across restarts.
 <details>
 <summary>Schema implementation detail</summary>
 
-The schema is built from six TypedDict fragments — `AgentIdentityState`,
+The schema is built from TypedDict fragments — `AgentIdentityState`,
 `AgentConversationState`, `AgentPersistentState`, `AgentCrisisState`,
-`AgentGraphOutputState`, and `AgentPrivateState`. The runtime declares
-three views over them:
+`AgentTurnOutputState`, and `AgentPrivateState`. The runtime declares two main
+views over them:
 
 | Schema | Used as |
 |---|---|
-| `AgentGraphInputState` | Input — what `build_initial_state()` emits |
-| `AgentState` | Internal — the full union, used by every node |
-| `AgentGraphOutputState` | Output — what `state_to_output()` reads back |
+| `AgentTurnInputState` | Input — what `build_initial_state()` emits |
+| `AgentState` | Internal — the full state used by runtime stages, prompt builders, tests, and evals |
+
+`state_to_output()` reads the relevant output fields from `AgentState` and
+normalizes them into the public `AgentOutput` contract.
 
 You don't need to think about the fragments to use the agent — they exist so
 the runtime can keep input, internal state, and public output boundaries
@@ -101,7 +104,7 @@ explicit.
 
 | File | Defines |
 |---|---|
-| `agent/state.py` | All TypedDict fragments and the `AgentGraphInputState` / `AgentState` / `AgentGraphOutputState` schemas |
+| `agent/state.py` | All TypedDict fragments plus `AgentTurnInputState` and `AgentState` schemas |
 | `agent/memory/entries.py` | `WorkingMemoryEntry` types and `format_working_memory_entry/entries()` |
 | `agent/models.py` | `AgentInput`, `AgentOutput`, `Message`, `CrisisAssessment`, `Channel`, `MessageRole`, `ResponseCategory`, `ResponseStyleType`, stream events, `STAGE_LABELS` |
 | `agent/audit/models.py` | `CrisisOverrideOutcome` and `CrisisClassifierPath` (used inside `CrisisAuditState`), plus `CrisisLogRecord` and feedback types |

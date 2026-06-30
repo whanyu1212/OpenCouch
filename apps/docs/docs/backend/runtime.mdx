@@ -9,9 +9,9 @@ import RuntimeLayers from '@site/src/components/RuntimeLayers';
 # Runtime & Persistence
 
 Two text-runtime layers, one pipeline. The stateless layer is for
-single-turn requests. The persistent layer adds thread-aware
-checkpointing, candidate buffering, an inactivity sweeper, and the
-shared session-end path (`/end`, timeout, shutdown, API end-session).
+single-turn requests. The persistent layer adds thread-aware state
+snapshots, candidate buffering, an inactivity sweeper, and the shared
+session-end path (`/end`, timeout, shutdown, API end-session).
 
 ---
 
@@ -21,8 +21,9 @@ shared session-end path (`/end`, timeout, shutdown, API end-session).
 
 :::tip The difference is between turns, not within a turn
 Both layers run the same runtime stages in the same order. The
-persistent layer saves app-owned state through the configured backend
-after each turn and restores reducer-backed fields on the next.
+persistent layer saves the app-owned state snapshot through the
+configured backend after each turn and merges the next turn's input
+with that snapshot through explicit runtime helpers.
 :::
 
 :::note Voice uses Realtime transport with app-owned persistence
@@ -40,28 +41,30 @@ See [Voice](/docs/voice) for the full picture.
 
 ## How state accumulates
 
-:::info No `get_history()` on the hot path
-`build_initial_state()` emits only the current user turn. The
-checkpointer restores prior turns automatically via reducers. This
-eliminated the O(n) transcript deserialization that ran on every
-persistent turn.
+:::info No public `get_history()` on the hot path
+`build_initial_state()` emits only the current user turn. The persistent
+runtime loads the previous app-owned state snapshot once, then
+`OpenAITextRuntime` combines that snapshot with the new turn input.
+This avoids rebuilding the model prompt from public history on every
+turn while keeping the public history surface available for API/CLI
+reads.
 :::
 
-| Field | Reducer | Behavior |
+| Field | Persistence behavior | Merge behavior |
 |---|---|---|
-| `history` | `operator.add` | Each turn appends new entries; checkpointer accumulates |
-| `transcript` | `operator.add` | Turn finalization appends a 1-element delta |
-| `session_progress` | `_merge_dicts` | `turn_count` increments while preserving sibling fields |
-| `session_memory` | `_merge_dicts` | Summary / active concerns / open loops merge across turns |
-| `procedural_profile` | `_merge_dicts` | Procedural rules + recall toggle merge |
-| `exercise_state` | `_merge_dicts` | Active exercise continuity; `exercise_therapeutic_approach` pins the approach used when guidance resumes |
-| `memory_control` | `_merge_dicts` | `pending_action` carries destructive deletes across turns |
-| `diagnostics` | `_merge_dicts` | Runtime stages and side effects write independently; gate timings, retrieval path, and write counts merge |
+| `transcript` | Stored in the app-owned runtime state snapshot for API/CLI/audit fallback. | The current user turn is appended to the prior snapshot before the SDK turn; finalization appends the assistant turn before saving. |
+| OpenAI SDK session | Stored separately as model-visible short-term conversation history. | The SDK session handles model-visible message history; the app transcript only seeds it when the SDK session is empty. |
+| `session_progress` | Saved in the runtime state snapshot. | Runtime turn setup increments `turn_count` while preserving sibling fields. |
+| `session_memory` | Loaded from durable episodic memory into the current turn state. | Dict channels are shallow-merged by `apply_state_delta` when stages return partial nested updates. |
+| `procedural_profile` | Loaded from durable procedural memory each turn. | Rules and recall toggle are replaced by the latest memory-context load. |
+| `exercise_state` | Saved in the runtime state snapshot. | Guided-exercise stages shallow-merge active exercise fields so side-turns can preserve continuity. |
+| `memory_control` | Saved in the runtime state snapshot. | Pending destructive actions carry across confirmation turns until confirmed or cleared. |
+| `diagnostics` | Saved with the final state for debugging. | Runtime stages and side-effect services add their own keys through shallow dict merges or local diagnostic aggregation. |
 
-**Non-reducer fields** (`crisis`, `crisis_audit`, `route`,
-`response_text`, `response_style`, `therapeutic_approach`, the
-turn-scoped lookup fields) are overwritten fresh each turn — they
-describe a single turn's decisions and replies.
+Turn-scoped fields (`crisis`, `crisis_audit`, `route`, `response_text`,
+`response_style`, `therapeutic_approach`, and lookup scratch fields)
+are overwritten fresh each turn because they describe one turn's
+decisions and reply.
 
 ---
 
@@ -70,9 +73,9 @@ describe a single turn's decisions and replies.
 <TerminalWindow title="session lifecycle">
 {`# Session 1 — 3 turns + end
 $ opencouch --thread-id alice-s1 --user-id alice
-> Hi there                            # turn 1: checkpoint created
-> I've been feeling anxious           # turn 2: transcript accumulates
-> Can we do a grounding exercise?     # turn 3: exercise state persists via progress reducer
+> Hi there                            # turn 1: state snapshot created
+> I've been feeling anxious           # turn 2: transcript snapshot updates
+> Can we do a grounding exercise?     # turn 3: exercise state persists in runtime state
 > /end                                # feedback prompt → summarize → episodic arc written
 
 # Session 2 — same user, new thread
@@ -83,13 +86,13 @@ $ opencouch --thread-id alice-s2 --user-id alice
 
 | Event | What happens |
 |---|---|
-| **First turn** | Checkpoint created. `build_initial_state()` provides defaults; `opencouch_active_sessions` row registers the active session. |
-| **Subsequent turns** | Checkpointer restores accumulated state. Only the new user turn is emitted. The session row's `last_active_at` updates. |
+| **First turn** | State snapshot created. `build_initial_state()` provides defaults; `opencouch_active_sessions` row registers the active session. |
+| **Subsequent turns** | Persistent runtime loads the prior state snapshot. Only the new user turn is emitted into turn input. The session row's `last_active_at` updates. |
 | **`/end`** | Optional feedback prompt → `record_session_feedback()` → `end_session()` → `summarize_session` triggers service-backed episodic summarization/persistence → `commit_session_memory` triggers service-backed promotion of held candidates → active-session row deleted. |
 | **20-min inactivity** | Background sweeper finds expired session rows and runs the same `end_session()` flow with the runtime's default LLM client. Held candidates and episodic arcs are still written even if the user never typed `/end`. |
 | **Process shutdown** | `__aexit__` best-effort finalizes anything still open (when `finalize_active_sessions_on_close=True`, the default). |
 | **Resume after `/end`** | Same thread_id works. Transcript persists. Next turn starts a fresh session and a fresh candidate buffer. |
-| **Incognito** | All four backends in-memory. Nothing touches disk. Crisis log + feedback still record (ephemeral). The active-session table is skipped. |
+| **Incognito** | Runtime-owned durable stores are in-memory. Nothing touches disk. Crisis log + feedback still record (ephemeral). The active-session table is skipped. |
 
 ---
 
@@ -167,11 +170,20 @@ sessions, and `__aexit__` best-effort finalizes anything still open
 on shutdown — so held candidates and session-end summarization
 trigger reliably even if the user never types `/end`.
 
-In `INCOGNITO` mode the same flow runs entirely in memory: the
-checkpoint and active-session tracking are process-local and no durable
-session row is written.
+In `INCOGNITO` mode the same flow runs entirely in memory: thread state
+and active-session tracking are process-local and no durable session row
+is written.
 
 ---
+
+## Durable persistence direction
+
+Postgres is the intended durable backend for runtime state, SDK text
+sessions, memory, crisis audit, session feedback, and active-session
+recovery. In-memory stores remain the incognito/test path. SQLite-backed
+stores still exist in the codebase for legacy local compatibility and
+focused migration tests, but new durable-runtime work should target
+Postgres first and avoid expanding SQLite-specific behavior.
 
 ## Key files
 
@@ -179,12 +191,12 @@ session row is written.
 |---|---|
 | `agent/runtime/runtime.py` | `PersistentAgentRuntime` — `run_turn`, `run_turn_stream`, `end_session`, `record_session_feedback`, sweeper, active-session recovery |
 | `agent/runtime/turn.py` | `build_initial_state`, `state_to_output`, `run_agent` |
-| `agent/state.py` | All state fragments + `AgentGraphInputState` / `AgentState` / `AgentGraphOutputState` |
+| `agent/state.py` | State fragments plus `AgentTurnInputState` and `AgentState` |
 | `agent/runtime/workflow_context.py` | `WorkflowContext` frozen dataclass |
 | `agent/audit/capture.py` | Bounded runtime capture seam for minimal safety events |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
-| `agent/audit/postgres_crisis_log.py` | Primary Postgres crisis log with retention purge |
-| `agent/audit/sqlite_crisis_log.py` | SQLite crisis-log fallback backend |
+| `agent/audit/postgres_crisis_log.py` | Primary durable Postgres crisis log with retention purge |
+| `agent/audit/sqlite_crisis_log.py` | Legacy SQLite crisis-log backend pending removal |
 | `agent/feedback/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
-| `agent/feedback/postgres_session_feedback.py` | Primary Postgres feedback store |
-| `agent/feedback/sqlite_session_feedback.py` | SQLite feedback fallback backend |
+| `agent/feedback/postgres_session_feedback.py` | Primary durable Postgres feedback store |
+| `agent/feedback/sqlite_session_feedback.py` | Legacy SQLite feedback backend pending removal |

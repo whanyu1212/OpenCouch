@@ -1,5 +1,5 @@
 /* ================================================================
-   GraphTopology — Animated agent graph with branching + parallelism
+   GraphTopology — Animated text-runtime topology with branching + parallelism
    ================================================================ */
 
 .container {
@@ -504,7 +504,7 @@
   }
 }
 
-.parallelReducerTag {
+.parallelStateTag {
   text-align: center;
   margin-top: 10px;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
@@ -522,13 +522,13 @@
   width: fit-content;
 }
 
-[data-theme='light'] .parallelReducerTag {
+[data-theme='light'] .parallelStateTag {
   color: #7c3aed;
   background: rgba(124, 58, 237, 0.04);
   border-color: rgba(124, 58, 237, 0.12);
 }
 
-/* Center the reducer tag */
+/* Center the state-tag label */
 .parallelZone {
   display: flex;
   flex-direction: column;

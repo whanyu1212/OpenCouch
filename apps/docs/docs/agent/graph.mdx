@@ -7,7 +7,7 @@ sidebar_position: 1
 import AgentGraph from '@site/src/components/AgentGraph';
 import GraphTopology from '@site/src/components/GraphTopology';
 
-# Agent Graph
+# Text Agent Runtime
 
 This page describes the **text agent runtime** used by the CLI, web
 text chat, and synchronous/streaming chat APIs. Voice uses
@@ -28,11 +28,13 @@ Click any step below to see what it does.
 ## Topology
 
 The text runtime keeps branch decisions explicit through an app-owned
-`TextTurnGraph`. The graph resolves one typed route plan, then delegates response
-generation to the selected OpenAI Agents SDK specialist executor. The crisis gate
-runs first, deterministic dispatch handles memory-control and grounded lookup
-branches, and safe therapeutic turns enter the TherapeuticAgent. Post-response
-extractors remain runtime-managed side effects.
+`TextTurnGraph` route planner (the name is historical; it is a deterministic
+router, not a graph engine). The router resolves one typed route plan, then
+delegates response generation to the selected OpenAI Agents SDK specialist
+executor. The crisis gate runs first, deterministic dispatch handles
+memory-control and grounded lookup branches, and safe therapeutic turns enter
+the TherapeuticAgent. Post-response extractors remain runtime-managed side
+effects.
 
 <GraphTopology />
 
@@ -56,8 +58,8 @@ Runtime stages own deterministic state deltas, persistence boundaries, and
 tool-result validation. Specialist agents own natural-language response
 generation and the tools assigned to their branch.
 
-The route plan is shared by normal, streaming, and shadow execution so those
-entrypoints do not each reimplement the branch table.
+The route plan is shared by normal and streaming execution so those entrypoints
+do not each reimplement the branch table.
 
 Voice reuses the service implementations behind those tools, but not this
 text-stage topology. Realtime function tools call the backend service layer
@@ -105,11 +107,11 @@ run after turn finalization as runtime-managed side effects. Some
 candidates commit immediately; others are buffered for session end or
 dropped. Extractor diagnostics are merged into the final turn output.
 
-**Reducer-backed accumulation.** `history` and `transcript` use
-`operator.add` reducers. Each turn emits only the new entries
-(user turn at init, assistant turn at finalize); the checkpointer
-accumulates prior turns automatically. No `get_history()` calls
-on the hot path.
+**App-owned state snapshots.** Each persistent turn loads the prior runtime
+state snapshot, appends the current user turn, and saves the finalized snapshot
+after the assistant reply is sealed. The OpenAI SDK session separately carries
+model-visible short-term message history; public `get_history()` remains a
+read-side surface, not the hot-path prompt source.
 
 **Structured working memory.** The load-memory stage returns raw
 `WorkingMemoryEntry` dicts (semantic and episodic types). Formatting
@@ -120,10 +122,10 @@ inside the response model.
 storage failure handling at the runtime boundary so failures retry or
 surface instead of being hidden by fallback text.
 
-**Per-turn diagnostics.** Runtime stages and side effects stamp
-timing and decision metadata into `state["diagnostics"]` via the
-`_merge_dicts` reducer. Keys include `load_memory_ms`,
-`crisis_gate_ms`, and `turn_total_ms`.
+**Per-turn diagnostics.** Runtime stages and side effects stamp timing and
+decision metadata into `state["diagnostics"]`. Dict-shaped state channels are
+shallow-merged by explicit runtime helpers when stages return partial updates.
+Keys include `load_memory_ms`, `crisis_gate_ms`, and `turn_total_ms`.
 
 ## Runtime context
 
@@ -139,7 +141,7 @@ for the full breakdown.
 | File | What it does |
 |---|---|
 | `agent/runtime/turn.py` | Compatibility entrypoint for `build_initial_state()`, `state_to_output()`, and `run_agent()` |
-| `agent/state.py` | `AgentState` TypedDict with reducer annotations and split input/output schemas |
+| `agent/state.py` | `AgentState` TypedDict fragments plus turn-input and full-state schemas |
 | `agent/memory/entries.py` | `WorkingMemoryEntry` types, factory functions, formatters |
 | `agent/runtime/workflow_context.py` | `WorkflowContext` frozen dataclass |
 | `agent/runtime/openai_text_runtime.py` | OpenAI Agents SDK text runtime orchestration |
@@ -156,11 +158,11 @@ for the full breakdown.
 | `agent/tools/grounded.py` | Search-grounded factual replies |
 | `agent/runtime/session/commit.py` | Session-end promotion path backed by `agent/memory/commit/service.py` |
 | `agent/runtime/session/summarize.py` | Session-end episodic summarization path backed by `agent/memory/operations/episodic.py` |
-| `agent/runtime/turn_finalization.py` | Transcript finalization (single-element delta) |
+| `agent/runtime/state_ops.py` | State delta application and OpenAI turn finalization helpers |
 | `agent/audit/capture.py` | Bounded post-response safety-event capture seam |
 | `agent/audit/crisis_log.py` | Audit-log write helper, backend protocol, and in-memory implementations |
 | `agent/audit/postgres_crisis_log.py` | Primary durable crisis log with retention purge |
-| `agent/audit/sqlite_crisis_log.py` | SQLite crisis-log fallback backend |
+| `agent/audit/sqlite_crisis_log.py` | Legacy SQLite crisis-log backend pending removal |
 | `agent/runtime/runtime.py` | `PersistentAgentRuntime` — configured persistent thread state |
 
 ## Adding a new therapeutic response style

@@ -14,8 +14,8 @@ const architectureCards = [
   },
   {
     title: 'Agent Runtime',
-    label: 'Core graph',
-    description: 'Graph topology, state reducers, tools, flows, and dispatch.',
+    label: 'Core runtime',
+    description: 'Router topology, app-owned state, tools, flows, and dispatch.',
     href: '/docs/agent/graph',
     source: 'apps/backend/agent',
   },
@@ -91,10 +91,10 @@ const pathCards = [
   },
   {
     title: 'For agent developers',
-    description: 'Understand graph routing, prompt assembly, state, tools, and therapeutic behavior.',
+    description: 'Understand runtime routing, prompt assembly, state, tools, and therapeutic behavior.',
     href: '/docs/agent/graph',
     links: [
-      {label: 'Agent graph', href: '/docs/agent/graph'},
+      {label: 'Agent runtime', href: '/docs/agent/graph'},
       {label: 'Prompt assembly', href: '/docs/agent/prompt-assembly'},
     ],
   },

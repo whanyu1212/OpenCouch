@@ -13,7 +13,7 @@ interface StepDef {
   id: string;
   label: string;
   sub: string;
-  badges?: { label: string; llm?: boolean; crisis?: boolean; retry?: boolean; reducer?: boolean; parallel?: boolean }[];
+  badges?: { label: string; llm?: boolean; crisis?: boolean; retry?: boolean; state?: boolean; parallel?: boolean }[];
   detail: Detail;
   branch?: { condition: string; targetA: string; targetB: string; crisis?: boolean };
 }
@@ -32,9 +32,9 @@ const STEPS: StepDef[] = [
     label: 'User message',
     sub: 'build_initial_state emits only the current user turn',
     detail: {
-      what: 'Entry point. Accepts a message, channel, and session IDs. Emits only the current user turn — the checkpointer + operator.add reducer accumulates prior turns automatically.',
-      how: 'build_initial_state creates the AgentState dict. Persistent sessions pass prior_turn_count from the checkpoint instead of deserializing the full transcript. One-shot callers can opt into include_input_history=True for testing.',
-      emits: 'AgentState with history=[user_turn], transcript=[user_turn]',
+      what: 'Entry point. Accepts a message, channel, and session IDs. Emits the current user turn, then the persistent runtime combines it with the prior app-owned state snapshot.',
+      how: 'build_initial_state creates the turn-input AgentState shape. Persistent sessions pass prior_turn_count from the stored state snapshot instead of deserializing public history on the hot path. One-shot callers can opt into include_input_history=True for testing.',
+      emits: 'AgentTurnInputState with transcript=[user_turn]',
     },
   },
   {
@@ -102,15 +102,15 @@ const STEPS: StepDef[] = [
   {
     id: 'finalize',
     label: 'finalization',
-    sub: 'Append assistant reply — single-element delta via operator.add reducer',
+    sub: 'Append assistant reply to the app-owned transcript snapshot',
     badges: [
       { label: 'pure state' },
       { label: 'no retry' },
     ],
     detail: {
-      what: 'Appends the assistant response to transcript and history as a 1-element list. The operator.add reducer handles merging with the accumulated state from the checkpoint. Empty/whitespace responses produce an empty delta to keep the transcript clean.',
-      how: 'Reads state.response_text, stamps routing metadata onto the assistant turn dict. Returns {transcript: [turn], history: [turn]}. No I/O — pure state manipulation, so no RetryPolicy.',
-      emits: 'state.transcript += [assistant_turn], state.history += [assistant_turn]',
+      what: 'Appends the assistant response to the transcript snapshot before the persistent runtime saves final state. Empty/whitespace responses are kept out of the transcript to avoid polluted history.',
+      how: 'Reads state.response_text, stamps routing metadata onto the assistant turn dict, and updates the in-memory state. No I/O — pure state manipulation, so no RetryPolicy.',
+      emits: 'state.transcript += [assistant_turn]',
     },
   },
   {
@@ -118,7 +118,7 @@ const STEPS: StepDef[] = [
     label: 'AgentOutput',
     sub: 'Normalized public response returned to the API layer',
     detail: {
-      what: 'state_to_output extracts the public response shape from the final state. The checkpoint stores the full accumulated state for the next turn — including the reducer-merged transcript, diagnostics, and progress.',
+      what: 'state_to_output extracts the public response shape from the final state. The persistent runtime stores the full app-owned state snapshot for the next turn — including transcript, diagnostics, and progress.',
       how: 'Extracts response_text, crisis assessment, response_style, therapeutic_approach, session_action, and diagnostics. Public response_type is derived from crisis.level.',
       emits: 'AgentOutput',
     },
@@ -171,7 +171,7 @@ const THERAPEUTIC_RESPONSE_STYLES: ResponseStyleDef[] = [
   {
     id: 'guided_exercise', label: 'guided_exercise',
     detail: {
-      what: 'Multi-turn structured exercise. exercise_state (type + step + pinned approach stored in exercise_therapeutic_approach) persists across turns via the _merge_dicts reducer. Mid-exercise side-turns preserve the approach so it does not drift.',
+      what: 'Multi-turn structured exercise. exercise_state (type + step + pinned approach stored in exercise_therapeutic_approach) persists in the app-owned state snapshot. Mid-exercise side-turns preserve the approach so it does not drift.',
       how: 'Active-exercise context is passed to the TherapeuticAgent. 13 exercises across grounding, breathing, thought work, behavioral activation, acceptance, emotion regulation, and self-compassion.',
       emits: 'exercise_state.{exercise_type, exercise_step, exercise_therapeutic_approach}',
     },
@@ -258,7 +258,7 @@ export default function AgentGraph() {
                           b.llm ? styles.badgeLlm : '',
                           b.crisis ? styles.badgeCrisis : '',
                           b.retry ? styles.badgeRetry : '',
-                          b.reducer ? styles.badgeReducer : '',
+                          b.state ? styles.badgeState : '',
                           b.parallel ? styles.badgeParallel : '',
                         ].join(' ')}
                       >

@@ -111,7 +111,7 @@ Architectures for Language Agents, Princeton 2023).
   </div>
 </div>
 
-For Postgres-first persistence, privacy controls, and latency tuning, see [Backend Architecture](/docs/backend/overview) and [Privacy Controls](/docs/memory/privacy).
+For the Postgres durable persistence target, privacy controls, and latency tuning, see [Backend Architecture](/docs/backend/overview) and [Privacy Controls](/docs/memory/privacy).
 
 ---
 

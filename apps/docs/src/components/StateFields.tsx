@@ -3,7 +3,7 @@ import styles from './StateFields.module.css';
 
 /* ── Data ───────────────────────────────────────────────────────────────────── */
 
-type Lifecycle = 'input' | 'reducer' | 'turn' | 'loaded';
+type Lifecycle = 'input' | 'persisted' | 'turn' | 'loaded';
 
 interface FieldDef {
   name: string;
@@ -11,7 +11,7 @@ interface FieldDef {
   setBy: string;
   lifecycle: Lifecycle;
   desc: string;
-  reducer?: string;
+  merge?: string;
 }
 
 interface GroupDef {
@@ -37,10 +37,9 @@ const GROUPS: GroupDef[] = [
   {
     id: 'conversation',
     label: 'Conversation',
-    blurb: 'Append-only transcript channels — each turn emits only its own delta.',
+    blurb: 'App-owned transcript snapshot plus SDK-owned model-visible history.',
     fields: [
-      { name: 'history', type: 'Annotated[list[dict], operator.add]', setBy: 'build_initial_state + turn finalization', lifecycle: 'reducer', reducer: 'operator.add', desc: 'build_initial_state emits [user_turn]; turn finalization emits [assistant_turn]. The checkpointer accumulates prior turns automatically.' },
-      { name: 'transcript', type: 'Annotated[list[dict], operator.add]', setBy: 'build_initial_state + finalize_turn', lifecycle: 'reducer', reducer: 'operator.add', desc: 'Full durable conversation record. Same reducer as history — never reconstructs from scratch.' },
+      { name: 'transcript', type: 'list[dict]', setBy: 'build_initial_state + finalize_openai_turn', lifecycle: 'persisted', merge: 'append in runtime state', desc: 'Full app-owned conversation record for API/CLI/audit fallback. The current user turn is appended before the SDK run; the assistant turn is appended during finalization.' },
     ],
   },
   {
@@ -49,18 +48,18 @@ const GROUPS: GroupDef[] = [
     blurb: 'Loaded each turn by the runtime turn memory context.',
     fields: [
       { name: 'working_memory', type: 'list[WorkingMemoryEntry]', setBy: 'turn memory context', lifecycle: 'loaded', desc: 'SemanticWorkingMemoryEntry (category/subject/predicate/object + evidence_quote) and EpisodicWorkingMemoryEntry (summary, themes, is_catch_up, approach_used). Formatted on demand at prompt-build time.' },
-      { name: 'session_memory', type: 'Annotated[SessionMemoryState, _merge_dicts]', setBy: 'turn memory context', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Prompt-visible session continuity: summary, active_concerns, open_loops, current_goal.' },
-      { name: 'procedural_profile.procedural_rules', type: 'list[str]', setBy: 'turn memory context', lifecycle: 'reducer', desc: 'Style directives that shape every reply. Always applied — the recall toggle is content-recall only.' },
-      { name: 'procedural_profile.proactive_recall_enabled', type: 'bool', setBy: 'turn memory context', lifecycle: 'reducer', desc: 'Whether the agent may proactively reference recalled content. Procedural rules apply regardless.' },
+      { name: 'session_memory', type: 'SessionMemoryState', setBy: 'turn memory context', lifecycle: 'persisted', merge: 'shallow dict merge', desc: 'Prompt-visible session continuity: summary, active_concerns, open_loops, current_goal.' },
+      { name: 'procedural_profile.procedural_rules', type: 'list[str]', setBy: 'turn memory context', lifecycle: 'loaded', desc: 'Style directives that shape every reply. Always applied — the recall toggle is content-recall only.' },
+      { name: 'procedural_profile.proactive_recall_enabled', type: 'bool', setBy: 'turn memory context', lifecycle: 'loaded', desc: 'Whether the agent may proactively reference recalled content. Procedural rules apply regardless.' },
     ],
   },
   {
     id: 'progress',
     label: 'Session progress',
-    blurb: 'Per-turn counters that merge into the checkpoint.',
+    blurb: 'Per-turn counters stored in the runtime state snapshot.',
     fields: [
-      { name: 'session_progress', type: 'Annotated[SessionProgressState, _merge_dicts]', setBy: 'build_initial_state', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Turn-count continuity. The merge reducer preserves checkpointed counters and sibling flags.' },
-      { name: 'session_progress.turn_count', type: 'int', setBy: 'build_initial_state', lifecycle: 'reducer', desc: 'Persistent callers derive from checkpoint; one-shot callers count from history.' },
+      { name: 'session_progress', type: 'SessionProgressState', setBy: 'build_initial_state', lifecycle: 'persisted', merge: 'shallow dict merge', desc: 'Turn-count continuity. Runtime merge helpers preserve sibling flags while updating counters.' },
+      { name: 'session_progress.turn_count', type: 'int', setBy: 'build_initial_state', lifecycle: 'persisted', desc: 'Persistent callers derive from the prior runtime state snapshot; one-shot callers count from input history.' },
     ],
   },
   {
@@ -68,11 +67,11 @@ const GROUPS: GroupDef[] = [
     label: 'Exercise & memory-control continuity',
     blurb: 'Multi-turn state that survives mid-exercise side-turns.',
     fields: [
-      { name: 'exercise_state', type: 'Annotated[ExerciseState, _merge_dicts]', setBy: 'guided exercise flow + triage', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Active guided-exercise continuity. Cleared by runtime logic when the user exits or the exercise completes.' },
-      { name: 'exercise_state.exercise_type', type: 'str | None', setBy: 'guided exercise flow', lifecycle: 'reducer', desc: 'Active exercise identifier (e.g., "grounding_5_4_3_2_1").' },
-      { name: 'exercise_state.exercise_step', type: 'int | None', setBy: 'guided exercise flow', lifecycle: 'reducer', desc: 'Current step index. Cleared when the exercise completes or the user exits.' },
-      { name: 'exercise_state.exercise_therapeutic_approach', type: 'str | None', setBy: 'guided exercise flow + triage', lifecycle: 'reducer', desc: 'Approach pinned at exercise start. Reused when guidance resumes and for narrow clarifying side-turns; psychoeducation side-turns keep the exercise active but may use a fresh top-level approach.' },
-      { name: 'memory_control.pending_action', type: 'dict | None', setBy: 'memory-control service', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Carries a destructive memory action across turns so the next reply can confirm or cancel without LLM inference.' },
+      { name: 'exercise_state', type: 'ExerciseState', setBy: 'guided exercise flow + triage', lifecycle: 'persisted', merge: 'shallow dict merge', desc: 'Active guided-exercise continuity. Cleared by runtime logic when the user exits or the exercise completes.' },
+      { name: 'exercise_state.exercise_type', type: 'str | None', setBy: 'guided exercise flow', lifecycle: 'persisted', desc: 'Active exercise identifier (e.g., "grounding_5_4_3_2_1").' },
+      { name: 'exercise_state.exercise_step', type: 'int | None', setBy: 'guided exercise flow', lifecycle: 'persisted', desc: 'Current step index. Cleared when the exercise completes or the user exits.' },
+      { name: 'exercise_state.exercise_therapeutic_approach', type: 'str | None', setBy: 'guided exercise flow + triage', lifecycle: 'persisted', desc: 'Approach pinned at exercise start. Reused when guidance resumes and for narrow clarifying side-turns; psychoeducation side-turns keep the exercise active but may use a fresh top-level approach.' },
+      { name: 'memory_control.pending_action', type: 'dict | None', setBy: 'memory-control service', lifecycle: 'persisted', merge: 'shallow dict merge', desc: 'Carries a destructive memory action across turns so the next reply can confirm or cancel without LLM inference.' },
     ],
   },
   {
@@ -112,19 +111,19 @@ const GROUPS: GroupDef[] = [
   {
     id: 'diagnostics',
     label: 'Diagnostics',
-    blurb: 'Per-turn observability. _merge_dicts lets runtime stages and services write their own keys without racing.',
+    blurb: 'Per-turn observability. Runtime stages and services add their own keys through shallow dict merges or local aggregation.',
     fields: [
-      { name: 'diagnostics', type: 'Annotated[dict, _merge_dicts]', setBy: 'runtime stages + services', lifecycle: 'reducer', reducer: '_merge_dicts', desc: 'Timing, routing, and retrieval metadata.' },
-      { name: 'diagnostics.crisis_gate_ms · crisis_classifier_path', type: 'float · str', setBy: 'crisis gate', lifecycle: 'reducer', desc: 'Time spent classifying + which path decided it.' },
-      { name: 'diagnostics.load_memory_ms · retrieval_path', type: 'float · str', setBy: 'turn memory context', lifecycle: 'reducer', desc: 'Retrieval time + which path ran (hybrid_rrf / token_recall / token_recall_after_embed_error).' },
-      { name: 'diagnostics.turn_total_ms', type: 'float', setBy: 'runtime', lifecycle: 'reducer', desc: 'Total turn wall-clock, stamped outside the graph.' },
+      { name: 'diagnostics', type: 'dict[str, Any]', setBy: 'runtime stages + services', lifecycle: 'persisted', merge: 'shallow dict merge', desc: 'Timing, routing, and retrieval metadata.' },
+      { name: 'diagnostics.crisis_gate_ms · crisis_classifier_path', type: 'float · str', setBy: 'crisis gate', lifecycle: 'persisted', desc: 'Time spent classifying + which path decided it.' },
+      { name: 'diagnostics.load_memory_ms · retrieval_path', type: 'float · str', setBy: 'turn memory context', lifecycle: 'persisted', desc: 'Retrieval time + which path ran (hybrid_rrf / token_recall / token_recall_after_embed_error).' },
+      { name: 'diagnostics.turn_total_ms', type: 'float', setBy: 'runtime', lifecycle: 'persisted', desc: 'Total turn wall-clock, stamped outside the route flow.' },
     ],
   },
 ];
 
 const LC: Record<Lifecycle, { label: string; cls: string; hint: string }> = {
   input:    { label: 'input',       cls: 'lcInput',    hint: 'Set once by the caller at turn start.' },
-  reducer:  { label: 'reducer',     cls: 'lcReducer',  hint: 'Annotated with a reducer — accumulates across turns via the checkpointer.' },
+  persisted: { label: 'persisted/merged', cls: 'lcPersisted', hint: 'Saved in app-owned state snapshots; dict channels are shallow-merged by runtime helpers.' },
   turn:     { label: 'turn-scoped', cls: 'lcTurn',     hint: 'Fresh each turn. Last-write-wins.' },
   loaded:   { label: 'loaded',      cls: 'lcLoaded',   hint: 'Re-fetched each turn from the memory store.' },
 };
@@ -191,8 +190,8 @@ export default function StateFields() {
                           <p className={styles.fieldDesc}>{f.desc}</p>
                           <div className={styles.fieldMeta}>
                             <span className={[styles.pill, styles.pillSmall, styles[lc.cls]].join(' ')}>{lc.label}</span>
-                            {f.reducer && (
-                              <span className={[styles.pill, styles.pillSmall, styles.lcReducer].join(' ')}>{f.reducer}</span>
+                            {f.merge && (
+                              <span className={[styles.pill, styles.pillSmall, styles.lcPersisted].join(' ')}>{f.merge}</span>
                             )}
                             <span className={styles.fieldSetBy}>set by <code>{f.setBy}</code></span>
                           </div>
