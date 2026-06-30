@@ -120,6 +120,33 @@ class RuntimePersistenceConfig:
     text_session_backend: TextSessionBackend | object = _UNSET
     text_session_database_url: str | None | object = _UNSET
 
+    @classmethod
+    def for_shared_backend(
+        cls,
+        *,
+        memory_mode: MemoryMode,
+        persistence_backend: Literal["sqlite", "postgres"],
+        database_url: str | None,
+        text_session_backend: TextSessionBackend = "auto",
+        text_session_database_url: str | None = None,
+    ) -> RuntimePersistenceConfig:
+        """Build config when all durable stores share one backend/DSN."""
+
+        resolved_text_session_database_url = text_session_database_url or database_url
+        return cls(
+            memory_mode=memory_mode,
+            memory_backend=persistence_backend,
+            memory_database_url=database_url,
+            thread_persistence_backend=persistence_backend,
+            thread_database_url=database_url,
+            crisis_log_persistence_backend=persistence_backend,
+            crisis_log_database_url=database_url,
+            session_feedback_persistence_backend=persistence_backend,
+            session_feedback_database_url=database_url,
+            text_session_backend=text_session_backend,
+            text_session_database_url=resolved_text_session_database_url,
+        )
+
 
 @dataclass(slots=True)
 class RuntimeDependencies:

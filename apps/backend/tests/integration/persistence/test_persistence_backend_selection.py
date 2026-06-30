@@ -248,6 +248,60 @@ def test_grouped_persistence_config_can_select_postgres_memory_store() -> None:
     assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
 
 
+def test_shared_backend_persistence_config_fans_out_backend_and_database_url() -> None:
+    """Shared backend config should populate every durable runtime store."""
+
+    config = RuntimePersistenceConfig.for_shared_backend(
+        memory_mode=MemoryMode.LOCAL,
+        persistence_backend="postgres",
+        database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+    )
+
+    assert config.memory_mode is MemoryMode.LOCAL
+    assert config.memory_backend == "postgres"
+    assert config.memory_database_url == (
+        "postgresql://opencouch:opencouch@postgres:5432/opencouch"
+    )
+    assert config.thread_persistence_backend == "postgres"
+    assert config.thread_database_url == (
+        "postgresql://opencouch:opencouch@postgres:5432/opencouch"
+    )
+    assert config.crisis_log_persistence_backend == "postgres"
+    assert config.crisis_log_database_url == (
+        "postgresql://opencouch:opencouch@postgres:5432/opencouch"
+    )
+    assert config.session_feedback_persistence_backend == "postgres"
+    assert config.session_feedback_database_url == (
+        "postgresql://opencouch:opencouch@postgres:5432/opencouch"
+    )
+    assert config.text_session_backend == "auto"
+    assert config.text_session_database_url == (
+        "postgresql://opencouch:opencouch@postgres:5432/opencouch"
+    )
+
+
+def test_shared_backend_persistence_config_accepts_text_session_url_override() -> None:
+    """SDK sessions can use a distinct SQLAlchemy URL when configured."""
+
+    config = RuntimePersistenceConfig.for_shared_backend(
+        memory_mode=MemoryMode.LOCAL,
+        persistence_backend="postgres",
+        database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+        text_session_backend="sqlalchemy",
+        text_session_database_url=(
+            "postgresql+asyncpg://opencouch:opencouch@postgres:5432/opencouch"
+        ),
+    )
+
+    assert config.text_session_backend == "sqlalchemy"
+    assert config.text_session_database_url == (
+        "postgresql+asyncpg://opencouch:opencouch@postgres:5432/opencouch"
+    )
+    assert config.memory_database_url == (
+        "postgresql://opencouch:opencouch@postgres:5432/opencouch"
+    )
+
+
 def test_partial_grouped_persistence_config_preserves_legacy_thread_backend() -> None:
     """Unset grouped persistence fields should not clobber legacy kwargs."""
 
