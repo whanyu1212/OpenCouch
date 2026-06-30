@@ -19,8 +19,8 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
-from agent.audit.capture import capture_crisis_outcome
 from agent.audit.models import CrisisResourceLookupStatus
+from agent.runtime.finalization import finalize_successful_turn
 from agent.memory.modes import MemoryMode
 from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.memory.store import MemoryStore
@@ -440,7 +440,6 @@ class VoiceRuntimeFacade:
                     state,
                     session_transcript_soft_limit=None,
                 )
-                await self._state_store.save_state(thread_id, state)
                 post_turn_context = self._runtime._context_for_turn(
                     thread_id=thread_id,
                     message=state.get("message", ""),
@@ -450,16 +449,17 @@ class VoiceRuntimeFacade:
                     response_llm_client=llm_client,
                     track_session=False,
                 )
-                if transition.metadata.route == "crisis":
-                    await capture_crisis_outcome(state, post_turn_context)
-                await self._runtime._ensure_openai_sdk_turn_recorded(
-                    thread_id,
+                await finalize_successful_turn(
+                    thread_id=thread_id,
                     user_message=user_text,
                     final_state=state,
-                )
-                await self._active_session_manager.clear_active_session_mutation(
-                    thread_id,
-                    mutation_token,
+                    workflow_context=post_turn_context,
+                    state_store=self._state_store,
+                    active_session_manager=self._active_session_manager,
+                    mutation_token=mutation_token,
+                    ensure_sdk_turn_recorded=(
+                        self._runtime._ensure_openai_sdk_turn_recorded
+                    ),
                 )
                 trace_event(
                     VOICE_RESPONSE_FINALIZED,
