@@ -26,6 +26,7 @@ from agent.runtime.session.active_session import (
     PostgresActiveSessionStore,
     SqliteActiveSessionStore,
 )
+from agent.runtime.postgres import require_postgres_database_url
 from agent.runtime.session_store import (
     TextSessionBackend,
     TextSessionStore,
@@ -138,10 +139,16 @@ def build_runtime_resources(
         session_feedback_persistence_backend=session_feedback_persistence_backend,
     )
 
+    resolved_thread_database_url = (
+        require_postgres_database_url(thread_database_url)
+        if backend_selection.thread_persistence_backend == "postgres"
+        else thread_database_url
+    )
+
     state_store = create_runtime_state_store(
         backend=backend_selection.thread_persistence_backend,
         sqlite_path=resolved_runtime_sqlite_path,
-        database_url=thread_database_url,
+        database_url=resolved_thread_database_url,
     )
     text_session_store = create_text_session_store(
         memory_mode=memory_mode,
@@ -175,12 +182,9 @@ def build_runtime_resources(
     )
 
     if backend_selection.thread_persistence_backend == "postgres":
-        if not thread_database_url:
-            raise ValueError(
-                "thread_database_url is required when "
-                "thread_persistence_backend='postgres'"
-            )
-        active_session_store = PostgresActiveSessionStore(dsn=thread_database_url)
+        active_session_store = PostgresActiveSessionStore(
+            dsn=resolved_thread_database_url
+        )
     else:
         active_session_store = SqliteActiveSessionStore(
             sqlite_path=resolved_runtime_sqlite_path
@@ -195,7 +199,7 @@ def build_runtime_resources(
     return RuntimeResources(
         sqlite_path=resolved_runtime_sqlite_path,
         thread_persistence_backend=backend_selection.thread_persistence_backend,
-        thread_database_url=thread_database_url,
+        thread_database_url=resolved_thread_database_url,
         state_store=state_store,
         text_session_store=text_session_store,
         memory_store=resolved_memory_store,

@@ -322,7 +322,7 @@ def test_postgres_memory_backend_requires_database_url() -> None:
     """Selecting the Postgres memory backend without a DSN should fail
     fast at runtime construction rather than later on first query."""
 
-    with pytest.raises(ValueError, match="memory_database_url"):
+    with pytest.raises(ValueError, match="OPENCOUCH_MEMORY_DATABASE_URL"):
         PersistentAgentRuntime(
             memory_mode=MemoryMode.LOCAL,
             memory_backend="postgres",
@@ -374,7 +374,7 @@ def test_postgres_crisis_log_backend_requires_database_url() -> None:
     """Selecting the Postgres crisis-log backend without a DSN should fail
     fast at runtime construction rather than later on first write."""
 
-    with pytest.raises(ValueError, match="crisis_log_database_url"):
+    with pytest.raises(ValueError, match="OPENCOUCH_MEMORY_DATABASE_URL"):
         PersistentAgentRuntime(
             memory_mode=MemoryMode.LOCAL,
             crisis_log_persistence_backend="postgres",
@@ -584,7 +584,7 @@ def test_postgres_session_feedback_backend_requires_database_url() -> None:
     """Selecting the Postgres feedback backend without a DSN should fail
     fast at runtime construction rather than later on first write."""
 
-    with pytest.raises(ValueError, match="session_feedback_database_url"):
+    with pytest.raises(ValueError, match="OPENCOUCH_MEMORY_DATABASE_URL"):
         PersistentAgentRuntime(
             memory_mode=MemoryMode.LOCAL,
             session_feedback_persistence_backend="postgres",

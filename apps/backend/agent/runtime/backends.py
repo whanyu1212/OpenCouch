@@ -24,6 +24,7 @@ from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.memory.modes import MemoryMode
 from agent.memory.store.postgres import PostgresMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
+from agent.runtime.postgres import require_postgres_database_url
 
 PersistenceBackend = Literal["sqlite", "postgres"]
 RuntimeStoreBackend = Literal["memory", "sqlite", "postgres"]
@@ -116,11 +117,7 @@ def create_memory_store(
     if memory_backend == "memory":
         return OpenCouchMemoryStore()
     if memory_backend == "postgres":
-        if not memory_database_url:
-            raise ValueError(
-                "memory_database_url is required when memory_backend='postgres'"
-            )
-        return PostgresMemoryStore(memory_database_url)
+        return PostgresMemoryStore(require_postgres_database_url(memory_database_url))
     return SqliteMemoryStore(memory_sqlite_path)
 
 
@@ -154,12 +151,9 @@ def create_crisis_log_backend(
     if crisis_log_persistence_backend == "memory":
         return InMemoryCrisisLogBackend()
     if crisis_log_persistence_backend == "postgres":
-        if not crisis_log_database_url:
-            raise ValueError(
-                "crisis_log_database_url is required when "
-                "crisis_log_persistence_backend='postgres'"
-            )
-        return PostgresCrisisLogBackend(crisis_log_database_url)
+        return PostgresCrisisLogBackend(
+            require_postgres_database_url(crisis_log_database_url)
+        )
     return SqliteCrisisLogBackend(crisis_log_sqlite_path)
 
 
@@ -193,12 +187,9 @@ def create_session_feedback_backend(
     if session_feedback_persistence_backend == "memory":
         return InMemorySessionFeedbackBackend()
     if session_feedback_persistence_backend == "postgres":
-        if not session_feedback_database_url:
-            raise ValueError(
-                "session_feedback_database_url is required when "
-                "session_feedback_persistence_backend='postgres'"
-            )
-        return PostgresSessionFeedbackBackend(session_feedback_database_url)
+        return PostgresSessionFeedbackBackend(
+            require_postgres_database_url(session_feedback_database_url)
+        )
     return SqliteSessionFeedbackBackend(feedback_sqlite_path)
 
 
