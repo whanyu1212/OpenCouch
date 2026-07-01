@@ -51,6 +51,7 @@ from agent.runtime import (
     RuntimePersistenceConfig,
     RuntimeStoragePaths,
 )
+from tests.support.persistence import in_memory_runtime_storage_paths
 
 
 # ─── Default-path constants ────────────────────────────────────────────
@@ -634,9 +635,7 @@ async def test_aexit_closes_feedback_backend() -> None:
 
     backend = _CountingBackend()
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         session_feedback_backend=backend,
     )
     async with runtime:
@@ -661,9 +660,7 @@ async def test_aenter_prewarms_embedding_provider_and_text_runtime() -> None:
     embedding_provider = _WarmableEmbeddingProvider()
 
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         embedding_provider=embedding_provider,
         finalize_active_sessions_on_close=False,
     )

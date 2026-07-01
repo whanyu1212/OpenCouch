@@ -35,6 +35,7 @@ from agent.runtime import PersistentAgentRuntime
 from api.models import ApiMemoryMode
 from llm.base import BaseLLMClient, StructuredResponseT
 from tests.support.api_selection import runtime_selection
+from tests.support.persistence import in_memory_runtime_storage_paths
 
 
 class _FakeResponseTierLLM(BaseLLMClient):
@@ -189,10 +190,7 @@ async def runtime():
 
     llm = _FakeAPILLM()
     rt = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         default_llm_client=llm,
     )
     async with rt:
@@ -1079,10 +1077,7 @@ class TestThreads:
         from api.routes import threads as thread_routes
 
         runtime = PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
-            feedback_sqlite_path=":memory:",
+            storage_paths=in_memory_runtime_storage_paths(),
             memory_mode=MemoryMode.INCOGNITO,
             default_llm_client=_FakeAPILLM(),
         )

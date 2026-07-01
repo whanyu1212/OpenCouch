@@ -247,6 +247,17 @@ def runtime_storage_paths(tmp_path: Path) -> RuntimeStoragePaths:
     )
 
 
+def in_memory_runtime_storage_paths() -> RuntimeStoragePaths:
+    """Return grouped in-memory SQLite paths for runtime tests."""
+
+    return RuntimeStoragePaths(
+        sqlite_path=":memory:",
+        memory_sqlite_path=":memory:",
+        crisis_log_sqlite_path=":memory:",
+        feedback_sqlite_path=":memory:",
+    )
+
+
 def runtime_paths(tmp_path: Path) -> dict[str, Path]:
     """Return legacy SQLite path kwargs for older persistence runtime tests.
 
