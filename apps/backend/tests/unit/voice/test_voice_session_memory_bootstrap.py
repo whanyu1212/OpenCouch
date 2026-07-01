@@ -14,6 +14,7 @@ import pytest
 
 from agent.memory.modes import MemoryMode
 from agent.runtime import PersistentAgentRuntime
+from tests.support.persistence import in_memory_runtime_storage_paths
 from agent.voice import runtime_facade as facade_module
 from agent.voice.runtime_facade import VoiceRuntimeFacade
 
@@ -117,10 +118,7 @@ async def test_voice_bootstrap_real_runtime_uses_thread_id_without_user_utteranc
     monkeypatch.setattr(facade_module, "aget_procedural_profile", fake_profile)
 
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
     async with runtime:

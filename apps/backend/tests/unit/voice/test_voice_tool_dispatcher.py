@@ -18,7 +18,10 @@ from agent.voice.tools import (
     _registered_voice_tool_names,
     execute_voice_tool_call,
 )
-from tests.support.persistence import FakeCrossRestartLLM
+from tests.support.persistence import (
+    FakeCrossRestartLLM,
+    in_memory_runtime_storage_paths,
+)
 
 
 class _VoiceFacadeThatMustNotBuildContext:
@@ -78,10 +81,7 @@ _MUTATOR_CASES = (
 @pytest.mark.asyncio
 async def test_voice_tool_dispatcher_executes_memory_status() -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.INCOGNITO,
     )
     async with runtime:
@@ -227,10 +227,7 @@ async def test_voice_tool_dispatcher_uses_transcript_when_user_message_is_blank(
     None
 ):
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.INCOGNITO,
     )
     async with runtime:
@@ -254,10 +251,7 @@ async def test_voice_tool_dispatcher_executes_grounded_lookup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.INCOGNITO,
     )
 
@@ -344,10 +338,7 @@ async def test_voice_mutator_refuses_without_owner_or_session_id() -> None:
 @pytest.mark.asyncio
 async def test_voice_tool_dispatcher_sets_proactive_memory_recall() -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
     async with runtime:
@@ -372,10 +363,7 @@ async def test_voice_tool_dispatcher_sets_proactive_memory_recall() -> None:
 @pytest.mark.asyncio
 async def test_voice_mutator_verifies_quote_from_recent_user_transcript() -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
     async with runtime:
@@ -407,10 +395,7 @@ async def test_voice_mutator_verifies_quote_from_recent_user_transcript() -> Non
 @pytest.mark.asyncio
 async def test_voice_mutator_verifies_quote_with_punctuation_difference() -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
     async with runtime:
@@ -455,10 +440,7 @@ async def test_voice_mutator_refuses_too_short_user_quote() -> None:
 @pytest.mark.asyncio
 async def test_voice_mutator_verifies_eligible_user_quote() -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
     async with runtime:
@@ -480,10 +462,7 @@ async def test_voice_mutator_verifies_eligible_user_quote() -> None:
 @pytest.mark.asyncio
 async def test_voice_tool_dispatcher_loads_therapeutic_response_skill() -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.INCOGNITO,
     )
     async with runtime:
@@ -509,10 +488,7 @@ async def test_voice_tool_dispatcher_loads_therapeutic_response_skill() -> None:
 @pytest.mark.asyncio
 async def test_voice_tool_dispatcher_loads_crisis_support_template() -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.INCOGNITO,
     )
     async with runtime:
@@ -592,10 +568,7 @@ async def test_crisis_support_template_reuses_lookup_across_separate_tool_calls(
     """
 
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.INCOGNITO,
     )
 
@@ -662,10 +635,7 @@ async def test_voice_crisis_lookup_does_not_bleed_into_a_later_turn() -> None:
     """
 
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.INCOGNITO,
     )
 
@@ -725,10 +695,7 @@ async def test_voice_crisis_lookup_does_not_bleed_into_a_later_turn() -> None:
 @pytest.mark.asyncio
 async def test_voice_tool_dispatcher_rejects_unknown_tool() -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
     )
     async with runtime:
         with pytest.raises(ValueError, match="Unsupported voice tool"):

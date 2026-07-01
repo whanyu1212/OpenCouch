@@ -8,6 +8,7 @@ from httpx import ASGITransport, AsyncClient
 
 from agent.memory.modes import MemoryMode
 from agent.runtime import PersistentAgentRuntime
+from tests.support.persistence import in_memory_runtime_storage_paths
 from api.dependencies import get_llm_client
 from api.router import api_router
 from api.routes import voice as voice_routes
@@ -89,10 +90,7 @@ async def test_incognito_voice_turn_request_records_ephemeral_runtime_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.INCOGNITO,
     )
     app = FastAPI()
@@ -132,10 +130,7 @@ async def test_persistent_voice_turn_request_still_persists_runtime_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
     app = FastAPI()
