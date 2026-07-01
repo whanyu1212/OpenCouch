@@ -17,15 +17,13 @@ import pytest
 
 from agent.memory.modes import MemoryMode
 from agent.runtime import PersistentAgentRuntime
+from tests.support.persistence import in_memory_runtime_storage_paths
 from agent.voice.runtime_facade import VoiceRuntimeFacade
 
 
 def test_runtime_exposes_voice_facade() -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.INCOGNITO,
     )
     assert isinstance(runtime.voice, VoiceRuntimeFacade)
@@ -34,10 +32,7 @@ def test_runtime_exposes_voice_facade() -> None:
 @pytest.mark.asyncio
 async def test_voice_facade_shares_thread_lock_with_runtime() -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.INCOGNITO,
     )
     async with runtime:

@@ -16,7 +16,10 @@ from api.dependencies import get_llm_client
 from api.router import api_router
 from api.routes import voice as voice_routes
 from tests.support.api_selection import runtime_selection
-from tests.support.persistence import FakeCrossRestartLLM
+from tests.support.persistence import (
+    FakeCrossRestartLLM,
+    in_memory_runtime_storage_paths,
+)
 
 
 class _VoiceCrisisAuditLLM(FakeCrossRestartLLM):
@@ -62,10 +65,7 @@ class _VoiceCrisisAuditLLM(FakeCrossRestartLLM):
 @pytest.mark.asyncio
 async def test_record_voice_turn_persists_thread_history() -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.INCOGNITO,
     )
 
@@ -94,10 +94,7 @@ async def test_voice_turn_endpoint_records_transcript(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
 
@@ -153,10 +150,7 @@ async def test_voice_turn_endpoint_infers_route_and_tool_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
 
@@ -224,10 +218,7 @@ async def test_voice_crisis_turn_writes_one_audit_record() -> None:
     """
 
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
 
@@ -279,10 +270,7 @@ async def test_voice_non_crisis_followup_does_not_reaudit_prior_crisis() -> None
     """A later ordinary voice turn must not re-audit stale prior crisis state."""
 
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
 
@@ -328,10 +316,7 @@ async def test_voice_crisis_capture_runs_before_sdk_history_failure(
     """A saved voice crisis turn should still audit if SDK bookkeeping fails."""
 
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
         finalize_active_sessions_on_close=False,
     )
@@ -376,10 +361,7 @@ async def test_non_crisis_voice_turn_writes_no_audit_record() -> None:
     """An ordinary voice turn must not produce a crisis audit record."""
 
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
 
@@ -411,10 +393,7 @@ async def test_post_turn_voice_classifier_writes_missed_crisis_audit_record() ->
     """A post-turn voice classifier miss is audited without changing latency path."""
 
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
     llm = _VoiceCrisisAuditLLM(
@@ -464,10 +443,7 @@ async def test_post_turn_voice_classifier_writes_no_record_for_safe_turn() -> No
     """A safe post-turn classifier result must not create audit noise."""
 
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
     llm = FakeCrossRestartLLM()
@@ -494,10 +470,7 @@ async def test_post_turn_voice_classifier_skips_existing_crisis_route() -> None:
     """Realtime crisis routing already produces the only audit record."""
 
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
     llm = _VoiceCrisisAuditLLM(level=3)
@@ -539,10 +512,7 @@ async def test_post_turn_safety_drain_waits_for_background_classifier() -> None:
     """The voice facade exposes a deterministic drain for scheduled checks."""
 
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
     llm = _VoiceCrisisAuditLLM(level=2, delay_seconds=0.05)
@@ -574,10 +544,7 @@ async def test_voice_crisis_turn_records_lookup_error_status() -> None:
     """
 
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
 
@@ -615,10 +582,7 @@ async def test_voice_end_endpoint_uses_runtime_session_finalization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
 
@@ -670,10 +634,7 @@ async def test_voice_end_endpoint_summarizes_persistent_voice_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
     fake_llm = FakeCrossRestartLLM()
@@ -739,10 +700,7 @@ async def test_voice_end_with_positive_feedback_writes_record(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
 
@@ -793,10 +751,7 @@ async def test_incognito_voice_end_with_feedback_scrubs_user_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.INCOGNITO,
     )
 
@@ -848,10 +803,7 @@ async def test_voice_end_rejects_invalid_feedback_label(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=MemoryMode.LOCAL,
     )
 
