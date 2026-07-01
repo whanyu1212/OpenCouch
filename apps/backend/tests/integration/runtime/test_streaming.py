@@ -44,6 +44,7 @@ from agent.models import (
 )
 from agent.runtime import PersistentAgentRuntime
 from llm.base import BaseLLMClient, StructuredResponseT
+from tests.support.persistence import in_memory_runtime_storage_paths
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -183,9 +184,7 @@ class TestRunTurnStreamStages:
         """No-client deterministic turns should stay local and persist transcript state."""
 
         async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+            storage_paths=in_memory_runtime_storage_paths(),
             text_session_backend="disabled",
         ) as runtime:
             events: list[StreamEvent] = []
@@ -223,9 +222,7 @@ class TestRunTurnStreamStages:
         """
 
         async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             statuses, chunks, ready, done = await _collect_stream(
                 runtime, thread_id="t-stream-1", message="hi there"
@@ -250,9 +247,7 @@ class TestRunTurnStreamStages:
         """The DoneEvent must be the terminal event, never interleaved."""
 
         async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             events: list[StreamEvent] = []
             async for event in runtime.run_turn_stream(
@@ -275,9 +270,7 @@ class TestRunTurnStreamStages:
         """The reply-ready marker should surface before terminal completion."""
 
         async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             events: list[StreamEvent] = []
             async for event in runtime.run_turn_stream(
@@ -311,9 +304,7 @@ class TestRunTurnStreamDiagnostics:
         """Core runtime stages stamp timing keys into diagnostics."""
 
         async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-3", message="hi"
@@ -342,9 +333,7 @@ class TestRunTurnStreamDiagnostics:
         """
 
         async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-4", message="hi"
@@ -384,9 +373,7 @@ class TestRunTurnStreamDiagnostics:
         """
 
         async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-post-finalize", message="hi"
@@ -405,9 +392,7 @@ class TestRunTurnStreamDiagnostics:
         """Turn memory context retrieval-count diagnostics flow through."""
 
         async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-5", message="hi"
@@ -434,9 +419,7 @@ class TestRunTurnStreamSessionTracking:
         """
 
         async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             # Before: no start time tracked
             assert not runtime._session_tracker.has_tracking("t-stream-6")
@@ -454,9 +437,7 @@ class TestRunTurnStreamSessionTracking:
         """The stream path updates max-crisis tracking like run_turn does."""
 
         async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             await _collect_stream(runtime, thread_id="t-stream-7", message="hi")
 
@@ -480,9 +461,7 @@ class TestRunTurnStreamParity:
         """
 
         async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             monolithic = await runtime.run_turn(
                 thread_id="t-parity-mono",

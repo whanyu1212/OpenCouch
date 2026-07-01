@@ -32,7 +32,10 @@ from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
 from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.runtime import PersistentAgentRuntime
-from tests.support.persistence import FakeCrossRestartLLM
+from tests.support.persistence import (
+    FakeCrossRestartLLM,
+    in_memory_runtime_storage_paths,
+)
 
 
 # ─── Failing-backend fixture ─────────────────────────────────────────
@@ -66,10 +69,7 @@ _: type[SessionFeedbackBackend] = _FailingFeedbackBackend  # type: ignore[assign
 def _runtime(memory_mode: MemoryMode = MemoryMode.LOCAL) -> PersistentAgentRuntime:
     """Construct a runtime that keeps everything in memory."""
     return PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         memory_mode=memory_mode,
     )
 
@@ -195,10 +195,7 @@ async def test_backend_failure_returns_none_and_does_not_raise(
     caller (CLI or API handler) continues to summarization."""
 
     rt = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
+        storage_paths=in_memory_runtime_storage_paths(),
         session_feedback_backend=_FailingFeedbackBackend(),  # type: ignore[arg-type]
     )
     async with rt:
