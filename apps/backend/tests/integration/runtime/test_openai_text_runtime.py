@@ -17,7 +17,7 @@ from tests.support.openai_text import (
     FakeOpenAISDKRunner,
     ScriptedOpenAITextRouteLLM,
 )
-from tests.support.persistence import FakeCrossRestartLLM, runtime_paths
+from tests.support.persistence import FakeCrossRestartLLM, runtime_storage_paths
 
 
 class _SessionInspectingOpenAIRunner(FakeOpenAISDKRunner):
@@ -139,7 +139,7 @@ async def test_persistent_runtime_openai_safe_turn_persists_transcript(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-1",
@@ -187,7 +187,7 @@ async def test_persistent_runtime_disabled_sdk_session_keeps_legacy_prompt_histo
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
         text_session_backend="disabled",
     ) as runtime:
         await runtime.run_turn(
@@ -223,7 +223,7 @@ async def test_persistent_runtime_seeds_empty_openai_sdk_session_from_state(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-seed-sdk",
@@ -269,7 +269,7 @@ async def test_persistent_runtime_stream_seeds_empty_openai_sdk_session_from_sta
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-stream-seed-sdk",
@@ -329,7 +329,7 @@ async def test_persistent_runtime_openai_memory_status_uses_sdk_tool(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-memory-control",
@@ -370,7 +370,7 @@ async def test_persistent_runtime_openai_grounded_lookup_uses_sdk_tool(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-grounded",
@@ -418,7 +418,7 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-crisis",
@@ -473,7 +473,7 @@ async def test_crisis_capture_runs_before_sdk_history_failure(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
         finalize_active_sessions_on_close=False,
     ) as runtime:
 
@@ -521,7 +521,7 @@ async def test_streaming_context_is_created_after_mutation_setup(
             return None
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
         finalize_active_sessions_on_close=False,
     ) as runtime:
         context_calls = 0
@@ -562,7 +562,7 @@ async def test_persistent_runtime_openai_crisis_uses_sdk_session_not_prompt_hist
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-crisis-boundary",
@@ -602,7 +602,7 @@ async def test_persistent_runtime_crisis_response_llm_omits_sdk_session_history(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-crisis-response-llm-boundary",
@@ -640,7 +640,7 @@ async def test_persistent_runtime_openai_level_one_uses_crisis_clarification(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-crisis-check",
@@ -681,7 +681,7 @@ async def test_persistent_runtime_openai_low_confidence_triage_uses_clarifying_r
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-low-confidence-triage",
@@ -725,7 +725,7 @@ async def test_persistent_runtime_openai_retriage_sees_prior_low_confidence_cont
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-low-confidence-loop",
@@ -773,7 +773,7 @@ async def test_persistent_runtime_openai_low_confidence_triage_preserves_pending
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-low-confidence-memory",
@@ -852,7 +852,7 @@ async def test_persistent_runtime_openai_low_confidence_triage_preserves_active_
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         first = await runtime.run_turn(
             thread_id="thread-low-confidence-exercise",
@@ -930,7 +930,7 @@ async def test_persistent_runtime_openai_streaming_surface(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         events = [
             event
@@ -969,7 +969,7 @@ async def test_streaming_crisis_capture_precedes_response_ready(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         stream = runtime.run_turn_stream(
             thread_id="thread-stream-crisis-ready",
@@ -1007,7 +1007,7 @@ async def test_persistent_runtime_openai_memory_control_streaming_surface(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         events = [
             event
@@ -1047,7 +1047,7 @@ async def test_persistent_runtime_guided_response_llm_omits_sdk_session_history(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
+        storage_paths=runtime_storage_paths(tmp_path),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-guided-response-llm-boundary",
