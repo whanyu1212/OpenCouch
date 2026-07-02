@@ -780,19 +780,7 @@ class PersistentAgentRuntime:
             resolved_behavior_config.speculative_memory_prefetch
         )
 
-        self.memory_mode = memory_mode
-        self._default_llm_client = default_llm_client
-        self._session_timeout = session_timeout
-        self._session_sweep_interval_seconds = max(
-            1.0, float(session_sweep_interval_seconds)
-        )
-        self._finalize_active_sessions_on_close = finalize_active_sessions_on_close
-        self._auto_finalize_excluded = auto_finalize_excluded
-        self._speculative_memory_prefetch = speculative_memory_prefetch
-        self._thread_llm_clients: dict[str, BaseLLMClient | None] = {}
-        self._session_tracker = RuntimeSessionTracker()
-
-        self._resources: RuntimeResources = build_runtime_resources(
+        runtime_resources = build_runtime_resources(
             memory_mode=memory_mode,
             sqlite_path=sqlite_path,
             text_session_sqlite_path=text_session_sqlite_path,
@@ -815,19 +803,57 @@ class PersistentAgentRuntime:
             session_feedback_database_url=session_feedback_database_url,
             feedback_sqlite_path=feedback_sqlite_path,
             embedding_provider=embedding_provider,
-            session_timeout=self._session_timeout,
+            session_timeout=session_timeout,
         )
-        self.sqlite_path = self._resources.sqlite_path
-        self._thread_persistence_backend = self._resources.thread_persistence_backend
-        self._thread_database_url = self._resources.thread_database_url
-        self._state_store = self._resources.state_store
-        self._text_session_store = self._resources.text_session_store
-        self._memory_store = self._resources.memory_store
-        self._crisis_log_backend = self._resources.crisis_log_backend
-        self._session_feedback_backend = self._resources.session_feedback_backend
-        self._embedding_provider = self._resources.embedding_provider
-        self._active_session_store = self._resources.active_session_store
-        self._active_session_manager = self._resources.active_session_manager
+        self._wire_runtime_resources(
+            resources=runtime_resources,
+            memory_mode=memory_mode,
+            default_llm_client=default_llm_client,
+            session_timeout=session_timeout,
+            session_sweep_interval_seconds=session_sweep_interval_seconds,
+            finalize_active_sessions_on_close=finalize_active_sessions_on_close,
+            auto_finalize_excluded=auto_finalize_excluded,
+            speculative_memory_prefetch=speculative_memory_prefetch,
+        )
+
+    def _wire_runtime_resources(
+        self,
+        *,
+        resources: RuntimeResources,
+        memory_mode: MemoryMode,
+        default_llm_client: BaseLLMClient | None,
+        session_timeout: timedelta,
+        session_sweep_interval_seconds: float,
+        finalize_active_sessions_on_close: bool,
+        auto_finalize_excluded: Callable[[str], bool] | None,
+        speculative_memory_prefetch: bool,
+    ) -> None:
+        """Attach runtime resources and dependent services."""
+
+        self.memory_mode = memory_mode
+        self._default_llm_client = default_llm_client
+        self._session_timeout = session_timeout
+        self._session_sweep_interval_seconds = max(
+            1.0, float(session_sweep_interval_seconds)
+        )
+        self._finalize_active_sessions_on_close = finalize_active_sessions_on_close
+        self._auto_finalize_excluded = auto_finalize_excluded
+        self._speculative_memory_prefetch = speculative_memory_prefetch
+        self._thread_llm_clients: dict[str, BaseLLMClient | None] = {}
+        self._session_tracker = RuntimeSessionTracker()
+
+        self._resources: RuntimeResources = resources
+        self.sqlite_path = resources.sqlite_path
+        self._thread_persistence_backend = resources.thread_persistence_backend
+        self._thread_database_url = resources.thread_database_url
+        self._state_store = resources.state_store
+        self._text_session_store = resources.text_session_store
+        self._memory_store = resources.memory_store
+        self._crisis_log_backend = resources.crisis_log_backend
+        self._session_feedback_backend = resources.session_feedback_backend
+        self._embedding_provider = resources.embedding_provider
+        self._active_session_store = resources.active_session_store
+        self._active_session_manager = resources.active_session_manager
         self._thread_state_reader = ThreadStateReader(
             state_store=self._state_store,
             text_session_store=self._text_session_store,
