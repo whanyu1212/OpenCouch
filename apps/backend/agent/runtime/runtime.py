@@ -429,6 +429,69 @@ class RuntimeDependencies:
 
 
 @dataclass(slots=True)
+class _ResolvedRuntimeDependencies:
+    """Constructor-ready runtime dependency overrides."""
+
+    memory_store: MemoryStore | None
+    crisis_log_backend: CrisisLogBackend | None
+    session_feedback_backend: SessionFeedbackBackend | None
+    embedding_provider: EmbeddingProvider | None
+    default_llm_client: BaseLLMClient | None
+    auto_finalize_excluded: Callable[[str], bool] | None
+
+
+def _resolve_runtime_dependencies(
+    *,
+    dependencies: RuntimeDependencies | None,
+    memory_store: MemoryStore | None,
+    crisis_log_backend: CrisisLogBackend | None,
+    session_feedback_backend: SessionFeedbackBackend | None,
+    embedding_provider: EmbeddingProvider | None,
+    default_llm_client: BaseLLMClient | None,
+    auto_finalize_excluded: Callable[[str], bool] | None,
+) -> _ResolvedRuntimeDependencies:
+    """Resolve legacy and grouped runtime dependency overrides."""
+
+    if dependencies is not None:
+        if dependencies.memory_store is not _UNSET:
+            memory_store = cast(MemoryStore | None, dependencies.memory_store)
+        if dependencies.crisis_log_backend is not _UNSET:
+            crisis_log_backend = cast(
+                CrisisLogBackend | None,
+                dependencies.crisis_log_backend,
+            )
+        if dependencies.session_feedback_backend is not _UNSET:
+            session_feedback_backend = cast(
+                SessionFeedbackBackend | None,
+                dependencies.session_feedback_backend,
+            )
+        if dependencies.embedding_provider is not _UNSET:
+            embedding_provider = cast(
+                EmbeddingProvider | None,
+                dependencies.embedding_provider,
+            )
+        if dependencies.default_llm_client is not _UNSET:
+            default_llm_client = cast(
+                BaseLLMClient | None,
+                dependencies.default_llm_client,
+            )
+        if dependencies.auto_finalize_excluded is not _UNSET:
+            auto_finalize_excluded = cast(
+                Callable[[str], bool] | None,
+                dependencies.auto_finalize_excluded,
+            )
+
+    return _ResolvedRuntimeDependencies(
+        memory_store=memory_store,
+        crisis_log_backend=crisis_log_backend,
+        session_feedback_backend=session_feedback_backend,
+        embedding_provider=embedding_provider,
+        default_llm_client=default_llm_client,
+        auto_finalize_excluded=auto_finalize_excluded,
+    )
+
+
+@dataclass(slots=True)
 class RuntimeBehaviorConfig:
     """Grouped operational behavior settings for the runtime."""
 
@@ -616,34 +679,21 @@ class PersistentAgentRuntime:
             resolved_persistence_config.text_session_database_url
         )
 
-        if dependencies is not None:
-            if dependencies.memory_store is not _UNSET:
-                memory_store = cast(MemoryStore | None, dependencies.memory_store)
-            if dependencies.crisis_log_backend is not _UNSET:
-                crisis_log_backend = cast(
-                    CrisisLogBackend | None,
-                    dependencies.crisis_log_backend,
-                )
-            if dependencies.session_feedback_backend is not _UNSET:
-                session_feedback_backend = cast(
-                    SessionFeedbackBackend | None,
-                    dependencies.session_feedback_backend,
-                )
-            if dependencies.embedding_provider is not _UNSET:
-                embedding_provider = cast(
-                    EmbeddingProvider | None,
-                    dependencies.embedding_provider,
-                )
-            if dependencies.default_llm_client is not _UNSET:
-                default_llm_client = cast(
-                    BaseLLMClient | None,
-                    dependencies.default_llm_client,
-                )
-            if dependencies.auto_finalize_excluded is not _UNSET:
-                auto_finalize_excluded = cast(
-                    Callable[[str], bool] | None,
-                    dependencies.auto_finalize_excluded,
-                )
+        resolved_dependencies = _resolve_runtime_dependencies(
+            dependencies=dependencies,
+            memory_store=memory_store,
+            crisis_log_backend=crisis_log_backend,
+            session_feedback_backend=session_feedback_backend,
+            embedding_provider=embedding_provider,
+            default_llm_client=default_llm_client,
+            auto_finalize_excluded=auto_finalize_excluded,
+        )
+        memory_store = resolved_dependencies.memory_store
+        crisis_log_backend = resolved_dependencies.crisis_log_backend
+        session_feedback_backend = resolved_dependencies.session_feedback_backend
+        embedding_provider = resolved_dependencies.embedding_provider
+        default_llm_client = resolved_dependencies.default_llm_client
+        auto_finalize_excluded = resolved_dependencies.auto_finalize_excluded
 
         if behavior_config is not None:
             if behavior_config.text_session_create_tables is not _UNSET:
