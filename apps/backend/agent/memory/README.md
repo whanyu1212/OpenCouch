@@ -49,7 +49,7 @@ There are 3 main memory shapes:
 
 - [store/](./store): `MemoryStore` protocol, `StoreRecord`, in-memory `OpenCouchMemoryStore`, namespace conventions, and search thresholds.
 - [store/postgres.py](./store/postgres.py): primary durable Postgres implementation (default backend).
-- [store/sqlite.py](./store/sqlite.py): SQLite fallback backend, selectable via `OPENCOUCH_PERSISTENCE_BACKEND=sqlite`.
+- [store/sqlite.py](./store/sqlite.py): legacy SQLite fallback backend, selectable only with `OPENCOUCH_PERSISTENCE_BACKEND=sqlite` plus `OPENCOUCH_ALLOW_LEGACY_SQLITE=1`.
 - [modes.py](./modes.py): `MemoryMode` enum used by the runtime to choose in-memory vs durable behavior.
 
 ### Retrieval
@@ -150,7 +150,7 @@ This package is mostly infrastructure. The main runtime integration points are o
 
 ## Persistence Backend
 
-Postgres is the default durable backend (see `config.py:DEFAULT_PERSISTENCE_BACKEND`). SQLite remains a supported fallback selectable via `OPENCOUCH_PERSISTENCE_BACKEND=sqlite` for local-only installs without Docker. The in-memory `OpenCouchMemoryStore` is used for `INCOGNITO` mode and tests.
+Postgres is the default durable backend (see `config.py:DEFAULT_PERSISTENCE_BACKEND`). SQLite is a legacy durable fallback and requires both `OPENCOUCH_PERSISTENCE_BACKEND=sqlite` and `OPENCOUCH_ALLOW_LEGACY_SQLITE=1` when selected through runtime configuration. The in-memory `OpenCouchMemoryStore` is used for `INCOGNITO` mode and tests.
 
 ## Practical Boundary
 

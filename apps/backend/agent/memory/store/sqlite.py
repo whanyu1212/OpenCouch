@@ -3,9 +3,10 @@
 :class:`SqliteMemoryStore` provides the same async interface as
 :class:`agent.memory.store.OpenCouchMemoryStore`, but persists records
 through an aiosqlite connection so memory survives process restarts.
-This is the supported fallback backend selectable via
-``OPENCOUCH_PERSISTENCE_BACKEND=sqlite``; Postgres is the default and
-the recommended choice for any deployment that can run Docker Compose.
+This is a legacy fallback backend selectable only with explicit opt-in
+(``OPENCOUCH_PERSISTENCE_BACKEND=sqlite`` plus
+``OPENCOUCH_ALLOW_LEGACY_SQLITE=1``); Postgres is the default and
+recommended durable backend.
 
 All semantic, episodic, and procedural records live in one
 ``memory_records`` table and are separated by ``owner_id`` and

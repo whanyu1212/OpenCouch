@@ -22,10 +22,16 @@ TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
 DEFAULT_LLM_PROVIDER: LLMProvider = "openai"
 DEFAULT_OPENAI_QUALITY_MODEL = "gpt-5.4"
 # Postgres is the default persistent backend (Docker compose ships it as the
-# primary persistence path). SQLite remains available as an explicit fallback
-# via OPENCOUCH_PERSISTENCE_BACKEND=sqlite for local-only installs without
-# Docker.
+# primary persistence path). SQLite is a legacy durable backend and now requires
+# an explicit opt-in flag when selected through runtime configuration.
 DEFAULT_PERSISTENCE_BACKEND: PersistenceBackend = "postgres"
+LEGACY_SQLITE_OPT_IN_ENV = "OPENCOUCH_ALLOW_LEGACY_SQLITE"
+LEGACY_SQLITE_REJECT_MESSAGE = (
+    "OPENCOUCH_PERSISTENCE_BACKEND=sqlite is legacy and disabled by default. "
+    "Use OPENCOUCH_PERSISTENCE_BACKEND=postgres with "
+    "OPENCOUCH_MEMORY_DATABASE_URL, or set OPENCOUCH_ALLOW_LEGACY_SQLITE=1 "
+    "to temporarily opt into durable SQLite while migrating."
+)
 
 # Shared, actionable error text raised by every postgres-without-URL guard
 # in the runtime. Lives here so the message stays consistent across the
@@ -36,8 +42,8 @@ MISSING_MEMORY_DATABASE_URL_MESSAGE = (
     "local docker compose stack use "
     "postgresql://opencouch:opencouch@localhost:5432/opencouch "
     "(or @postgres:5432/opencouch from inside the compose network). "
-    "For a local-only install without docker, set "
-    "OPENCOUCH_PERSISTENCE_BACKEND=sqlite instead."
+    "Durable SQLite is legacy; if you need it temporarily, set both "
+    "OPENCOUCH_PERSISTENCE_BACKEND=sqlite and OPENCOUCH_ALLOW_LEGACY_SQLITE=1."
 )
 
 _DOTENV_LOADED = False
@@ -79,6 +85,7 @@ class Settings:
     response_quality_openai_model: str = DEFAULT_OPENAI_QUALITY_MODEL
     persistence_backend: PersistenceBackend = DEFAULT_PERSISTENCE_BACKEND
     memory_database_url: str | None = None
+    allow_legacy_sqlite: bool = False
     text_session_backend: TextSessionBackend = "auto"
     text_session_database_url: str | None = None
 
@@ -108,6 +115,10 @@ def get_settings() -> Settings:
         "OPENCOUCH_PERSISTENCE_BACKEND",
         DEFAULT_PERSISTENCE_BACKEND,
     )
+    allow_legacy_sqlite = _read_bool_env(LEGACY_SQLITE_OPT_IN_ENV)
+    if persistence_backend == "sqlite" and not allow_legacy_sqlite:
+        raise ValueError(LEGACY_SQLITE_REJECT_MESSAGE)
+
     text_session_backend = _read_text_session_backend_env(
         "OPENCOUCH_TEXT_SESSION_BACKEND",
         "auto",
@@ -128,6 +139,7 @@ def get_settings() -> Settings:
         ),
         persistence_backend=persistence_backend,
         memory_database_url=os.getenv("OPENCOUCH_MEMORY_DATABASE_URL"),
+        allow_legacy_sqlite=allow_legacy_sqlite,
         text_session_backend=text_session_backend,
         text_session_database_url=os.getenv("OPENCOUCH_TEXT_SESSION_DATABASE_URL"),
     )

@@ -4,7 +4,7 @@
   ``:memory:`` and memory/audit stores avoid disk writes.
 - ``LOCAL`` — persists through the configured local backend and stays on
   the device. Postgres is the recommended durable backend; SQLite remains
-  available as a legacy fallback.
+  available only as an explicit legacy fallback.
 - ``SYNCED`` — reserved for a future remote persistence tier. Runtime
   code currently treats it like durable mode while backend sync remains
   unimplemented.

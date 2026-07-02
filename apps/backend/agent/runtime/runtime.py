@@ -94,6 +94,12 @@ _LEGACY_STORAGE_PATH_WARNING = (
     "PersistentAgentRuntime direct SQLite path arguments are deprecated; "
     "use storage_paths=RuntimeStoragePaths(...) instead."
 )
+_LEGACY_SQLITE_DURABLE_MESSAGE = (
+    "Durable SQLite persistence is legacy and disabled for grouped runtime "
+    "configuration unless explicitly allowed. Use Postgres for durable runtime "
+    "persistence, or set allow_legacy_sqlite=True for temporary migration-only "
+    "SQLite usage."
+)
 
 
 @dataclass(slots=True)
@@ -223,6 +229,7 @@ class RuntimePersistenceConfig:
     session_feedback_database_url: str | None | object = _UNSET
     text_session_backend: TextSessionBackend | object = _UNSET
     text_session_database_url: str | None | object = _UNSET
+    allow_legacy_sqlite: bool | object = _UNSET
 
     @classmethod
     def for_shared_backend(
@@ -233,6 +240,7 @@ class RuntimePersistenceConfig:
         database_url: str | None,
         text_session_backend: TextSessionBackend = "auto",
         text_session_database_url: str | None = None,
+        allow_legacy_sqlite: bool = False,
     ) -> RuntimePersistenceConfig:
         """Build config when all durable stores share one backend/DSN."""
 
@@ -249,6 +257,41 @@ class RuntimePersistenceConfig:
             session_feedback_database_url=database_url,
             text_session_backend=text_session_backend,
             text_session_database_url=resolved_text_session_database_url,
+            allow_legacy_sqlite=allow_legacy_sqlite,
+        )
+
+
+def _validate_legacy_sqlite_durable_allowed(
+    *,
+    memory_mode: MemoryMode,
+    memory_backend: Literal["sqlite", "postgres"],
+    thread_persistence_backend: Literal["sqlite", "postgres"],
+    crisis_log_persistence_backend: Literal["sqlite", "postgres"],
+    session_feedback_persistence_backend: Literal["sqlite", "postgres"],
+    text_session_backend: TextSessionBackend,
+    allow_legacy_sqlite: bool,
+) -> None:
+    """Reject durable SQLite backends for grouped config without opt-in."""
+
+    if memory_mode == MemoryMode.INCOGNITO or allow_legacy_sqlite:
+        return
+
+    sqlite_backends: list[str] = []
+    if thread_persistence_backend == "sqlite":
+        sqlite_backends.append("thread_persistence_backend")
+    if memory_backend == "sqlite":
+        sqlite_backends.append("memory_backend")
+    if crisis_log_persistence_backend == "sqlite":
+        sqlite_backends.append("crisis_log_persistence_backend")
+    if session_feedback_persistence_backend == "sqlite":
+        sqlite_backends.append("session_feedback_persistence_backend")
+    if text_session_backend == "sqlite":
+        sqlite_backends.append("text_session_backend")
+
+    if sqlite_backends:
+        raise ValueError(
+            f"{_LEGACY_SQLITE_DURABLE_MESSAGE} SQLite fields: "
+            f"{', '.join(sqlite_backends)}."
         )
 
 
@@ -415,6 +458,7 @@ class PersistentAgentRuntime:
         crisis_log_sqlite_path = resolved_storage_paths.crisis_log_sqlite_path
         feedback_sqlite_path = resolved_storage_paths.feedback_sqlite_path
         text_session_sqlite_path = resolved_storage_paths.text_session_sqlite_path
+        allow_legacy_sqlite = persistence_config is None
 
         if persistence_config is not None:
             if persistence_config.memory_mode is not _UNSET:
@@ -469,6 +513,18 @@ class PersistentAgentRuntime:
                     str | None,
                     persistence_config.text_session_database_url,
                 )
+            if persistence_config.allow_legacy_sqlite is not _UNSET:
+                allow_legacy_sqlite = cast(bool, persistence_config.allow_legacy_sqlite)
+
+        _validate_legacy_sqlite_durable_allowed(
+            memory_mode=memory_mode,
+            memory_backend=memory_backend,
+            thread_persistence_backend=thread_persistence_backend,
+            crisis_log_persistence_backend=crisis_log_persistence_backend,
+            session_feedback_persistence_backend=session_feedback_persistence_backend,
+            text_session_backend=text_session_backend,
+            allow_legacy_sqlite=allow_legacy_sqlite,
+        )
 
         if dependencies is not None:
             if dependencies.memory_store is not _UNSET:

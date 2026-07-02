@@ -20,6 +20,7 @@ def test_get_settings_defaults_to_postgres_backend(
     monkeypatch.setattr(config, "_DOTENV_LOADED", True)
     monkeypatch.delenv("OPENCOUCH_PERSISTENCE_BACKEND", raising=False)
     monkeypatch.delenv("OPENCOUCH_MEMORY_DATABASE_URL", raising=False)
+    monkeypatch.delenv("OPENCOUCH_ALLOW_LEGACY_SQLITE", raising=False)
     monkeypatch.delenv("OPENCOUCH_TEXT_SESSION_BACKEND", raising=False)
     monkeypatch.delenv("OPENCOUCH_TEXT_SESSION_DATABASE_URL", raising=False)
 
@@ -27,23 +28,40 @@ def test_get_settings_defaults_to_postgres_backend(
 
     assert settings.persistence_backend == "postgres"
     assert settings.memory_database_url is None
+    assert settings.allow_legacy_sqlite is False
     assert settings.text_session_backend == "auto"
     assert settings.text_session_database_url is None
 
 
-def test_get_settings_reads_sqlite_backend_override(
+def test_get_settings_rejects_sqlite_backend_without_legacy_opt_in(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SQLite remains an explicit fallback via the env override."""
+    """Durable SQLite requires an explicit temporary legacy opt-in."""
 
     monkeypatch.setattr(config, "_DOTENV_LOADED", True)
     monkeypatch.setenv("OPENCOUCH_PERSISTENCE_BACKEND", "sqlite")
+    monkeypatch.delenv("OPENCOUCH_ALLOW_LEGACY_SQLITE", raising=False)
+    monkeypatch.delenv("OPENCOUCH_MEMORY_DATABASE_URL", raising=False)
+
+    with pytest.raises(ValueError, match="OPENCOUCH_ALLOW_LEGACY_SQLITE"):
+        config.get_settings()
+
+
+def test_get_settings_reads_sqlite_backend_with_legacy_opt_in(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SQLite remains available only through the explicit legacy opt-in."""
+
+    monkeypatch.setattr(config, "_DOTENV_LOADED", True)
+    monkeypatch.setenv("OPENCOUCH_PERSISTENCE_BACKEND", "sqlite")
+    monkeypatch.setenv("OPENCOUCH_ALLOW_LEGACY_SQLITE", "1")
     monkeypatch.delenv("OPENCOUCH_MEMORY_DATABASE_URL", raising=False)
 
     settings = config.get_settings()
 
     assert settings.persistence_backend == "sqlite"
     assert settings.memory_database_url is None
+    assert settings.allow_legacy_sqlite is True
 
 
 def test_get_settings_reads_postgres_backend_and_database_url(

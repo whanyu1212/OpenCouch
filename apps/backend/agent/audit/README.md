@@ -74,7 +74,8 @@ mode-aware:
 
 - Incognito mode uses `InMemoryCrisisLogBackend`; records die with the runtime.
 - Persistent modes use the configured durable backend. Postgres is preferred for
-  deployed environments; SQLite remains a local/legacy fallback.
+  deployed environments; SQLite remains only as explicit legacy fallback during
+  migration.
 - `NullCrisisLogBackend` is reserved for explicit tests and fixtures.
 
 User memory recall controls must not disable crisis event capture. Retention and
