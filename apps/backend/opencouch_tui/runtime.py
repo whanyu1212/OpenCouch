@@ -138,6 +138,7 @@ class ConsoleRuntime:
                 database_url=settings.memory_database_url,
                 text_session_backend=settings.text_session_backend,
                 text_session_database_url=settings.text_session_database_url,
+                allow_legacy_sqlite=settings.allow_legacy_sqlite,
             ),
             default_llm_client=llm_client,
             finalize_active_sessions_on_close=False,

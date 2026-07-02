@@ -182,10 +182,11 @@ Postgres is the intended durable backend for runtime state, SDK text
 sessions, memory, crisis audit, session feedback, and active-session
 recovery. In-memory stores remain the incognito/test path. SQLite-backed
 stores still exist in the codebase for legacy local compatibility and
-focused migration tests, but new durable-runtime work should target
-Postgres first and avoid expanding SQLite-specific behavior. New runtime
-construction should use grouped `RuntimePersistenceConfig` and
-`RuntimeStoragePaths`; direct SQLite path kwargs on `PersistentAgentRuntime`
+focused migration tests, but grouped durable runtime configuration rejects
+SQLite unless it is explicitly marked as legacy opt-in. New durable-runtime
+work should target Postgres first and avoid expanding SQLite-specific
+behavior. New runtime construction should use grouped `RuntimePersistenceConfig`
+and `RuntimeStoragePaths`; direct SQLite path kwargs on `PersistentAgentRuntime`
 are deprecated compatibility shims.
 
 ## Key files

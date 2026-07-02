@@ -206,6 +206,7 @@ def _build_runtime(
             database_url=settings.memory_database_url,
             text_session_backend=settings.text_session_backend,
             text_session_database_url=settings.text_session_database_url,
+            allow_legacy_sqlite=settings.allow_legacy_sqlite,
         ),
         dependencies=RuntimeDependencies(
             default_llm_client=llm_client,

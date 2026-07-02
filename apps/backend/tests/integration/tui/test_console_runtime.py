@@ -76,6 +76,7 @@ async def test_console_runtime_reports_recoverable_turn_errors(monkeypatch) -> N
         lambda: SimpleNamespace(
             persistence_backend="sqlite",
             memory_database_url=None,
+            allow_legacy_sqlite=True,
             text_session_backend="disabled",
             text_session_database_url=None,
         ),
@@ -144,6 +145,7 @@ async def test_console_runtime_uses_grouped_storage_paths(
         lambda: SimpleNamespace(
             persistence_backend="sqlite",
             memory_database_url=None,
+            allow_legacy_sqlite=True,
             text_session_backend="disabled",
             text_session_database_url=None,
         ),

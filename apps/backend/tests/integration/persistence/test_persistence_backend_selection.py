@@ -270,6 +270,7 @@ def test_grouped_persistence_config_can_select_postgres_memory_store() -> None:
             memory_mode=MemoryMode.LOCAL,
             memory_backend="postgres",
             memory_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+            allow_legacy_sqlite=True,
         )
     )
 
@@ -310,6 +311,60 @@ def test_shared_backend_persistence_config_fans_out_backend_and_database_url() -
     assert config.text_session_database_url == (
         "postgresql://opencouch:opencouch@postgres:5432/opencouch"
     )
+    assert config.allow_legacy_sqlite is False
+
+
+def test_shared_backend_persistence_config_rejects_sqlite_without_opt_in() -> None:
+    """Grouped durable SQLite config must be explicitly marked legacy."""
+
+    config = RuntimePersistenceConfig.for_shared_backend(
+        memory_mode=MemoryMode.LOCAL,
+        persistence_backend="sqlite",
+        database_url=None,
+    )
+
+    with pytest.raises(ValueError, match="Durable SQLite persistence is legacy"):
+        PersistentAgentRuntime(persistence_config=config)
+
+
+def test_grouped_persistence_config_rejects_auto_text_sessions_without_dsn() -> None:
+    """Auto SDK sessions resolve to SQLite without a database URL."""
+
+    config = RuntimePersistenceConfig(
+        memory_mode=MemoryMode.LOCAL,
+        memory_backend="postgres",
+        memory_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+        thread_persistence_backend="postgres",
+        thread_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+        crisis_log_persistence_backend="postgres",
+        crisis_log_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+        session_feedback_persistence_backend="postgres",
+        session_feedback_database_url=(
+            "postgresql://opencouch:opencouch@postgres:5432/opencouch"
+        ),
+        text_session_backend="auto",
+        text_session_database_url=None,
+    )
+
+    with pytest.raises(ValueError, match="text_session_backend"):
+        PersistentAgentRuntime(persistence_config=config)
+
+
+def test_shared_backend_persistence_config_allows_sqlite_with_opt_in() -> None:
+    """Temporary legacy SQLite config remains available with explicit opt-in."""
+
+    runtime = PersistentAgentRuntime(
+        persistence_config=RuntimePersistenceConfig.for_shared_backend(
+            memory_mode=MemoryMode.LOCAL,
+            persistence_backend="sqlite",
+            database_url=None,
+            allow_legacy_sqlite=True,
+        )
+    )
+
+    assert isinstance(runtime.memory_store, SqliteMemoryStore)
+    assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
+    assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
 
 
 def test_shared_backend_persistence_config_accepts_text_session_url_override() -> None:
@@ -343,6 +398,7 @@ def test_partial_grouped_persistence_config_preserves_legacy_thread_backend() ->
         persistence_config=RuntimePersistenceConfig(
             memory_backend="postgres",
             memory_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+            allow_legacy_sqlite=True,
         ),
     )
 

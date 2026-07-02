@@ -68,4 +68,4 @@ operator review.
 Incognito runtimes use `InMemorySessionFeedbackBackend`, so records exist only
 for the runtime lifetime and always store `user_id_or_null=None`. Persistent
 modes use the configured durable backend. PostgreSQL is the production backend;
-SQLite remains the local fallback.
+SQLite remains only as explicit legacy fallback during migration.
