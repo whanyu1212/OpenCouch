@@ -108,6 +108,105 @@ class RuntimeStoragePaths:
 
 
 @dataclass(slots=True)
+class _ResolvedRuntimeStoragePaths:
+    """Constructor-ready SQLite path values for runtime-owned storage."""
+
+    sqlite_path: str | Path
+    memory_sqlite_path: str | Path
+    crisis_log_sqlite_path: str | Path
+    feedback_sqlite_path: str | Path
+    text_session_sqlite_path: str | Path | None
+
+
+def _resolve_runtime_storage_paths(
+    *,
+    sqlite_path: str | Path | object,
+    storage_paths: RuntimeStoragePaths | None,
+    memory_sqlite_path: str | Path | object,
+    crisis_log_sqlite_path: str | Path | object,
+    feedback_sqlite_path: str | Path | object,
+    text_session_sqlite_path: str | Path | None | object,
+) -> _ResolvedRuntimeStoragePaths:
+    """Resolve default, legacy, and grouped SQLite path arguments."""
+
+    legacy_path_args = (
+        ("sqlite_path", sqlite_path),
+        ("memory_sqlite_path", memory_sqlite_path),
+        ("crisis_log_sqlite_path", crisis_log_sqlite_path),
+        ("feedback_sqlite_path", feedback_sqlite_path),
+        ("text_session_sqlite_path", text_session_sqlite_path),
+    )
+    supplied_legacy_path_args = [
+        name for name, value in legacy_path_args if value is not _UNSET
+    ]
+    if supplied_legacy_path_args:
+        warnings.warn(
+            f"{_LEGACY_STORAGE_PATH_WARNING} Legacy args: "
+            f"{', '.join(supplied_legacy_path_args)}.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+
+    resolved_sqlite_path = (
+        DEFAULT_THREAD_DB_PATH
+        if sqlite_path is _UNSET
+        else cast(str | Path, sqlite_path)
+    )
+    resolved_memory_sqlite_path = (
+        DEFAULT_MEMORY_DB_PATH
+        if memory_sqlite_path is _UNSET
+        else cast(str | Path, memory_sqlite_path)
+    )
+    resolved_crisis_log_sqlite_path = (
+        DEFAULT_CRISIS_LOG_DB_PATH
+        if crisis_log_sqlite_path is _UNSET
+        else cast(str | Path, crisis_log_sqlite_path)
+    )
+    resolved_feedback_sqlite_path = (
+        DEFAULT_FEEDBACK_DB_PATH
+        if feedback_sqlite_path is _UNSET
+        else cast(str | Path, feedback_sqlite_path)
+    )
+    resolved_text_session_sqlite_path = (
+        None
+        if text_session_sqlite_path is _UNSET
+        else cast(str | Path | None, text_session_sqlite_path)
+    )
+
+    if storage_paths is not None:
+        if storage_paths.sqlite_path is not _UNSET:
+            resolved_sqlite_path = cast(str | Path, storage_paths.sqlite_path)
+        if storage_paths.memory_sqlite_path is not _UNSET:
+            resolved_memory_sqlite_path = cast(
+                str | Path,
+                storage_paths.memory_sqlite_path,
+            )
+        if storage_paths.crisis_log_sqlite_path is not _UNSET:
+            resolved_crisis_log_sqlite_path = cast(
+                str | Path,
+                storage_paths.crisis_log_sqlite_path,
+            )
+        if storage_paths.feedback_sqlite_path is not _UNSET:
+            resolved_feedback_sqlite_path = cast(
+                str | Path,
+                storage_paths.feedback_sqlite_path,
+            )
+        if storage_paths.text_session_sqlite_path is not _UNSET:
+            resolved_text_session_sqlite_path = cast(
+                str | Path | None,
+                storage_paths.text_session_sqlite_path,
+            )
+
+    return _ResolvedRuntimeStoragePaths(
+        sqlite_path=resolved_sqlite_path,
+        memory_sqlite_path=resolved_memory_sqlite_path,
+        crisis_log_sqlite_path=resolved_crisis_log_sqlite_path,
+        feedback_sqlite_path=resolved_feedback_sqlite_path,
+        text_session_sqlite_path=resolved_text_session_sqlite_path,
+    )
+
+
+@dataclass(slots=True)
 class RuntimePersistenceConfig:
     """Grouped backend and database URL configuration for the runtime."""
 
@@ -303,73 +402,19 @@ class PersistentAgentRuntime:
                 sequential load.
         """
 
-        legacy_path_args = (
-            ("sqlite_path", sqlite_path),
-            ("memory_sqlite_path", memory_sqlite_path),
-            ("crisis_log_sqlite_path", crisis_log_sqlite_path),
-            ("feedback_sqlite_path", feedback_sqlite_path),
-            ("text_session_sqlite_path", text_session_sqlite_path),
+        resolved_storage_paths = _resolve_runtime_storage_paths(
+            sqlite_path=sqlite_path,
+            storage_paths=storage_paths,
+            memory_sqlite_path=memory_sqlite_path,
+            crisis_log_sqlite_path=crisis_log_sqlite_path,
+            feedback_sqlite_path=feedback_sqlite_path,
+            text_session_sqlite_path=text_session_sqlite_path,
         )
-        supplied_legacy_path_args = [
-            name for name, value in legacy_path_args if value is not _UNSET
-        ]
-        if supplied_legacy_path_args:
-            warnings.warn(
-                f"{_LEGACY_STORAGE_PATH_WARNING} Legacy args: "
-                f"{', '.join(supplied_legacy_path_args)}.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
-        sqlite_path = (
-            DEFAULT_THREAD_DB_PATH
-            if sqlite_path is _UNSET
-            else cast(str | Path, sqlite_path)
-        )
-        memory_sqlite_path = (
-            DEFAULT_MEMORY_DB_PATH
-            if memory_sqlite_path is _UNSET
-            else cast(str | Path, memory_sqlite_path)
-        )
-        crisis_log_sqlite_path = (
-            DEFAULT_CRISIS_LOG_DB_PATH
-            if crisis_log_sqlite_path is _UNSET
-            else cast(str | Path, crisis_log_sqlite_path)
-        )
-        feedback_sqlite_path = (
-            DEFAULT_FEEDBACK_DB_PATH
-            if feedback_sqlite_path is _UNSET
-            else cast(str | Path, feedback_sqlite_path)
-        )
-        text_session_sqlite_path = (
-            None
-            if text_session_sqlite_path is _UNSET
-            else cast(str | Path | None, text_session_sqlite_path)
-        )
-
-        if storage_paths is not None:
-            if storage_paths.sqlite_path is not _UNSET:
-                sqlite_path = cast(str | Path, storage_paths.sqlite_path)
-            if storage_paths.memory_sqlite_path is not _UNSET:
-                memory_sqlite_path = cast(
-                    str | Path,
-                    storage_paths.memory_sqlite_path,
-                )
-            if storage_paths.crisis_log_sqlite_path is not _UNSET:
-                crisis_log_sqlite_path = cast(
-                    str | Path,
-                    storage_paths.crisis_log_sqlite_path,
-                )
-            if storage_paths.feedback_sqlite_path is not _UNSET:
-                feedback_sqlite_path = cast(
-                    str | Path,
-                    storage_paths.feedback_sqlite_path,
-                )
-            if storage_paths.text_session_sqlite_path is not _UNSET:
-                text_session_sqlite_path = cast(
-                    str | Path | None,
-                    storage_paths.text_session_sqlite_path,
-                )
+        sqlite_path = resolved_storage_paths.sqlite_path
+        memory_sqlite_path = resolved_storage_paths.memory_sqlite_path
+        crisis_log_sqlite_path = resolved_storage_paths.crisis_log_sqlite_path
+        feedback_sqlite_path = resolved_storage_paths.feedback_sqlite_path
+        text_session_sqlite_path = resolved_storage_paths.text_session_sqlite_path
 
         if persistence_config is not None:
             if persistence_config.memory_mode is not _UNSET:
