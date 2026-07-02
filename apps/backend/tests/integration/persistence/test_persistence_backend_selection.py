@@ -327,6 +327,29 @@ def test_shared_backend_persistence_config_rejects_sqlite_without_opt_in() -> No
         PersistentAgentRuntime(persistence_config=config)
 
 
+def test_grouped_persistence_config_rejects_auto_text_sessions_without_dsn() -> None:
+    """Auto SDK sessions resolve to SQLite without a database URL."""
+
+    config = RuntimePersistenceConfig(
+        memory_mode=MemoryMode.LOCAL,
+        memory_backend="postgres",
+        memory_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+        thread_persistence_backend="postgres",
+        thread_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+        crisis_log_persistence_backend="postgres",
+        crisis_log_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+        session_feedback_persistence_backend="postgres",
+        session_feedback_database_url=(
+            "postgresql://opencouch:opencouch@postgres:5432/opencouch"
+        ),
+        text_session_backend="auto",
+        text_session_database_url=None,
+    )
+
+    with pytest.raises(ValueError, match="text_session_backend"):
+        PersistentAgentRuntime(persistence_config=config)
+
+
 def test_shared_backend_persistence_config_allows_sqlite_with_opt_in() -> None:
     """Temporary legacy SQLite config remains available with explicit opt-in."""
 

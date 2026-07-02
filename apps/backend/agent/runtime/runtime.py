@@ -269,6 +269,7 @@ def _validate_legacy_sqlite_durable_allowed(
     crisis_log_persistence_backend: Literal["sqlite", "postgres"],
     session_feedback_persistence_backend: Literal["sqlite", "postgres"],
     text_session_backend: TextSessionBackend,
+    text_session_database_url: str | None,
     allow_legacy_sqlite: bool,
 ) -> None:
     """Reject durable SQLite backends for grouped config without opt-in."""
@@ -285,7 +286,9 @@ def _validate_legacy_sqlite_durable_allowed(
         sqlite_backends.append("crisis_log_persistence_backend")
     if session_feedback_persistence_backend == "sqlite":
         sqlite_backends.append("session_feedback_persistence_backend")
-    if text_session_backend == "sqlite":
+    if text_session_backend == "sqlite" or (
+        text_session_backend == "auto" and not text_session_database_url
+    ):
         sqlite_backends.append("text_session_backend")
 
     if sqlite_backends:
@@ -523,6 +526,7 @@ class PersistentAgentRuntime:
             crisis_log_persistence_backend=crisis_log_persistence_backend,
             session_feedback_persistence_backend=session_feedback_persistence_backend,
             text_session_backend=text_session_backend,
+            text_session_database_url=text_session_database_url,
             allow_legacy_sqlite=allow_legacy_sqlite,
         )
 
