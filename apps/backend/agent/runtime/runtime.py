@@ -504,6 +504,69 @@ class RuntimeBehaviorConfig:
 
 
 @dataclass(slots=True)
+class _ResolvedRuntimeBehaviorConfig:
+    """Constructor-ready runtime behavior settings."""
+
+    text_session_create_tables: bool
+    text_session_history_limit: int | None
+    session_timeout: timedelta
+    session_sweep_interval_seconds: float
+    finalize_active_sessions_on_close: bool
+    speculative_memory_prefetch: bool
+
+
+def _resolve_runtime_behavior_config(
+    *,
+    behavior_config: RuntimeBehaviorConfig | None,
+    text_session_create_tables: bool,
+    text_session_history_limit: int | None,
+    session_timeout: timedelta,
+    session_sweep_interval_seconds: float,
+    finalize_active_sessions_on_close: bool,
+    speculative_memory_prefetch: bool,
+) -> _ResolvedRuntimeBehaviorConfig:
+    """Resolve legacy and grouped runtime behavior settings."""
+
+    if behavior_config is not None:
+        if behavior_config.text_session_create_tables is not _UNSET:
+            text_session_create_tables = cast(
+                bool,
+                behavior_config.text_session_create_tables,
+            )
+        if behavior_config.text_session_history_limit is not _UNSET:
+            text_session_history_limit = cast(
+                int | None,
+                behavior_config.text_session_history_limit,
+            )
+        if behavior_config.session_timeout is not _UNSET:
+            session_timeout = cast(timedelta, behavior_config.session_timeout)
+        if behavior_config.session_sweep_interval_seconds is not _UNSET:
+            session_sweep_interval_seconds = cast(
+                float,
+                behavior_config.session_sweep_interval_seconds,
+            )
+        if behavior_config.finalize_active_sessions_on_close is not _UNSET:
+            finalize_active_sessions_on_close = cast(
+                bool,
+                behavior_config.finalize_active_sessions_on_close,
+            )
+        if behavior_config.speculative_memory_prefetch is not _UNSET:
+            speculative_memory_prefetch = cast(
+                bool,
+                behavior_config.speculative_memory_prefetch,
+            )
+
+    return _ResolvedRuntimeBehaviorConfig(
+        text_session_create_tables=text_session_create_tables,
+        text_session_history_limit=text_session_history_limit,
+        session_timeout=session_timeout,
+        session_sweep_interval_seconds=session_sweep_interval_seconds,
+        finalize_active_sessions_on_close=finalize_active_sessions_on_close,
+        speculative_memory_prefetch=speculative_memory_prefetch,
+    )
+
+
+@dataclass(slots=True)
 class PreparedTextTurn:
     """Shared persistent text-turn inputs prepared before route execution."""
 
@@ -695,34 +758,27 @@ class PersistentAgentRuntime:
         default_llm_client = resolved_dependencies.default_llm_client
         auto_finalize_excluded = resolved_dependencies.auto_finalize_excluded
 
-        if behavior_config is not None:
-            if behavior_config.text_session_create_tables is not _UNSET:
-                text_session_create_tables = cast(
-                    bool,
-                    behavior_config.text_session_create_tables,
-                )
-            if behavior_config.text_session_history_limit is not _UNSET:
-                text_session_history_limit = cast(
-                    int | None,
-                    behavior_config.text_session_history_limit,
-                )
-            if behavior_config.session_timeout is not _UNSET:
-                session_timeout = cast(timedelta, behavior_config.session_timeout)
-            if behavior_config.session_sweep_interval_seconds is not _UNSET:
-                session_sweep_interval_seconds = cast(
-                    float,
-                    behavior_config.session_sweep_interval_seconds,
-                )
-            if behavior_config.finalize_active_sessions_on_close is not _UNSET:
-                finalize_active_sessions_on_close = cast(
-                    bool,
-                    behavior_config.finalize_active_sessions_on_close,
-                )
-            if behavior_config.speculative_memory_prefetch is not _UNSET:
-                speculative_memory_prefetch = cast(
-                    bool,
-                    behavior_config.speculative_memory_prefetch,
-                )
+        resolved_behavior_config = _resolve_runtime_behavior_config(
+            behavior_config=behavior_config,
+            text_session_create_tables=text_session_create_tables,
+            text_session_history_limit=text_session_history_limit,
+            session_timeout=session_timeout,
+            session_sweep_interval_seconds=session_sweep_interval_seconds,
+            finalize_active_sessions_on_close=finalize_active_sessions_on_close,
+            speculative_memory_prefetch=speculative_memory_prefetch,
+        )
+        text_session_create_tables = resolved_behavior_config.text_session_create_tables
+        text_session_history_limit = resolved_behavior_config.text_session_history_limit
+        session_timeout = resolved_behavior_config.session_timeout
+        session_sweep_interval_seconds = (
+            resolved_behavior_config.session_sweep_interval_seconds
+        )
+        finalize_active_sessions_on_close = (
+            resolved_behavior_config.finalize_active_sessions_on_close
+        )
+        speculative_memory_prefetch = (
+            resolved_behavior_config.speculative_memory_prefetch
+        )
 
         self.memory_mode = memory_mode
         self._default_llm_client = default_llm_client
