@@ -183,7 +183,10 @@ sessions, memory, crisis audit, session feedback, and active-session
 recovery. In-memory stores remain the incognito/test path. SQLite-backed
 stores still exist in the codebase for legacy local compatibility and
 focused migration tests, but new durable-runtime work should target
-Postgres first and avoid expanding SQLite-specific behavior.
+Postgres first and avoid expanding SQLite-specific behavior. New runtime
+construction should use grouped `RuntimePersistenceConfig` and
+`RuntimeStoragePaths`; direct SQLite path kwargs on `PersistentAgentRuntime`
+are deprecated compatibility shims.
 
 ## Key files
 

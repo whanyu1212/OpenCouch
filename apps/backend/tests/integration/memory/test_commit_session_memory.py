@@ -38,7 +38,7 @@ from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.session import run_commit_session_memory
 from agent.runtime.session.history import session_conversation_from_transcript
-from agent.runtime import PersistentAgentRuntime
+from agent.runtime import PersistentAgentRuntime, RuntimeStoragePaths
 from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
@@ -1586,7 +1586,7 @@ async def test_runtime_end_session_commits_buffered_semantic_candidates(
     )
 
     async with PersistentAgentRuntime(
-        sqlite_path=tmp_path / "threads.sqlite3",
+        storage_paths=RuntimeStoragePaths(sqlite_path=tmp_path / "threads.sqlite3"),
         memory_store=store,
         memory_mode=MemoryMode.LOCAL,
     ) as runtime:
@@ -1654,7 +1654,7 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
     )
 
     async with PersistentAgentRuntime(
-        sqlite_path=tmp_path / "threads.sqlite3",
+        storage_paths=RuntimeStoragePaths(sqlite_path=tmp_path / "threads.sqlite3"),
         memory_store=store,
         memory_mode=MemoryMode.LOCAL,
     ) as runtime:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+import warnings
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass
 from datetime import timedelta
@@ -89,6 +90,10 @@ DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
 DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
 SESSION_TIMEOUT = timedelta(minutes=20)
 _UNSET = object()
+_LEGACY_STORAGE_PATH_WARNING = (
+    "PersistentAgentRuntime direct SQLite path arguments are deprecated; "
+    "use storage_paths=RuntimeStoragePaths(...) instead."
+)
 
 
 @dataclass(slots=True)
@@ -195,7 +200,7 @@ class PersistentAgentRuntime:
 
     def __init__(
         self,
-        sqlite_path: str | Path = DEFAULT_THREAD_DB_PATH,
+        sqlite_path: str | Path | object = _UNSET,
         *,
         storage_paths: RuntimeStoragePaths | None = None,
         persistence_config: RuntimePersistenceConfig | None = None,
@@ -213,14 +218,14 @@ class PersistentAgentRuntime:
         crisis_log_database_url: str | None = None,
         session_feedback_persistence_backend: Literal["sqlite", "postgres"] = "sqlite",
         session_feedback_database_url: str | None = None,
-        memory_sqlite_path: str | Path = DEFAULT_MEMORY_DB_PATH,
+        memory_sqlite_path: str | Path | object = _UNSET,
         text_session_backend: TextSessionBackend = "auto",
         text_session_database_url: str | None = None,
-        text_session_sqlite_path: str | Path | None = None,
+        text_session_sqlite_path: str | Path | None | object = _UNSET,
         text_session_create_tables: bool = True,
         text_session_history_limit: int | None = None,
-        crisis_log_sqlite_path: str | Path = DEFAULT_CRISIS_LOG_DB_PATH,
-        feedback_sqlite_path: str | Path = DEFAULT_FEEDBACK_DB_PATH,
+        crisis_log_sqlite_path: str | Path | object = _UNSET,
+        feedback_sqlite_path: str | Path | object = _UNSET,
         embedding_provider: "EmbeddingProvider | None" = None,
         default_llm_client: BaseLLMClient | None = None,
         session_timeout: timedelta = SESSION_TIMEOUT,
@@ -232,8 +237,9 @@ class PersistentAgentRuntime:
         """Initialize the runtime.
 
         Args:
-            sqlite_path: SQLite database path for runtime thread state.
-                Forced to ``:memory:`` in incognito mode.
+            sqlite_path: Deprecated direct SQLite database path for runtime
+                thread state. Use ``storage_paths`` instead. Forced to
+                ``:memory:`` in incognito mode.
             storage_paths: Optional grouped SQLite path overrides. When provided,
                 these values take precedence over the legacy path arguments.
             persistence_config: Optional grouped backend and database URL
@@ -263,19 +269,23 @@ class PersistentAgentRuntime:
                 for persistent modes.
             session_feedback_database_url: PostgreSQL connection string used when
                 ``session_feedback_persistence_backend`` is ``"postgres"``.
-            memory_sqlite_path: SQLite path for the default memory store.
+            memory_sqlite_path: Deprecated direct SQLite path for the default
+                memory store. Use ``storage_paths`` instead.
             text_session_backend: Optional OpenAI Agents SDK session backend
                 used for model-visible short-term conversation memory.
             text_session_database_url: SQLAlchemy async-capable database URL
                 used when ``text_session_backend`` is ``"sqlalchemy"``.
-            text_session_sqlite_path: SQLite path for the SDK session store.
-                Defaults to a ``text_sessions.sqlite3`` sibling of the runtime
-                state database, and to ``:memory:`` for in-memory threads.
+            text_session_sqlite_path: Deprecated direct SQLite path for the SDK
+                session store. Use ``storage_paths`` instead. Defaults to a
+                ``text_sessions.sqlite3`` sibling of the runtime state database,
+                and to ``:memory:`` for in-memory threads.
             text_session_create_tables: Whether SQLAlchemy SDK sessions may
                 create their own tables when first used.
             text_session_history_limit: Optional SDK session item limit.
-            crisis_log_sqlite_path: SQLite path for the default crisis log.
-            feedback_sqlite_path: SQLite path for the default feedback store.
+            crisis_log_sqlite_path: Deprecated direct SQLite path for the
+                default crisis log. Use ``storage_paths`` instead.
+            feedback_sqlite_path: Deprecated direct SQLite path for the default
+                feedback store. Use ``storage_paths`` instead.
             embedding_provider: Optional explicit embedding provider override.
             default_llm_client: Optional fallback LLM client for shutdown and
                 timeout-driven finalization.
@@ -292,6 +302,50 @@ class PersistentAgentRuntime:
                 paths is bounded; set to ``False`` to revert to the strictly
                 sequential load.
         """
+
+        legacy_path_args = (
+            ("sqlite_path", sqlite_path),
+            ("memory_sqlite_path", memory_sqlite_path),
+            ("crisis_log_sqlite_path", crisis_log_sqlite_path),
+            ("feedback_sqlite_path", feedback_sqlite_path),
+            ("text_session_sqlite_path", text_session_sqlite_path),
+        )
+        supplied_legacy_path_args = [
+            name for name, value in legacy_path_args if value is not _UNSET
+        ]
+        if supplied_legacy_path_args:
+            warnings.warn(
+                f"{_LEGACY_STORAGE_PATH_WARNING} Legacy args: "
+                f"{', '.join(supplied_legacy_path_args)}.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+        sqlite_path = (
+            DEFAULT_THREAD_DB_PATH
+            if sqlite_path is _UNSET
+            else cast(str | Path, sqlite_path)
+        )
+        memory_sqlite_path = (
+            DEFAULT_MEMORY_DB_PATH
+            if memory_sqlite_path is _UNSET
+            else cast(str | Path, memory_sqlite_path)
+        )
+        crisis_log_sqlite_path = (
+            DEFAULT_CRISIS_LOG_DB_PATH
+            if crisis_log_sqlite_path is _UNSET
+            else cast(str | Path, crisis_log_sqlite_path)
+        )
+        feedback_sqlite_path = (
+            DEFAULT_FEEDBACK_DB_PATH
+            if feedback_sqlite_path is _UNSET
+            else cast(str | Path, feedback_sqlite_path)
+        )
+        text_session_sqlite_path = (
+            None
+            if text_session_sqlite_path is _UNSET
+            else cast(str | Path | None, text_session_sqlite_path)
+        )
 
         if storage_paths is not None:
             if storage_paths.sqlite_path is not _UNSET:

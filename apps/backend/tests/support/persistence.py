@@ -259,9 +259,11 @@ def in_memory_runtime_storage_paths() -> RuntimeStoragePaths:
 
 
 def runtime_paths(tmp_path: Path) -> dict[str, Path]:
-    """Return legacy SQLite path kwargs for older persistence runtime tests.
+    """Return deprecated legacy SQLite path kwargs.
 
-    Prefer ``runtime_storage_paths`` for new or touched tests.
+    Prefer ``runtime_storage_paths`` for new or touched tests. Direct runtime
+    path kwargs now emit ``DeprecationWarning`` and remain only for compatibility
+    coverage during the SQLite durable-path migration.
     """
 
     storage_paths = runtime_storage_paths(tmp_path)
