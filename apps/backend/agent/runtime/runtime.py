@@ -299,6 +299,124 @@ def _validate_legacy_sqlite_durable_allowed(
 
 
 @dataclass(slots=True)
+class _ResolvedRuntimePersistenceConfig:
+    """Constructor-ready backend and database URL settings."""
+
+    memory_mode: MemoryMode
+    memory_backend: Literal["sqlite", "postgres"]
+    memory_database_url: str | None
+    thread_persistence_backend: Literal["sqlite", "postgres"]
+    thread_database_url: str | None
+    crisis_log_persistence_backend: Literal["sqlite", "postgres"]
+    crisis_log_database_url: str | None
+    session_feedback_persistence_backend: Literal["sqlite", "postgres"]
+    session_feedback_database_url: str | None
+    text_session_backend: TextSessionBackend
+    text_session_database_url: str | None
+
+
+def _resolve_runtime_persistence_config(
+    *,
+    persistence_config: RuntimePersistenceConfig | None,
+    memory_mode: MemoryMode,
+    memory_backend: Literal["sqlite", "postgres"],
+    memory_database_url: str | None,
+    thread_persistence_backend: Literal["sqlite", "postgres"],
+    thread_database_url: str | None,
+    crisis_log_persistence_backend: Literal["sqlite", "postgres"],
+    crisis_log_database_url: str | None,
+    session_feedback_persistence_backend: Literal["sqlite", "postgres"],
+    session_feedback_database_url: str | None,
+    text_session_backend: TextSessionBackend,
+    text_session_database_url: str | None,
+) -> _ResolvedRuntimePersistenceConfig:
+    """Resolve legacy and grouped backend/database-url runtime settings."""
+
+    allow_legacy_sqlite = persistence_config is None
+
+    if persistence_config is not None:
+        if persistence_config.memory_mode is not _UNSET:
+            memory_mode = cast(MemoryMode, persistence_config.memory_mode)
+        if persistence_config.memory_backend is not _UNSET:
+            memory_backend = cast(
+                Literal["sqlite", "postgres"],
+                persistence_config.memory_backend,
+            )
+        if persistence_config.memory_database_url is not _UNSET:
+            memory_database_url = cast(
+                str | None,
+                persistence_config.memory_database_url,
+            )
+        if persistence_config.thread_persistence_backend is not _UNSET:
+            thread_persistence_backend = cast(
+                Literal["sqlite", "postgres"],
+                persistence_config.thread_persistence_backend,
+            )
+        if persistence_config.thread_database_url is not _UNSET:
+            thread_database_url = cast(
+                str | None,
+                persistence_config.thread_database_url,
+            )
+        if persistence_config.crisis_log_persistence_backend is not _UNSET:
+            crisis_log_persistence_backend = cast(
+                Literal["sqlite", "postgres"],
+                persistence_config.crisis_log_persistence_backend,
+            )
+        if persistence_config.crisis_log_database_url is not _UNSET:
+            crisis_log_database_url = cast(
+                str | None,
+                persistence_config.crisis_log_database_url,
+            )
+        if persistence_config.session_feedback_persistence_backend is not _UNSET:
+            session_feedback_persistence_backend = cast(
+                Literal["sqlite", "postgres"],
+                persistence_config.session_feedback_persistence_backend,
+            )
+        if persistence_config.session_feedback_database_url is not _UNSET:
+            session_feedback_database_url = cast(
+                str | None,
+                persistence_config.session_feedback_database_url,
+            )
+        if persistence_config.text_session_backend is not _UNSET:
+            text_session_backend = cast(
+                TextSessionBackend,
+                persistence_config.text_session_backend,
+            )
+        if persistence_config.text_session_database_url is not _UNSET:
+            text_session_database_url = cast(
+                str | None,
+                persistence_config.text_session_database_url,
+            )
+        if persistence_config.allow_legacy_sqlite is not _UNSET:
+            allow_legacy_sqlite = cast(bool, persistence_config.allow_legacy_sqlite)
+
+    _validate_legacy_sqlite_durable_allowed(
+        memory_mode=memory_mode,
+        memory_backend=memory_backend,
+        thread_persistence_backend=thread_persistence_backend,
+        crisis_log_persistence_backend=crisis_log_persistence_backend,
+        session_feedback_persistence_backend=session_feedback_persistence_backend,
+        text_session_backend=text_session_backend,
+        text_session_database_url=text_session_database_url,
+        allow_legacy_sqlite=allow_legacy_sqlite,
+    )
+
+    return _ResolvedRuntimePersistenceConfig(
+        memory_mode=memory_mode,
+        memory_backend=memory_backend,
+        memory_database_url=memory_database_url,
+        thread_persistence_backend=thread_persistence_backend,
+        thread_database_url=thread_database_url,
+        crisis_log_persistence_backend=crisis_log_persistence_backend,
+        crisis_log_database_url=crisis_log_database_url,
+        session_feedback_persistence_backend=session_feedback_persistence_backend,
+        session_feedback_database_url=session_feedback_database_url,
+        text_session_backend=text_session_backend,
+        text_session_database_url=text_session_database_url,
+    )
+
+
+@dataclass(slots=True)
 class RuntimeDependencies:
     """Grouped dependency injection hooks for runtime construction."""
 
@@ -461,73 +579,41 @@ class PersistentAgentRuntime:
         crisis_log_sqlite_path = resolved_storage_paths.crisis_log_sqlite_path
         feedback_sqlite_path = resolved_storage_paths.feedback_sqlite_path
         text_session_sqlite_path = resolved_storage_paths.text_session_sqlite_path
-        allow_legacy_sqlite = persistence_config is None
 
-        if persistence_config is not None:
-            if persistence_config.memory_mode is not _UNSET:
-                memory_mode = cast(MemoryMode, persistence_config.memory_mode)
-            if persistence_config.memory_backend is not _UNSET:
-                memory_backend = cast(
-                    Literal["sqlite", "postgres"],
-                    persistence_config.memory_backend,
-                )
-            if persistence_config.memory_database_url is not _UNSET:
-                memory_database_url = cast(
-                    str | None,
-                    persistence_config.memory_database_url,
-                )
-            if persistence_config.thread_persistence_backend is not _UNSET:
-                thread_persistence_backend = cast(
-                    Literal["sqlite", "postgres"],
-                    persistence_config.thread_persistence_backend,
-                )
-            if persistence_config.thread_database_url is not _UNSET:
-                thread_database_url = cast(
-                    str | None,
-                    persistence_config.thread_database_url,
-                )
-            if persistence_config.crisis_log_persistence_backend is not _UNSET:
-                crisis_log_persistence_backend = cast(
-                    Literal["sqlite", "postgres"],
-                    persistence_config.crisis_log_persistence_backend,
-                )
-            if persistence_config.crisis_log_database_url is not _UNSET:
-                crisis_log_database_url = cast(
-                    str | None,
-                    persistence_config.crisis_log_database_url,
-                )
-            if persistence_config.session_feedback_persistence_backend is not _UNSET:
-                session_feedback_persistence_backend = cast(
-                    Literal["sqlite", "postgres"],
-                    persistence_config.session_feedback_persistence_backend,
-                )
-            if persistence_config.session_feedback_database_url is not _UNSET:
-                session_feedback_database_url = cast(
-                    str | None,
-                    persistence_config.session_feedback_database_url,
-                )
-            if persistence_config.text_session_backend is not _UNSET:
-                text_session_backend = cast(
-                    TextSessionBackend,
-                    persistence_config.text_session_backend,
-                )
-            if persistence_config.text_session_database_url is not _UNSET:
-                text_session_database_url = cast(
-                    str | None,
-                    persistence_config.text_session_database_url,
-                )
-            if persistence_config.allow_legacy_sqlite is not _UNSET:
-                allow_legacy_sqlite = cast(bool, persistence_config.allow_legacy_sqlite)
-
-        _validate_legacy_sqlite_durable_allowed(
+        resolved_persistence_config = _resolve_runtime_persistence_config(
+            persistence_config=persistence_config,
             memory_mode=memory_mode,
             memory_backend=memory_backend,
+            memory_database_url=memory_database_url,
             thread_persistence_backend=thread_persistence_backend,
+            thread_database_url=thread_database_url,
             crisis_log_persistence_backend=crisis_log_persistence_backend,
+            crisis_log_database_url=crisis_log_database_url,
             session_feedback_persistence_backend=session_feedback_persistence_backend,
+            session_feedback_database_url=session_feedback_database_url,
             text_session_backend=text_session_backend,
             text_session_database_url=text_session_database_url,
-            allow_legacy_sqlite=allow_legacy_sqlite,
+        )
+        memory_mode = resolved_persistence_config.memory_mode
+        memory_backend = resolved_persistence_config.memory_backend
+        memory_database_url = resolved_persistence_config.memory_database_url
+        thread_persistence_backend = (
+            resolved_persistence_config.thread_persistence_backend
+        )
+        thread_database_url = resolved_persistence_config.thread_database_url
+        crisis_log_persistence_backend = (
+            resolved_persistence_config.crisis_log_persistence_backend
+        )
+        crisis_log_database_url = resolved_persistence_config.crisis_log_database_url
+        session_feedback_persistence_backend = (
+            resolved_persistence_config.session_feedback_persistence_backend
+        )
+        session_feedback_database_url = (
+            resolved_persistence_config.session_feedback_database_url
+        )
+        text_session_backend = resolved_persistence_config.text_session_backend
+        text_session_database_url = (
+            resolved_persistence_config.text_session_database_url
         )
 
         if dependencies is not None:
