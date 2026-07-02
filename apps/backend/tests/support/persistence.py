@@ -258,22 +258,6 @@ def in_memory_runtime_storage_paths() -> RuntimeStoragePaths:
     )
 
 
-def runtime_paths(tmp_path: Path) -> dict[str, Path]:
-    """Return deprecated legacy SQLite path kwargs.
-
-    Prefer ``runtime_storage_paths`` for new or touched tests. Direct runtime
-    path kwargs now emit ``DeprecationWarning`` and remain only for compatibility
-    coverage during the SQLite durable-path migration.
-    """
-
-    storage_paths = runtime_storage_paths(tmp_path)
-    return {
-        "sqlite_path": cast(Path, storage_paths.sqlite_path),
-        "memory_sqlite_path": cast(Path, storage_paths.memory_sqlite_path),
-        "crisis_log_sqlite_path": cast(Path, storage_paths.crisis_log_sqlite_path),
-    }
-
-
 def _default_cross_restart_extraction_result() -> ExtractionResult:
     """Build the default relationship extraction for persistence smoke tests.
 
