@@ -539,11 +539,11 @@ class TestSpeculativeMemoryPrefetch:
         import asyncio
         from contextlib import suppress
 
-        from agent.runtime import PersistentAgentRuntime
+        from agent.runtime import PersistentAgentRuntime, RuntimeStoragePaths
         from agent.runtime.workflow_context import PrefetchedTurnMemory
 
         runtime = PersistentAgentRuntime(
-            sqlite_path=tmp_path / "threads.sqlite3",
+            storage_paths=RuntimeStoragePaths(sqlite_path=tmp_path / "threads.sqlite3"),
             memory_store=OpenCouchMemoryStore(),
         )
 

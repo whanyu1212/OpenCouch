@@ -121,7 +121,7 @@ def test_incognito_mode_sqlite_path_forced_to_memory() -> None:
     """The runtime state path should be ``:memory:`` in incognito mode."""
 
     runtime = PersistentAgentRuntime(
-        sqlite_path="/tmp/should-be-ignored.sqlite3",
+        storage_paths=RuntimeStoragePaths(sqlite_path="/tmp/should-be-ignored.sqlite3"),
         memory_mode=MemoryMode.INCOGNITO,
     )
     assert runtime.sqlite_path == Path(":memory:")
@@ -151,24 +151,54 @@ def test_local_mode_uses_sqlite_crisis_log_by_default() -> None:
     assert runtime.crisis_log_backend.sqlite_path == Path(DEFAULT_CRISIS_LOG_DB_PATH)
 
 
-def test_local_mode_accepts_custom_sqlite_paths(tmp_path: Path) -> None:
-    """Callers can override the default SQLite paths — useful for
-    tests that want to isolate their files in a tmp directory, and
-    for operators who want non-default locations."""
+def test_local_mode_accepts_grouped_custom_sqlite_paths(tmp_path: Path) -> None:
+    """Callers can override SQLite paths through the grouped config."""
 
     custom_memory = tmp_path / "custom_memory.sqlite3"
     custom_crisis = tmp_path / "custom_crisis.sqlite3"
 
     runtime = PersistentAgentRuntime(
         memory_mode=MemoryMode.LOCAL,
-        memory_sqlite_path=custom_memory,
-        crisis_log_sqlite_path=custom_crisis,
+        storage_paths=RuntimeStoragePaths(
+            memory_sqlite_path=custom_memory,
+            crisis_log_sqlite_path=custom_crisis,
+        ),
     )
 
     assert isinstance(runtime.memory_store, SqliteMemoryStore)
     assert runtime.memory_store.sqlite_path == custom_memory
     assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
     assert runtime.crisis_log_backend.sqlite_path == custom_crisis
+
+
+def test_legacy_sqlite_path_kwargs_warn_and_still_work(tmp_path: Path) -> None:
+    """Legacy direct path kwargs remain compatible during the migration window."""
+
+    custom_thread = tmp_path / "legacy_threads.sqlite3"
+    custom_memory = tmp_path / "legacy_memory.sqlite3"
+    custom_crisis = tmp_path / "legacy_crisis.sqlite3"
+    custom_feedback = tmp_path / "legacy_feedback.sqlite3"
+    custom_text_session = tmp_path / "legacy_text_sessions.sqlite3"
+
+    with pytest.warns(DeprecationWarning, match="RuntimeStoragePaths"):
+        runtime = PersistentAgentRuntime(
+            sqlite_path=custom_thread,
+            memory_sqlite_path=custom_memory,
+            crisis_log_sqlite_path=custom_crisis,
+            feedback_sqlite_path=custom_feedback,
+            text_session_backend="sqlite",
+            text_session_sqlite_path=custom_text_session,
+        )
+
+    assert runtime.sqlite_path == custom_thread
+    assert isinstance(runtime.memory_store, SqliteMemoryStore)
+    assert runtime.memory_store.sqlite_path == custom_memory
+    assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
+    assert runtime.crisis_log_backend.sqlite_path == custom_crisis
+    assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
+    assert runtime.session_feedback_backend.sqlite_path == custom_feedback
+    assert runtime._text_session_store is not None  # noqa: SLF001
+    assert runtime._text_session_store._config.sqlite_path == custom_text_session  # noqa: SLF001
 
 
 def test_grouped_storage_paths_override_legacy_sqlite_paths(tmp_path: Path) -> None:
@@ -179,18 +209,19 @@ def test_grouped_storage_paths_override_legacy_sqlite_paths(tmp_path: Path) -> N
     grouped_crisis = tmp_path / "grouped_crisis.sqlite3"
     grouped_feedback = tmp_path / "grouped_feedback.sqlite3"
 
-    runtime = PersistentAgentRuntime(
-        sqlite_path=tmp_path / "legacy_threads.sqlite3",
-        memory_sqlite_path=tmp_path / "legacy_memory.sqlite3",
-        crisis_log_sqlite_path=tmp_path / "legacy_crisis.sqlite3",
-        feedback_sqlite_path=tmp_path / "legacy_feedback.sqlite3",
-        storage_paths=RuntimeStoragePaths(
-            sqlite_path=grouped_thread,
-            memory_sqlite_path=grouped_memory,
-            crisis_log_sqlite_path=grouped_crisis,
-            feedback_sqlite_path=grouped_feedback,
-        ),
-    )
+    with pytest.warns(DeprecationWarning, match="RuntimeStoragePaths"):
+        runtime = PersistentAgentRuntime(
+            sqlite_path=tmp_path / "legacy_threads.sqlite3",
+            memory_sqlite_path=tmp_path / "legacy_memory.sqlite3",
+            crisis_log_sqlite_path=tmp_path / "legacy_crisis.sqlite3",
+            feedback_sqlite_path=tmp_path / "legacy_feedback.sqlite3",
+            storage_paths=RuntimeStoragePaths(
+                sqlite_path=grouped_thread,
+                memory_sqlite_path=grouped_memory,
+                crisis_log_sqlite_path=grouped_crisis,
+                feedback_sqlite_path=grouped_feedback,
+            ),
+        )
 
     assert runtime.sqlite_path == grouped_thread
     assert isinstance(runtime.memory_store, SqliteMemoryStore)
@@ -551,14 +582,15 @@ def test_synced_mode_uses_sqlite_feedback_by_default() -> None:
     assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
 
 
-def test_local_mode_accepts_custom_feedback_sqlite_path(tmp_path: Path) -> None:
-    """Operators and test fixtures can override the default path —
-    useful for pointing feedback at an isolated tmp file."""
+def test_local_mode_accepts_grouped_custom_feedback_sqlite_path(
+    tmp_path: Path,
+) -> None:
+    """Operators and test fixtures can override feedback path via grouped config."""
 
     custom = tmp_path / "custom_feedback.sqlite3"
     runtime = PersistentAgentRuntime(
         memory_mode=MemoryMode.LOCAL,
-        feedback_sqlite_path=custom,
+        storage_paths=RuntimeStoragePaths(feedback_sqlite_path=custom),
     )
     assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
     assert runtime.session_feedback_backend.sqlite_path == custom

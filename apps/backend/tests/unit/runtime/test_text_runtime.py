@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent.runtime import OpenAITextRuntime, PersistentAgentRuntime
+from agent.runtime import OpenAITextRuntime, PersistentAgentRuntime, RuntimeStoragePaths
 
 
 def test_persistent_runtime_defaults_to_openai_text_runtime() -> None:
@@ -21,9 +21,11 @@ async def test_prewarm_initializes_openai_text_runtime(tmp_path) -> None:
     """Runtime prewarm should initialize the OpenAI runtime before use."""
 
     async with PersistentAgentRuntime(
-        sqlite_path=tmp_path / "threads.sqlite3",
+        storage_paths=RuntimeStoragePaths(
+            sqlite_path=tmp_path / "threads.sqlite3",
+            text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
+        ),
         text_session_backend="sqlite",
-        text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
     ) as runtime:
         assert isinstance(runtime._sdk_bridge._openai_text_runtime, OpenAITextRuntime)
 
@@ -33,9 +35,11 @@ async def test_runtime_reset_clears_runtime_and_sdk_session_state(tmp_path) -> N
     """Thread reset should remove runtime state and SDK session history."""
 
     async with PersistentAgentRuntime(
-        sqlite_path=tmp_path / "threads.sqlite3",
+        storage_paths=RuntimeStoragePaths(
+            sqlite_path=tmp_path / "threads.sqlite3",
+            text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
+        ),
         text_session_backend="sqlite",
-        text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
     ) as runtime:
         await runtime._state_store.save_state(
             "thread-1",
@@ -59,9 +63,11 @@ async def test_runtime_history_falls_back_to_runtime_state_transcript(tmp_path) 
     """History remains available from app-owned runtime state snapshots."""
 
     async with PersistentAgentRuntime(
-        sqlite_path=tmp_path / "threads.sqlite3",
+        storage_paths=RuntimeStoragePaths(
+            sqlite_path=tmp_path / "threads.sqlite3",
+            text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
+        ),
         text_session_backend="sqlite",
-        text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
     ) as runtime:
         await runtime._state_store.save_state(
             "thread-1",
