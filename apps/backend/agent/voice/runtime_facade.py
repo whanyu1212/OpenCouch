@@ -34,6 +34,7 @@ from agent.observability.events import (
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.session import turn_count_from_state
 from agent.runtime.session.active_session import ActiveSessionManager
+from agent.runtime.state_ops import apply_state_delta
 from agent.runtime.state_store import RuntimeStateStore
 from agent.state import AgentState, resolve_owner_id
 from agent.voice.post_turn_safety import (
@@ -199,6 +200,14 @@ class VoiceRuntimeFacade:
             prior_turn_count=prior_turn_count,
         )
         state = cast(AgentState, {**dict(prior_state or {}), **dict(initial_state)})
+        if prior_state is not None:
+            memory_delta: dict[str, Any] = {}
+            for key in ("memory_control", "procedural_profile", "session_memory"):
+                value = prior_state.get(key)
+                if isinstance(value, Mapping):
+                    memory_delta[key] = dict(value)
+            if memory_delta:
+                apply_state_delta(state, memory_delta)
         if transcript:
             state["transcript"] = cast(Any, [dict(turn) for turn in transcript])
         elif prior_state is not None:
@@ -281,6 +290,69 @@ class VoiceRuntimeFacade:
             found_resources=rows,
             resource_lookup_status=cast(CrisisResourceLookupStatus, status),
         )
+
+    # ── persist_voice_memory_tool_result ──────────────────────────
+
+    async def persist_voice_memory_tool_result(
+        self,
+        *,
+        thread_id: str,
+        user_id: str | None,
+        current_user_message: str,
+        transcript: list[dict[str, object]],
+        result: Mapping[str, Any],
+    ) -> None:
+        """Persist memory-tool state deltas between Realtime tool calls.
+
+        OpenAI Realtime invokes each voice tool through a separate request. Text
+        turns keep memory-control deltas in ``OpenAITextRunContext`` until the
+        response merge step; voice needs to save the same grouped channels after
+        each mutating tool call so a later ``confirm``/``cancel`` call can read a
+        pending action and finalized turns preserve procedural-profile changes.
+        """
+
+        delta: dict[str, Any] = {}
+        memory_control = result.get("memory_control")
+        if isinstance(memory_control, Mapping):
+            delta["memory_control"] = dict(memory_control)
+        procedural_profile = result.get("procedural_profile")
+        if isinstance(procedural_profile, Mapping):
+            delta["procedural_profile"] = dict(procedural_profile)
+        if bool(result.get("clear_session_buffer")):
+            delta["session_memory"] = {
+                "held_semantic_candidates": [],
+                "held_procedural_candidates": [],
+            }
+        if not delta:
+            return
+
+        effective_user_message = current_user_message.strip() or _latest_user_text(
+            transcript
+        )
+        if not effective_user_message:
+            effective_user_message = "voice memory tool call"
+
+        async with self._lock_for(thread_id):
+            prior_state = await self._state_store.load_state(thread_id)
+            if prior_state is None:
+                state = cast(
+                    AgentState,
+                    dict(
+                        self._runtime._build_turn_initial_state(
+                            thread_id=thread_id,
+                            message=effective_user_message,
+                            channel=Channel.VOICE,
+                            user_id=user_id,
+                            installed_skills=None,
+                            prior_turn_count=-1,
+                        )
+                    ),
+                )
+                state["transcript"] = []
+            else:
+                state = cast(AgentState, dict(prior_state))
+            apply_state_delta(state, delta)
+            await self._state_store.save_state(thread_id, state)
 
     # ── persist_voice_crisis_resource_lookup ──────────────────────
 

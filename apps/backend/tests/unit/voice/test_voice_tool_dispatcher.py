@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from agent.memory.modes import MemoryMode
+from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.observability.config import TraceConfig
 from agent.observability.context import TraceContext, use_trace_context
 from agent.observability.events import (
@@ -18,10 +19,32 @@ from agent.voice.tools import (
     _registered_voice_tool_names,
     execute_voice_tool_call,
 )
+from tests.support.openai_text import ScriptedOpenAITextRouteLLM
 from tests.support.persistence import (
     FakeCrossRestartLLM,
     in_memory_runtime_storage_paths,
 )
+
+
+async def _seed_visible_fact(
+    runtime: PersistentAgentRuntime,
+    *,
+    owner_id: str = "user-1",
+    key: str = "fact-old-job",
+    evidence_quote: str = "My old job made me anxious.",
+) -> None:
+    await runtime.memory_store.aput(
+        (owner_id, "semantic"),
+        key,
+        {
+            "category": "work",
+            "predicate": "AFFECTS",
+            "object": {"type": "Situation", "identifier": "old job"},
+            "evidence_quote": evidence_quote,
+            "created_at": "2026-01-01T00:00:00Z",
+            "user_visible": True,
+        },
+    )
 
 
 class _VoiceFacadeThatMustNotBuildContext:
@@ -76,6 +99,225 @@ _MUTATOR_CASES = (
         {"query": "old job anxiety"},
     ),
 )
+
+
+@pytest.mark.asyncio
+async def test_voice_memory_deletion_confirmation_reads_persisted_pending_action() -> (
+    None
+):
+    runtime = PersistentAgentRuntime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        memory_mode=MemoryMode.LOCAL,
+    )
+    user_message = "Please delete the saved fact about my old job."
+
+    async with runtime:
+        await _seed_visible_fact(runtime)
+
+        prepare_output = await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="prepare_memory_deletion_by_index",
+            arguments={
+                "target_kind": "fact",
+                "target_index": 1,
+                "user_quote": "delete the saved fact about my old job",
+            },
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message=user_message,
+            transcript=[{"role": "user", "content": user_message}],
+            memory_mode="persistent",
+            llm_client=None,
+        )
+        prepared_state = await runtime.get_state("voice-thread")
+
+        confirm_output = await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="confirm_memory_deletion",
+            arguments={},
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message="Yes, delete it.",
+            transcript=[{"role": "user", "content": "Yes, delete it."}],
+            memory_mode="persistent",
+            llm_client=None,
+        )
+        confirmed_state = await runtime.get_state("voice-thread")
+        deleted = await runtime.memory_store.aget(
+            ("user-1", "semantic"),
+            "fact-old-job",
+        )
+
+    assert prepare_output["side_effect"] == "pending_deletion"
+    assert prepared_state is not None
+    assert prepared_state["memory_control"]["pending_action"]["type"] == "delete"
+    assert "Do you want me to delete it?" in str(prepare_output["response_text"])
+    assert confirm_output["side_effect"] == "delete_memory"
+    assert "Deleted that saved fact." in str(confirm_output["response_text"])
+    assert confirmed_state is not None
+    assert confirmed_state["memory_control"]["pending_action"] is None
+    assert deleted is None
+
+
+@pytest.mark.asyncio
+async def test_voice_memory_deletion_cancel_clears_persisted_pending_action() -> None:
+    runtime = PersistentAgentRuntime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        memory_mode=MemoryMode.LOCAL,
+    )
+    user_message = "Please delete the saved fact about my old job."
+
+    async with runtime:
+        await _seed_visible_fact(runtime)
+
+        await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="prepare_memory_deletion_by_index",
+            arguments={
+                "target_kind": "fact",
+                "target_index": 1,
+                "user_quote": "delete the saved fact about my old job",
+            },
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message=user_message,
+            transcript=[{"role": "user", "content": user_message}],
+            memory_mode="persistent",
+            llm_client=None,
+        )
+        prepared_state = await runtime.get_state("voice-thread")
+
+        cancel_output = await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="cancel_memory_deletion",
+            arguments={},
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message="No, cancel that.",
+            transcript=[{"role": "user", "content": "No, cancel that."}],
+            memory_mode="persistent",
+            llm_client=None,
+        )
+        cancelled_state = await runtime.get_state("voice-thread")
+        retained = await runtime.memory_store.aget(
+            ("user-1", "semantic"),
+            "fact-old-job",
+        )
+
+    assert prepared_state is not None
+    assert prepared_state["memory_control"]["pending_action"]["type"] == "delete"
+    assert cancel_output["side_effect"] == "cancel_pending"
+    assert "cancelled" in str(cancel_output["response_text"]).lower()
+    assert cancelled_state is not None
+    assert cancelled_state["memory_control"]["pending_action"] is None
+    assert retained is not None
+
+
+@pytest.mark.asyncio
+async def test_voice_save_response_preference_persists_rule_for_voice_context() -> None:
+    runtime = PersistentAgentRuntime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        memory_mode=MemoryMode.LOCAL,
+    )
+    user_message = "Please remember that I prefer direct answers when I am spiraling."
+    llm = ScriptedOpenAITextRouteLLM(route="therapeutic")
+
+    async with runtime:
+        output = await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="save_response_preference",
+            arguments={
+                "preference_text": "direct answers when I am spiraling",
+                "user_quote": "prefer direct answers when I am spiraling",
+            },
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message=user_message,
+            transcript=[{"role": "user", "content": user_message}],
+            memory_mode="persistent",
+            llm_client=llm,
+        )
+        state = await runtime.get_state("voice-thread")
+        profile = await aget_procedural_profile(
+            runtime.memory_store,
+            user_id="user-1",
+        )
+        session_context = await runtime.voice.voice_session_memory_context(
+            thread_id="voice-thread",
+            user_id="user-1",
+            memory_mode="persistent",
+        )
+
+    assert output["side_effect"] == "procedural_profile_update"
+    assert "Saved:" in str(output["response_text"])
+    assert state is not None
+    assert state["memory_control"]["pending_action"] is None
+    assert [rule.rule for rule in profile.rules] == [
+        "You prefer direct answers when you are spiraling."
+    ]
+    assert "You prefer direct answers when you are spiraling." in session_context
+
+
+@pytest.mark.asyncio
+async def test_voice_proactive_recall_profile_persists_across_finalized_turn() -> None:
+    runtime = PersistentAgentRuntime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        memory_mode=MemoryMode.LOCAL,
+    )
+    user_message = "Please keep proactive memory recall on."
+
+    async with runtime:
+        tool_output = await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="set_proactive_memory_recall",
+            arguments={
+                "enabled": True,
+                "user_quote": "keep proactive memory recall on",
+            },
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message=user_message,
+            transcript=[{"role": "user", "content": user_message}],
+            memory_mode="persistent",
+            llm_client=None,
+        )
+        tool_state = await runtime.get_state("voice-thread")
+
+        await runtime.voice.record_voice_turn(
+            thread_id="voice-thread",
+            user_id="user-1",
+            user_text=user_message,
+            assistant_text="I turned proactive recall on.",
+            tool_calls=[
+                {
+                    "tool_name": "set_proactive_memory_recall",
+                    "output": tool_output,
+                }
+            ],
+        )
+        finalized_state = await runtime.get_state("voice-thread")
+        profile = await aget_procedural_profile(
+            runtime.memory_store,
+            user_id="user-1",
+        )
+
+    assert tool_output["side_effect"] == "procedural_profile_update"
+    assert tool_state is not None
+    assert tool_state["procedural_profile"]["proactive_recall_enabled"] is True
+    assert tool_state["session_progress"]["turn_count"] == 0
+    assert tool_state["transcript"] == []
+    assert finalized_state is not None
+    assert finalized_state["procedural_profile"]["proactive_recall_enabled"] is True
+    assert finalized_state["session_progress"]["turn_count"] == 1
+    assert finalized_state["transcript"] == [
+        {"role": "user", "content": user_message},
+        {
+            "role": "assistant",
+            "content": "I turned proactive recall on.",
+            "response_style": "memory_control",
+        },
+    ]
+    assert profile.proactive_recall_enabled is True
 
 
 @pytest.mark.asyncio
