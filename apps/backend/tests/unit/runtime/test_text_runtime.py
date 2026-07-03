@@ -4,13 +4,30 @@ from __future__ import annotations
 
 import pytest
 
-from agent.runtime import OpenAITextRuntime, PersistentAgentRuntime, RuntimeStoragePaths
+from agent.memory.modes import MemoryMode
+from agent.runtime import (
+    OpenAITextRuntime,
+    PersistentAgentRuntime,
+    RuntimePersistenceConfig,
+    RuntimeStoragePaths,
+)
 
 
 def test_persistent_runtime_defaults_to_openai_text_runtime() -> None:
     """PersistentAgentRuntime should use the OpenAI text runtime."""
 
-    runtime = PersistentAgentRuntime()
+    runtime = PersistentAgentRuntime(
+        storage_paths=RuntimeStoragePaths(
+            sqlite_path=":memory:",
+            memory_sqlite_path=":memory:",
+            crisis_log_sqlite_path=":memory:",
+            feedback_sqlite_path=":memory:",
+            text_session_sqlite_path=":memory:",
+        ),
+        persistence_config=RuntimePersistenceConfig(
+            memory_mode=MemoryMode.INCOGNITO,
+        ),
+    )
 
     assert runtime._text_session_store is not None
     assert runtime._sdk_bridge._openai_text_runtime is None
