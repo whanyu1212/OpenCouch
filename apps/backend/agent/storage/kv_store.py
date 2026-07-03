@@ -10,13 +10,15 @@ date column, INSERT column list, serializer/deserializer) live in
 :class:`~agent.storage.sqldialect.SqlDialect`.
 
 The connection opens lazily on first async use and stays attached until
-``aclose``. Each runtime instance owns its own store; the class is not
-thread-safe. On a failed first-time schema apply, the half-open connection is
-closed and not retained, so the store stays re-attemptable.
+``aclose``. Each runtime instance owns its own store; per-instance locks guard
+first-use initialization and serialize SQL operations on the shared connection.
+On a failed first-time schema apply, the half-open connection is closed and not
+retained, so the store stays re-attemptable.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -94,6 +96,8 @@ class KvStore(Generic[R]):
         self._config = config
         self._backend_label = backend_label
         self._connection: Any | None = None
+        self._connect_lock = asyncio.Lock()
+        self._operation_lock = asyncio.Lock()
         self._closed = False
 
     async def _ensure_connection(self) -> Any:
@@ -112,21 +116,28 @@ class KvStore(Generic[R]):
         if self._connection is not None:
             return self._connection
 
-        conn = await self._dialect.connect(self._target)
-        try:
-            await self._dialect.apply_schema(conn, self._config.ddls)
-        except BaseException:
+        async with self._connect_lock:
+            if self._closed:
+                raise RuntimeError(f"{self._backend_label} is closed.")
+            if self._connection is not None:
+                return self._connection
+
+            conn = await self._dialect.connect(self._target)
             try:
-                await conn.close()
-            except Exception:
-                logger.warning(
-                    "%s: connection close during failed schema apply raised; ignoring",
-                    self._backend_label,
-                    exc_info=True,
-                )
-            raise
-        self._connection = conn
-        return self._connection
+                await self._dialect.apply_schema(conn, self._config.ddls)
+            except BaseException:
+                try:
+                    await conn.close()
+                except Exception:
+                    logger.warning(
+                        "%s: connection close during failed schema apply raised; "
+                        "ignoring",
+                        self._backend_label,
+                        exc_info=True,
+                    )
+                raise
+            self._connection = conn
+            return self._connection
 
     async def aappend(self, record: R) -> None:
         """Append one record.
@@ -138,20 +149,21 @@ class KvStore(Generic[R]):
             None: Writes the record and commits per dialect policy.
         """
 
-        conn = await self._ensure_connection()
-        cfg = self._config
-        columns = ", ".join(cfg.insert_columns)
-        placeholders = self._dialect.placeholders(len(cfg.insert_columns))
-        params = [
-            *cfg.to_row(record),
-            self._dialect.encode_value(cfg.serialize(record)),
-        ]
-        await self._dialect.write(
-            conn,
-            f"INSERT INTO {cfg.table} ({columns}) VALUES ({placeholders})",
-            params,
-        )
-        await self._dialect.commit(conn)
+        async with self._operation_lock:
+            conn = await self._ensure_connection()
+            cfg = self._config
+            columns = ", ".join(cfg.insert_columns)
+            placeholders = self._dialect.placeholders(len(cfg.insert_columns))
+            params = [
+                *cfg.to_row(record),
+                self._dialect.encode_value(cfg.serialize(record)),
+            ]
+            await self._dialect.write(
+                conn,
+                f"INSERT INTO {cfg.table} ({columns}) VALUES ({placeholders})",
+                params,
+            )
+            await self._dialect.commit(conn)
 
     async def alist_by_key(self, key: str) -> list[R]:
         """List records matching the table's key column, in append order.
@@ -164,18 +176,20 @@ class KvStore(Generic[R]):
             list[R]: Matching records ordered by ``insertion_order`` ascending.
         """
 
-        conn = await self._ensure_connection()
-        cfg = self._config
-        rows = await self._dialect.read(
-            conn,
-            f"SELECT value FROM {cfg.table} "
-            f"WHERE {cfg.key_column} = {self._dialect.placeholder} "
-            "ORDER BY insertion_order ASC",
-            (key,),
-        )
-        return [
-            cfg.deserialize(self._dialect.decode_value(row["value"])) for row in rows
-        ]
+        async with self._operation_lock:
+            conn = await self._ensure_connection()
+            cfg = self._config
+            rows = await self._dialect.read(
+                conn,
+                f"SELECT value FROM {cfg.table} "
+                f"WHERE {cfg.key_column} = {self._dialect.placeholder} "
+                "ORDER BY insertion_order ASC",
+                (key,),
+            )
+            return [
+                cfg.deserialize(self._dialect.decode_value(row["value"]))
+                for row in rows
+            ]
 
     async def arecord_count(self) -> int:
         """Count records in the table.
@@ -184,16 +198,17 @@ class KvStore(Generic[R]):
             int: Total record count, or 0 when the store is closed.
         """
 
-        if self._closed:
-            return 0
-        conn = await self._ensure_connection()
-        rows = await self._dialect.read(
-            conn,
-            f"SELECT COUNT(*) AS count FROM {self._config.table}",
-            (),
-        )
-        row = rows[0] if rows else None
-        return int(row["count"]) if row else 0
+        async with self._operation_lock:
+            if self._closed:
+                return 0
+            conn = await self._ensure_connection()
+            rows = await self._dialect.read(
+                conn,
+                f"SELECT COUNT(*) AS count FROM {self._config.table}",
+                (),
+            )
+            row = rows[0] if rows else None
+            return int(row["count"]) if row else 0
 
     async def apurge_before(self, cutoff: date) -> int:
         """Delete records older than an exclusive cutoff date.
@@ -206,18 +221,19 @@ class KvStore(Generic[R]):
             int: Number of records deleted, or 0 when the store is closed.
         """
 
-        if self._closed:
-            return 0
-        conn = await self._ensure_connection()
-        cfg = self._config
-        deleted = await self._dialect.write(
-            conn,
-            f"DELETE FROM {cfg.table} "
-            f"WHERE {cfg.date_column} < {self._dialect.placeholder}",
-            (cutoff.isoformat(),),
-        )
-        await self._dialect.commit(conn)
-        return deleted
+        async with self._operation_lock:
+            if self._closed:
+                return 0
+            conn = await self._ensure_connection()
+            cfg = self._config
+            deleted = await self._dialect.write(
+                conn,
+                f"DELETE FROM {cfg.table} "
+                f"WHERE {cfg.date_column} < {self._dialect.placeholder}",
+                (cutoff.isoformat(),),
+            )
+            await self._dialect.commit(conn)
+            return deleted
 
     async def aclose(self) -> None:
         """Close the store, releasing the connection.
@@ -226,20 +242,21 @@ class KvStore(Generic[R]):
             None: Marks the store closed and drops the connection.
         """
 
-        if self._closed:
-            return
-        self._closed = True
-        if self._connection is not None:
-            try:
-                await self._connection.close()
-            except Exception:
-                logger.warning(
-                    "%s: connection close raised; ignoring",
-                    self._backend_label,
-                    exc_info=True,
-                )
-            finally:
-                self._connection = None
+        async with self._operation_lock:
+            if self._closed:
+                return
+            self._closed = True
+            if self._connection is not None:
+                try:
+                    await self._connection.close()
+                except Exception:
+                    logger.warning(
+                        "%s: connection close raised; ignoring",
+                        self._backend_label,
+                        exc_info=True,
+                    )
+                finally:
+                    self._connection = None
 
 
 def iso_date_param(value: str) -> str:
