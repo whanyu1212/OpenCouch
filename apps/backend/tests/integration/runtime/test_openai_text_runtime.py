@@ -18,6 +18,11 @@ from tests.support.openai_text import (
     ScriptedOpenAITextRouteLLM,
 )
 from tests.support.persistence import FakeCrossRestartLLM, runtime_storage_paths
+from tests.support.safety_capture import (
+    CRISIS_RESPONSE_TEXT,
+    CRISIS_USER_TEXT,
+    openai_crisis_tool_calls,
+)
 
 
 class _SessionInspectingOpenAIRunner(FakeOpenAISDKRunner):
@@ -412,8 +417,8 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
     """Level 2/3 crisis turns should be owned by the OpenAI crisis agent."""
 
     runner = FakeOpenAISDKRunner(
-        "Please contact local emergency services now.",
-        tool_calls=[("lookup_crisis_resources", {})],
+        CRISIS_RESPONSE_TEXT,
+        tool_calls=openai_crisis_tool_calls(),
     )
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
@@ -423,7 +428,7 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
         result = await runtime.run_turn(
             thread_id="thread-crisis",
             user_id="user-1",
-            message="I'm in Singapore and I will end my life tonight.",
+            message=CRISIS_USER_TEXT,
             llm_client=ScriptedOpenAITextRouteLLM(
                 route="therapeutic",
                 crisis_level=3,
@@ -432,10 +437,7 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
 
         assert result.output.response_type.value == "crisis"
         assert result.output.response_style == "crisis_response"
-        assert (
-            result.output.response_text
-            == "Please contact local emergency services now."
-        )
+        assert result.output.response_text == CRISIS_RESPONSE_TEXT
         assert (
             result.output.diagnostics["openai_text_runtime_mode"] == "crisis_response"
         )
@@ -467,8 +469,8 @@ async def test_crisis_capture_runs_before_sdk_history_failure(
     """A persisted crisis turn should still audit if SDK history bookkeeping fails."""
 
     runner = FakeOpenAISDKRunner(
-        "Please contact local emergency services now.",
-        tool_calls=[("lookup_crisis_resources", {})],
+        CRISIS_RESPONSE_TEXT,
+        tool_calls=openai_crisis_tool_calls(),
     )
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
@@ -490,7 +492,7 @@ async def test_crisis_capture_runs_before_sdk_history_failure(
             await runtime.run_turn(
                 thread_id="thread-crisis-sdk-failure",
                 user_id="user-1",
-                message="I'm in Singapore and I will end my life tonight.",
+                message=CRISIS_USER_TEXT,
                 llm_client=ScriptedOpenAITextRouteLLM(
                     route="therapeutic",
                     crisis_level=3,
@@ -963,8 +965,8 @@ async def test_streaming_crisis_capture_precedes_response_ready(
     """Clients may stop at response_ready without skipping crisis audit capture."""
 
     runner = FakeOpenAISDKRunner(
-        "Please contact local emergency services now.",
-        tool_calls=[("lookup_crisis_resources", {})],
+        CRISIS_RESPONSE_TEXT,
+        tool_calls=openai_crisis_tool_calls(),
     )
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
@@ -974,7 +976,7 @@ async def test_streaming_crisis_capture_precedes_response_ready(
         stream = runtime.run_turn_stream(
             thread_id="thread-stream-crisis-ready",
             user_id="user-1",
-            message="I'm in Singapore and I will end my life tonight.",
+            message=CRISIS_USER_TEXT,
             llm_client=ScriptedOpenAITextRouteLLM(
                 route="therapeutic",
                 crisis_level=3,

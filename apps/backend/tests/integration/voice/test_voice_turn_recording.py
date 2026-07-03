@@ -20,6 +20,12 @@ from tests.support.persistence import (
     FakeCrossRestartLLM,
     in_memory_runtime_storage_paths,
 )
+from tests.support.safety_capture import (
+    CRISIS_VOICE_RESPONSE_TEXT,
+    CRISIS_VOICE_USER_TEXT,
+    utc_crisis_records,
+    voice_crisis_lookup_tool_call,
+)
 
 
 class _VoiceCrisisAuditLLM(FakeCrossRestartLLM):
@@ -226,33 +232,24 @@ async def test_voice_crisis_turn_writes_one_audit_record() -> None:
         await runtime.voice.record_voice_turn(
             thread_id="voice-crisis-thread",
             user_id="user-1",
-            user_text="I might hurt myself tonight.",
-            assistant_text="I'm here with you. Your safety matters most right now.",
+            user_text=CRISIS_VOICE_USER_TEXT,
+            assistant_text=CRISIS_VOICE_RESPONSE_TEXT,
             tool_calls=[
-                {
-                    "tool_name": "lookup_crisis_resources",
-                    "status": "completed",
-                    "output": {
-                        "inferred_location": "Singapore",
-                        "found_resources": [
-                            {
-                                "name": "Samaritans of Singapore",
-                                "phone": "1767",
-                                "url": "https://www.sos.org.sg",
-                                "region": "Singapore",
-                            }
-                        ],
-                        "resource_lookup_status": "found",
-                    },
-                }
+                voice_crisis_lookup_tool_call(
+                    found_resources=[
+                        {
+                            "name": "Samaritans of Singapore",
+                            "phone": "1767",
+                            "url": "https://www.sos.org.sg",
+                            "region": "Singapore",
+                        }
+                    ],
+                )
             ],
             llm_client=None,
         )
 
-        # The crisis log stamps detected_at in UTC, so read by the UTC day.
-        records = await runtime.crisis_log_backend.alist_by_date(
-            datetime.now(timezone.utc).date()
-        )
+        records = await utc_crisis_records(runtime.crisis_log_backend)
 
     assert len(records) == 1
     record = records[0]
@@ -278,18 +275,10 @@ async def test_voice_non_crisis_followup_does_not_reaudit_prior_crisis() -> None
         await runtime.voice.record_voice_turn(
             thread_id="voice-crisis-followup",
             user_id="user-1",
-            user_text="I might hurt myself tonight.",
+            user_text=CRISIS_VOICE_USER_TEXT,
             assistant_text="Your safety matters. Let's get immediate support.",
             tool_calls=[
-                {
-                    "tool_name": "lookup_crisis_resources",
-                    "status": "completed",
-                    "output": {
-                        "inferred_location": "Singapore",
-                        "found_resources": [],
-                        "resource_lookup_status": "lookup_error",
-                    },
-                }
+                voice_crisis_lookup_tool_call(resource_lookup_status="lookup_error")
             ],
             llm_client=None,
         )
@@ -301,9 +290,7 @@ async def test_voice_non_crisis_followup_does_not_reaudit_prior_crisis() -> None
             response_style="supportive",
             llm_client=None,
         )
-        records = await runtime.crisis_log_backend.alist_by_date(
-            datetime.now(timezone.utc).date()
-        )
+        records = await utc_crisis_records(runtime.crisis_log_backend)
 
     assert len(records) == 1
     assert records[0].event_type == "crisis_response"
@@ -336,17 +323,11 @@ async def test_voice_crisis_capture_runs_before_sdk_history_failure(
             await runtime.voice.record_voice_turn(
                 thread_id="voice-crisis-sdk-failure",
                 user_id="user-1",
-                user_text="I might hurt myself tonight.",
-                assistant_text="I'm here with you. Your safety matters most right now.",
+                user_text=CRISIS_VOICE_USER_TEXT,
+                assistant_text=CRISIS_VOICE_RESPONSE_TEXT,
                 route="crisis",
                 response_style="crisis_response",
-                tool_calls=[
-                    {
-                        "tool_name": "lookup_crisis_resources",
-                        "status": "completed",
-                        "output": {"resource_lookup_status": "found"},
-                    }
-                ],
+                tool_calls=[voice_crisis_lookup_tool_call()],
                 llm_client=None,
             )
 
