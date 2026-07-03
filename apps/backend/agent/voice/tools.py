@@ -886,13 +886,21 @@ async def execute_voice_tool_call(
             ),
             arguments,
         )
+        normalized_result = _normalize_voice_tool_result(result)
+        if tool_name in _VOICE_MEMORY_MUTATOR_TOOL_NAMES:
+            await runtime.voice.persist_voice_memory_tool_result(
+                thread_id=thread_id,
+                user_id=user_id,
+                current_user_message=current_user_message,
+                transcript=transcript,
+                result=normalized_result,
+            )
     except Exception as exc:
         trace_event(
             VOICE_TOOL_FAILED,
             {"tool_name": tool_name, "error_type": type(exc).__name__},
         )
         raise
-    normalized_result = _normalize_voice_tool_result(result)
     trace_event(
         VOICE_TOOL_COMPLETED,
         {
