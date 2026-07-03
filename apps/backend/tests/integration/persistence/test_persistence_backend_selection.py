@@ -46,6 +46,7 @@ from agent.runtime import (
     DEFAULT_CRISIS_LOG_DB_PATH,
     DEFAULT_FEEDBACK_DB_PATH,
     DEFAULT_MEMORY_DB_PATH,
+    DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
     RuntimeDependencies,
     RuntimePersistenceConfig,
@@ -54,13 +55,21 @@ from agent.runtime import (
 from tests.support.persistence import in_memory_runtime_storage_paths
 
 
+def _legacy_sqlite_runtime(**kwargs) -> PersistentAgentRuntime:
+    """Construct a runtime with temporary legacy SQLite opt-in for tests."""
+
+    kwargs.setdefault(
+        "persistence_config",
+        RuntimePersistenceConfig(allow_legacy_sqlite=True),
+    )
+    return PersistentAgentRuntime(**kwargs)
+
+
 # ─── Default-path constants ────────────────────────────────────────────
 
 
 def test_default_memory_db_path_is_distinct_from_thread_db() -> None:
     """The memory SQLite file must not share a path with runtime state."""
-
-    from agent.runtime import DEFAULT_THREAD_DB_PATH
 
     # All four OpenCouch-owned SQLite files must be distinct so schemas
     # cannot collide across stores.
@@ -127,26 +136,83 @@ def test_incognito_mode_sqlite_path_forced_to_memory() -> None:
     assert runtime.sqlite_path == Path(":memory:")
 
 
-# ─── Local mode — SQLite-backed defaults ───────────────────────────────
+# ─── Local mode — legacy SQLite opt-in ─────────────────────────────────
 
 
-def test_local_mode_uses_sqlite_memory_store_by_default() -> None:
-    """In local mode without an explicit override, the runtime should
-    construct a :class:`SqliteMemoryStore` pointing at the default
-    memory SQLite path. This is the core v0.8 Stage D wiring."""
+def test_local_mode_rejects_durable_sqlite_without_legacy_opt_in() -> None:
+    """Durable constructor SQLite must be explicitly marked legacy."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    with pytest.raises(ValueError, match="Durable SQLite persistence is legacy"):
+        PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+
+
+def test_empty_grouped_storage_paths_do_not_opt_into_sqlite() -> None:
+    """An empty grouped storage object should not bypass the SQLite guard."""
+
+    with pytest.raises(ValueError, match="thread_persistence_backend"):
+        PersistentAgentRuntime(
+            memory_mode=MemoryMode.LOCAL,
+            storage_paths=RuntimeStoragePaths(),
+        )
+
+
+def test_default_grouped_storage_path_does_not_opt_into_sqlite() -> None:
+    """Restating the default path should not count as a concrete override."""
+
+    with pytest.raises(ValueError, match="thread_persistence_backend"):
+        PersistentAgentRuntime(
+            memory_mode=MemoryMode.LOCAL,
+            storage_paths=RuntimeStoragePaths(sqlite_path=DEFAULT_THREAD_DB_PATH),
+        )
+
+
+def test_partial_grouped_storage_paths_do_not_opt_into_default_sqlite(
+    tmp_path: Path,
+) -> None:
+    """A single custom path should not allow unrelated default SQLite stores."""
+
+    with pytest.raises(ValueError, match="memory_backend"):
+        PersistentAgentRuntime(
+            memory_mode=MemoryMode.LOCAL,
+            storage_paths=RuntimeStoragePaths(sqlite_path=tmp_path / "threads.sqlite3"),
+        )
+
+
+def test_injected_backends_are_not_validated_as_sqlite_defaults() -> None:
+    """Dependency overrides should bypass unused SQLite backend defaults."""
+
+    runtime = PersistentAgentRuntime(
+        memory_mode=MemoryMode.LOCAL,
+        thread_persistence_backend="postgres",
+        thread_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+        text_session_backend="disabled",
+        dependencies=RuntimeDependencies(
+            memory_store=OpenCouchMemoryStore(),
+            crisis_log_backend=InMemoryCrisisLogBackend(),
+            session_feedback_backend=InMemorySessionFeedbackBackend(),
+        ),
+    )
+
+    assert isinstance(runtime._active_session_store, PostgresActiveSessionStore)  # noqa: SLF001
+    assert isinstance(runtime.memory_store, OpenCouchMemoryStore)
+    assert isinstance(runtime.crisis_log_backend, InMemoryCrisisLogBackend)
+    assert isinstance(runtime.session_feedback_backend, InMemorySessionFeedbackBackend)
+
+
+def test_local_mode_uses_sqlite_memory_store_with_legacy_opt_in() -> None:
+    """With temporary legacy opt-in, local mode can still use SQLite memory."""
+
+    runtime = _legacy_sqlite_runtime(memory_mode=MemoryMode.LOCAL)
     assert isinstance(runtime.memory_store, SqliteMemoryStore)
     assert isinstance(runtime._active_session_store, SqliteActiveSessionStore)  # noqa: SLF001
     # The SqliteMemoryStore's path should be the default memory path.
     assert runtime.memory_store.sqlite_path == Path(DEFAULT_MEMORY_DB_PATH)
 
 
-def test_local_mode_uses_sqlite_crisis_log_by_default() -> None:
-    """Same as the memory store — local mode crisis log should be
-    SQLite-backed and pointed at the default crisis log path."""
+def test_local_mode_uses_sqlite_crisis_log_with_legacy_opt_in() -> None:
+    """With temporary legacy opt-in, local mode can still use SQLite audit."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    runtime = _legacy_sqlite_runtime(memory_mode=MemoryMode.LOCAL)
     assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
     assert runtime.crisis_log_backend.sqlite_path == Path(DEFAULT_CRISIS_LOG_DB_PATH)
 
@@ -157,7 +223,7 @@ def test_local_mode_accepts_grouped_custom_sqlite_paths(tmp_path: Path) -> None:
     custom_memory = tmp_path / "custom_memory.sqlite3"
     custom_crisis = tmp_path / "custom_crisis.sqlite3"
 
-    runtime = PersistentAgentRuntime(
+    runtime = _legacy_sqlite_runtime(
         memory_mode=MemoryMode.LOCAL,
         storage_paths=RuntimeStoragePaths(
             memory_sqlite_path=custom_memory,
@@ -181,7 +247,7 @@ def test_legacy_sqlite_path_kwargs_warn_and_still_work(tmp_path: Path) -> None:
     custom_text_session = tmp_path / "legacy_text_sessions.sqlite3"
 
     with pytest.warns(DeprecationWarning, match="RuntimeStoragePaths"):
-        runtime = PersistentAgentRuntime(
+        runtime = _legacy_sqlite_runtime(
             sqlite_path=custom_thread,
             memory_sqlite_path=custom_memory,
             crisis_log_sqlite_path=custom_crisis,
@@ -210,7 +276,7 @@ def test_grouped_storage_paths_override_legacy_sqlite_paths(tmp_path: Path) -> N
     grouped_feedback = tmp_path / "grouped_feedback.sqlite3"
 
     with pytest.warns(DeprecationWarning, match="RuntimeStoragePaths"):
-        runtime = PersistentAgentRuntime(
+        runtime = _legacy_sqlite_runtime(
             sqlite_path=tmp_path / "legacy_threads.sqlite3",
             memory_sqlite_path=tmp_path / "legacy_memory.sqlite3",
             crisis_log_sqlite_path=tmp_path / "legacy_crisis.sqlite3",
@@ -232,14 +298,10 @@ def test_grouped_storage_paths_override_legacy_sqlite_paths(tmp_path: Path) -> N
     assert runtime.session_feedback_backend.sqlite_path == grouped_feedback
 
 
-def test_synced_mode_behaves_like_local_for_v0_8() -> None:
-    """SYNCED mode is reserved for a future remote backend. For now
-    (v0.8), it should behave identically to LOCAL — SQLite-backed
-    memory store and crisis log. This test pins that behavior so
-    we don't accidentally break SYNCED mode callers when the remote
-    backend actually ships."""
+def test_synced_mode_can_use_legacy_sqlite_with_opt_in() -> None:
+    """SYNCED mode can still use legacy SQLite during the migration window."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.SYNCED)
+    runtime = _legacy_sqlite_runtime(memory_mode=MemoryMode.SYNCED)
     assert isinstance(runtime.memory_store, SqliteMemoryStore)
     assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
     assert isinstance(runtime._active_session_store, SqliteActiveSessionStore)  # noqa: SLF001
@@ -250,7 +312,7 @@ def test_local_mode_can_select_postgres_memory_store() -> None:
     PostgresMemoryStore while leaving the other runtime-owned
     backends unchanged."""
 
-    runtime = PersistentAgentRuntime(
+    runtime = _legacy_sqlite_runtime(
         memory_mode=MemoryMode.LOCAL,
         memory_backend="postgres",
         memory_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
@@ -411,7 +473,7 @@ def test_postgres_memory_backend_requires_database_url() -> None:
     fast at runtime construction rather than later on first query."""
 
     with pytest.raises(ValueError, match="OPENCOUCH_MEMORY_DATABASE_URL"):
-        PersistentAgentRuntime(
+        _legacy_sqlite_runtime(
             memory_mode=MemoryMode.LOCAL,
             memory_backend="postgres",
         )
@@ -421,7 +483,7 @@ def test_local_mode_can_select_postgres_thread_backend() -> None:
     """When configured explicitly, local mode should construct a
     Postgres-backed active-session store for runtime-owned thread state."""
 
-    runtime = PersistentAgentRuntime(
+    runtime = _legacy_sqlite_runtime(
         memory_mode=MemoryMode.LOCAL,
         thread_persistence_backend="postgres",
         thread_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
@@ -436,7 +498,7 @@ def test_postgres_thread_backend_requires_database_url() -> None:
     fast at runtime construction rather than later on first turn."""
 
     with pytest.raises(ValueError, match="OPENCOUCH_MEMORY_DATABASE_URL"):
-        PersistentAgentRuntime(
+        _legacy_sqlite_runtime(
             memory_mode=MemoryMode.LOCAL,
             thread_persistence_backend="postgres",
         )
@@ -446,7 +508,7 @@ def test_local_mode_can_select_postgres_crisis_log_backend() -> None:
     """When configured explicitly, local mode should construct a
     PostgresCrisisLogBackend while leaving the memory store unchanged."""
 
-    runtime = PersistentAgentRuntime(
+    runtime = _legacy_sqlite_runtime(
         memory_mode=MemoryMode.LOCAL,
         crisis_log_persistence_backend="postgres",
         crisis_log_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
@@ -463,7 +525,7 @@ def test_postgres_crisis_log_backend_requires_database_url() -> None:
     fast at runtime construction rather than later on first write."""
 
     with pytest.raises(ValueError, match="OPENCOUCH_MEMORY_DATABASE_URL"):
-        PersistentAgentRuntime(
+        _legacy_sqlite_runtime(
             memory_mode=MemoryMode.LOCAL,
             crisis_log_persistence_backend="postgres",
         )
@@ -479,7 +541,7 @@ def test_explicit_memory_store_overrides_mode_based_selection() -> None:
     to use it regardless of the mode flag."""
 
     custom_store = OpenCouchMemoryStore()
-    runtime = PersistentAgentRuntime(
+    runtime = _legacy_sqlite_runtime(
         memory_mode=MemoryMode.LOCAL,  # would normally pick SqliteMemoryStore
         memory_store=custom_store,
     )
@@ -492,7 +554,7 @@ def test_explicit_crisis_log_overrides_mode_based_selection() -> None:
     backend bypasses the mode-based default."""
 
     custom_backend = NullCrisisLogBackend()
-    runtime = PersistentAgentRuntime(
+    runtime = _legacy_sqlite_runtime(
         memory_mode=MemoryMode.LOCAL,
         crisis_log_backend=custom_backend,
     )
@@ -504,7 +566,7 @@ def test_grouped_dependencies_can_override_default_llm_client() -> None:
 
     llm_client = object()
 
-    runtime = PersistentAgentRuntime(
+    runtime = _legacy_sqlite_runtime(
         dependencies=RuntimeDependencies(
             default_llm_client=llm_client,  # type: ignore[arg-type]
         )
@@ -538,7 +600,7 @@ def test_can_override_only_memory_store() -> None:
     selection."""
 
     custom_store = OpenCouchMemoryStore()
-    runtime = PersistentAgentRuntime(
+    runtime = _legacy_sqlite_runtime(
         memory_mode=MemoryMode.LOCAL,
         memory_store=custom_store,
     )
@@ -551,7 +613,7 @@ def test_can_override_only_crisis_log() -> None:
     """Symmetric to the memory-store-only override."""
 
     custom_backend = NullCrisisLogBackend()
-    runtime = PersistentAgentRuntime(
+    runtime = _legacy_sqlite_runtime(
         memory_mode=MemoryMode.LOCAL,
         crisis_log_backend=custom_backend,
     )
@@ -570,7 +632,7 @@ def test_init_does_not_open_sqlite_connections() -> None:
     verifies that by checking the internal ``_connection`` attribute
     on both SQLite backends — it should be None after init."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    runtime = _legacy_sqlite_runtime(memory_mode=MemoryMode.LOCAL)
     # Both backends should have their _connection set to None.
     # These are internal attributes, not public API — this test
     # reaches into them specifically to verify the lazy-open
@@ -594,7 +656,7 @@ async def test_init_without_enter_still_closes_cleanly() -> None:
     backends should still be safe. The SQLite backends' lazy-open
     means "never opened" is just "no-op close"."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    runtime = _legacy_sqlite_runtime(memory_mode=MemoryMode.LOCAL)
     # Neither backend has had a chance to open its connection.
     # Closing them should not raise.
     await runtime.memory_store.aclose()
@@ -617,24 +679,20 @@ def test_incognito_mode_uses_in_memory_feedback_by_default() -> None:
     )
 
 
-def test_local_mode_uses_sqlite_feedback_by_default() -> None:
-    """Local mode should pick the SQLite feedback backend at the
-    default feedback path."""
+def test_local_mode_uses_sqlite_feedback_with_legacy_opt_in() -> None:
+    """With temporary legacy opt-in, local mode can still use SQLite feedback."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    runtime = _legacy_sqlite_runtime(memory_mode=MemoryMode.LOCAL)
     assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
     assert runtime.session_feedback_backend.sqlite_path == Path(
         DEFAULT_FEEDBACK_DB_PATH
     )
 
 
-def test_synced_mode_uses_sqlite_feedback_by_default() -> None:
-    """SYNCED mode behaves like LOCAL for v0.10 — SQLite-backed
-    feedback at the default path. Pins the behavior so SYNCED mode
-    callers don't silently lose feedback when the remote backend
-    eventually ships."""
+def test_synced_mode_uses_sqlite_feedback_with_legacy_opt_in() -> None:
+    """SYNCED mode can still use legacy SQLite feedback with opt-in."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.SYNCED)
+    runtime = _legacy_sqlite_runtime(memory_mode=MemoryMode.SYNCED)
     assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
 
 
@@ -644,7 +702,7 @@ def test_local_mode_accepts_grouped_custom_feedback_sqlite_path(
     """Operators and test fixtures can override feedback path via grouped config."""
 
     custom = tmp_path / "custom_feedback.sqlite3"
-    runtime = PersistentAgentRuntime(
+    runtime = _legacy_sqlite_runtime(
         memory_mode=MemoryMode.LOCAL,
         storage_paths=RuntimeStoragePaths(feedback_sqlite_path=custom),
     )
@@ -656,7 +714,7 @@ def test_local_mode_can_select_postgres_session_feedback_backend() -> None:
     """When configured explicitly, local mode should construct a
     PostgresSessionFeedbackBackend while leaving the other backends unchanged."""
 
-    runtime = PersistentAgentRuntime(
+    runtime = _legacy_sqlite_runtime(
         memory_mode=MemoryMode.LOCAL,
         session_feedback_persistence_backend="postgres",
         session_feedback_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
@@ -674,7 +732,7 @@ def test_postgres_session_feedback_backend_requires_database_url() -> None:
     fast at runtime construction rather than later on first write."""
 
     with pytest.raises(ValueError, match="OPENCOUCH_MEMORY_DATABASE_URL"):
-        PersistentAgentRuntime(
+        _legacy_sqlite_runtime(
             memory_mode=MemoryMode.LOCAL,
             session_feedback_persistence_backend="postgres",
         )
@@ -687,7 +745,7 @@ def test_explicit_feedback_backend_overrides_mode_based_selection() -> None:
     regardless of mode."""
 
     custom_backend = NullSessionFeedbackBackend()
-    runtime = PersistentAgentRuntime(
+    runtime = _legacy_sqlite_runtime(
         memory_mode=MemoryMode.LOCAL,  # would normally pick SQLite
         session_feedback_backend=custom_backend,
     )
@@ -699,7 +757,7 @@ def test_feedback_backend_lazy_connection_in_init() -> None:
     during ``__init__``. Matches the crisis_log and memory_store
     lazy-open contract."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+    runtime = _legacy_sqlite_runtime(memory_mode=MemoryMode.LOCAL)
     backend = runtime.session_feedback_backend
     assert isinstance(backend, SqliteSessionFeedbackBackend)
     assert backend._connection is None  # noqa: SLF001

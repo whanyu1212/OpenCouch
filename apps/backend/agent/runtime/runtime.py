@@ -95,11 +95,24 @@ _LEGACY_STORAGE_PATH_WARNING = (
     "use storage_paths=RuntimeStoragePaths(...) instead."
 )
 _LEGACY_SQLITE_DURABLE_MESSAGE = (
-    "Durable SQLite persistence is legacy and disabled for grouped runtime "
-    "configuration unless explicitly allowed. Use Postgres for durable runtime "
-    "persistence, or set allow_legacy_sqlite=True for temporary migration-only "
-    "SQLite usage."
+    "Durable SQLite persistence is legacy and disabled unless explicitly "
+    "allowed. Use Postgres for durable runtime persistence, or set "
+    "allow_legacy_sqlite=True for temporary migration-only SQLite usage."
 )
+
+
+def _is_non_default_sqlite_path(
+    sqlite_path: object,
+    *,
+    default_path: str | Path,
+) -> bool:
+    """Return whether a supplied SQLite path is a concrete non-default path."""
+
+    if sqlite_path is _UNSET or sqlite_path is None:
+        return False
+    return Path(str(sqlite_path)).expanduser().resolve(strict=False) != Path(
+        default_path
+    ).expanduser().resolve(strict=False)
 
 
 @dataclass(slots=True)
@@ -122,6 +135,11 @@ class _ResolvedRuntimeStoragePaths:
     crisis_log_sqlite_path: str | Path
     feedback_sqlite_path: str | Path
     text_session_sqlite_path: str | Path | None
+    sqlite_path_configured: bool
+    memory_sqlite_path_configured: bool
+    crisis_log_sqlite_path_configured: bool
+    feedback_sqlite_path_configured: bool
+    text_session_sqlite_path_configured: bool
 
 
 def _resolve_runtime_storage_paths(
@@ -153,6 +171,27 @@ def _resolve_runtime_storage_paths(
             stacklevel=3,
         )
 
+    sqlite_path_configured = _is_non_default_sqlite_path(
+        sqlite_path,
+        default_path=DEFAULT_THREAD_DB_PATH,
+    )
+    memory_sqlite_path_configured = _is_non_default_sqlite_path(
+        memory_sqlite_path,
+        default_path=DEFAULT_MEMORY_DB_PATH,
+    )
+    crisis_log_sqlite_path_configured = _is_non_default_sqlite_path(
+        crisis_log_sqlite_path,
+        default_path=DEFAULT_CRISIS_LOG_DB_PATH,
+    )
+    feedback_sqlite_path_configured = _is_non_default_sqlite_path(
+        feedback_sqlite_path,
+        default_path=DEFAULT_FEEDBACK_DB_PATH,
+    )
+    text_session_sqlite_path_configured = _is_non_default_sqlite_path(
+        text_session_sqlite_path,
+        default_path=DEFAULT_TEXT_SESSION_DB_PATH,
+    )
+
     resolved_sqlite_path = (
         DEFAULT_THREAD_DB_PATH
         if sqlite_path is _UNSET
@@ -182,25 +221,45 @@ def _resolve_runtime_storage_paths(
     if storage_paths is not None:
         if storage_paths.sqlite_path is not _UNSET:
             resolved_sqlite_path = cast(str | Path, storage_paths.sqlite_path)
+            sqlite_path_configured = _is_non_default_sqlite_path(
+                storage_paths.sqlite_path,
+                default_path=DEFAULT_THREAD_DB_PATH,
+            )
         if storage_paths.memory_sqlite_path is not _UNSET:
             resolved_memory_sqlite_path = cast(
                 str | Path,
                 storage_paths.memory_sqlite_path,
+            )
+            memory_sqlite_path_configured = _is_non_default_sqlite_path(
+                storage_paths.memory_sqlite_path,
+                default_path=DEFAULT_MEMORY_DB_PATH,
             )
         if storage_paths.crisis_log_sqlite_path is not _UNSET:
             resolved_crisis_log_sqlite_path = cast(
                 str | Path,
                 storage_paths.crisis_log_sqlite_path,
             )
+            crisis_log_sqlite_path_configured = _is_non_default_sqlite_path(
+                storage_paths.crisis_log_sqlite_path,
+                default_path=DEFAULT_CRISIS_LOG_DB_PATH,
+            )
         if storage_paths.feedback_sqlite_path is not _UNSET:
             resolved_feedback_sqlite_path = cast(
                 str | Path,
                 storage_paths.feedback_sqlite_path,
             )
+            feedback_sqlite_path_configured = _is_non_default_sqlite_path(
+                storage_paths.feedback_sqlite_path,
+                default_path=DEFAULT_FEEDBACK_DB_PATH,
+            )
         if storage_paths.text_session_sqlite_path is not _UNSET:
             resolved_text_session_sqlite_path = cast(
                 str | Path | None,
                 storage_paths.text_session_sqlite_path,
+            )
+            text_session_sqlite_path_configured = _is_non_default_sqlite_path(
+                storage_paths.text_session_sqlite_path,
+                default_path=DEFAULT_TEXT_SESSION_DB_PATH,
             )
 
     return _ResolvedRuntimeStoragePaths(
@@ -209,6 +268,11 @@ def _resolve_runtime_storage_paths(
         crisis_log_sqlite_path=resolved_crisis_log_sqlite_path,
         feedback_sqlite_path=resolved_feedback_sqlite_path,
         text_session_sqlite_path=resolved_text_session_sqlite_path,
+        sqlite_path_configured=sqlite_path_configured,
+        memory_sqlite_path_configured=memory_sqlite_path_configured,
+        crisis_log_sqlite_path_configured=crisis_log_sqlite_path_configured,
+        feedback_sqlite_path_configured=feedback_sqlite_path_configured,
+        text_session_sqlite_path_configured=text_session_sqlite_path_configured,
     )
 
 
@@ -261,33 +325,81 @@ class RuntimePersistenceConfig:
         )
 
 
+def _is_in_memory_sqlite_path(path: str | Path | None) -> bool:
+    """Return whether a SQLite path is explicitly in-memory."""
+
+    return path is not None and str(path) == ":memory:"
+
+
 def _validate_legacy_sqlite_durable_allowed(
     *,
     memory_mode: MemoryMode,
     memory_backend: Literal["sqlite", "postgres"],
+    memory_sqlite_path: str | Path,
+    memory_sqlite_path_configured: bool,
+    memory_store: MemoryStore | None,
     thread_persistence_backend: Literal["sqlite", "postgres"],
+    sqlite_path: str | Path,
+    sqlite_path_configured: bool,
     crisis_log_persistence_backend: Literal["sqlite", "postgres"],
+    crisis_log_sqlite_path: str | Path,
+    crisis_log_sqlite_path_configured: bool,
+    crisis_log_backend: CrisisLogBackend | None,
     session_feedback_persistence_backend: Literal["sqlite", "postgres"],
+    feedback_sqlite_path: str | Path,
+    feedback_sqlite_path_configured: bool,
+    session_feedback_backend: SessionFeedbackBackend | None,
     text_session_backend: TextSessionBackend,
     text_session_database_url: str | None,
+    text_session_sqlite_path: str | Path | None,
+    text_session_sqlite_path_configured: bool,
     allow_legacy_sqlite: bool,
 ) -> None:
-    """Reject durable SQLite backends for grouped config without opt-in."""
+    """Reject durable SQLite backends without opt-in."""
 
     if memory_mode == MemoryMode.INCOGNITO or allow_legacy_sqlite:
         return
 
     sqlite_backends: list[str] = []
-    if thread_persistence_backend == "sqlite":
+    if (
+        thread_persistence_backend == "sqlite"
+        and not sqlite_path_configured
+        and not _is_in_memory_sqlite_path(sqlite_path)
+    ):
         sqlite_backends.append("thread_persistence_backend")
-    if memory_backend == "sqlite":
+    if (
+        memory_store is None
+        and memory_backend == "sqlite"
+        and not memory_sqlite_path_configured
+        and not _is_in_memory_sqlite_path(memory_sqlite_path)
+    ):
         sqlite_backends.append("memory_backend")
-    if crisis_log_persistence_backend == "sqlite":
+    if (
+        crisis_log_backend is None
+        and crisis_log_persistence_backend == "sqlite"
+        and not crisis_log_sqlite_path_configured
+        and not _is_in_memory_sqlite_path(crisis_log_sqlite_path)
+    ):
         sqlite_backends.append("crisis_log_persistence_backend")
-    if session_feedback_persistence_backend == "sqlite":
+    if (
+        session_feedback_backend is None
+        and session_feedback_persistence_backend == "sqlite"
+        and not feedback_sqlite_path_configured
+        and not _is_in_memory_sqlite_path(feedback_sqlite_path)
+    ):
         sqlite_backends.append("session_feedback_persistence_backend")
-    if text_session_backend == "sqlite" or (
+    text_session_uses_sqlite = text_session_backend == "sqlite" or (
         text_session_backend == "auto" and not text_session_database_url
+    )
+    text_session_uses_disk = (
+        not _is_in_memory_sqlite_path(sqlite_path)
+        if text_session_sqlite_path is None
+        else not _is_in_memory_sqlite_path(text_session_sqlite_path)
+    )
+    if (
+        text_session_uses_sqlite
+        and text_session_uses_disk
+        and not text_session_sqlite_path_configured
     ):
         sqlite_backends.append("text_session_backend")
 
@@ -321,18 +433,31 @@ def _resolve_runtime_persistence_config(
     memory_mode: MemoryMode,
     memory_backend: Literal["sqlite", "postgres"],
     memory_database_url: str | None,
+    memory_sqlite_path: str | Path,
+    memory_sqlite_path_configured: bool,
+    memory_store: MemoryStore | None,
     thread_persistence_backend: Literal["sqlite", "postgres"],
     thread_database_url: str | None,
+    sqlite_path: str | Path,
+    sqlite_path_configured: bool,
     crisis_log_persistence_backend: Literal["sqlite", "postgres"],
     crisis_log_database_url: str | None,
+    crisis_log_sqlite_path: str | Path,
+    crisis_log_sqlite_path_configured: bool,
+    crisis_log_backend: CrisisLogBackend | None,
     session_feedback_persistence_backend: Literal["sqlite", "postgres"],
     session_feedback_database_url: str | None,
+    feedback_sqlite_path: str | Path,
+    feedback_sqlite_path_configured: bool,
+    session_feedback_backend: SessionFeedbackBackend | None,
     text_session_backend: TextSessionBackend,
     text_session_database_url: str | None,
+    text_session_sqlite_path: str | Path | None,
+    text_session_sqlite_path_configured: bool,
 ) -> _ResolvedRuntimePersistenceConfig:
     """Resolve legacy and grouped backend/database-url runtime settings."""
 
-    allow_legacy_sqlite = persistence_config is None
+    allow_legacy_sqlite = False
 
     if persistence_config is not None:
         if persistence_config.memory_mode is not _UNSET:
@@ -393,11 +518,24 @@ def _resolve_runtime_persistence_config(
     _validate_legacy_sqlite_durable_allowed(
         memory_mode=memory_mode,
         memory_backend=memory_backend,
+        memory_sqlite_path=memory_sqlite_path,
+        memory_sqlite_path_configured=memory_sqlite_path_configured,
+        memory_store=memory_store,
         thread_persistence_backend=thread_persistence_backend,
+        sqlite_path=sqlite_path,
+        sqlite_path_configured=sqlite_path_configured,
         crisis_log_persistence_backend=crisis_log_persistence_backend,
+        crisis_log_sqlite_path=crisis_log_sqlite_path,
+        crisis_log_sqlite_path_configured=crisis_log_sqlite_path_configured,
+        crisis_log_backend=crisis_log_backend,
         session_feedback_persistence_backend=session_feedback_persistence_backend,
+        feedback_sqlite_path=feedback_sqlite_path,
+        feedback_sqlite_path_configured=feedback_sqlite_path_configured,
+        session_feedback_backend=session_feedback_backend,
         text_session_backend=text_session_backend,
         text_session_database_url=text_session_database_url,
+        text_session_sqlite_path=text_session_sqlite_path,
+        text_session_sqlite_path_configured=text_session_sqlite_path_configured,
         allow_legacy_sqlite=allow_legacy_sqlite,
     )
 
@@ -706,19 +844,56 @@ class PersistentAgentRuntime:
         feedback_sqlite_path = resolved_storage_paths.feedback_sqlite_path
         text_session_sqlite_path = resolved_storage_paths.text_session_sqlite_path
 
+        resolved_dependencies = _resolve_runtime_dependencies(
+            dependencies=dependencies,
+            memory_store=memory_store,
+            crisis_log_backend=crisis_log_backend,
+            session_feedback_backend=session_feedback_backend,
+            embedding_provider=embedding_provider,
+            default_llm_client=default_llm_client,
+            auto_finalize_excluded=auto_finalize_excluded,
+        )
+        memory_store = resolved_dependencies.memory_store
+        crisis_log_backend = resolved_dependencies.crisis_log_backend
+        session_feedback_backend = resolved_dependencies.session_feedback_backend
+        embedding_provider = resolved_dependencies.embedding_provider
+        default_llm_client = resolved_dependencies.default_llm_client
+        auto_finalize_excluded = resolved_dependencies.auto_finalize_excluded
+
         resolved_persistence_config = _resolve_runtime_persistence_config(
             persistence_config=persistence_config,
             memory_mode=memory_mode,
             memory_backend=memory_backend,
             memory_database_url=memory_database_url,
+            memory_sqlite_path=memory_sqlite_path,
+            memory_sqlite_path_configured=(
+                resolved_storage_paths.memory_sqlite_path_configured
+            ),
+            memory_store=memory_store,
             thread_persistence_backend=thread_persistence_backend,
             thread_database_url=thread_database_url,
+            sqlite_path=sqlite_path,
+            sqlite_path_configured=resolved_storage_paths.sqlite_path_configured,
             crisis_log_persistence_backend=crisis_log_persistence_backend,
             crisis_log_database_url=crisis_log_database_url,
+            crisis_log_sqlite_path=crisis_log_sqlite_path,
+            crisis_log_sqlite_path_configured=(
+                resolved_storage_paths.crisis_log_sqlite_path_configured
+            ),
+            crisis_log_backend=crisis_log_backend,
             session_feedback_persistence_backend=session_feedback_persistence_backend,
             session_feedback_database_url=session_feedback_database_url,
+            feedback_sqlite_path=feedback_sqlite_path,
+            feedback_sqlite_path_configured=(
+                resolved_storage_paths.feedback_sqlite_path_configured
+            ),
+            session_feedback_backend=session_feedback_backend,
             text_session_backend=text_session_backend,
             text_session_database_url=text_session_database_url,
+            text_session_sqlite_path=text_session_sqlite_path,
+            text_session_sqlite_path_configured=(
+                resolved_storage_paths.text_session_sqlite_path_configured
+            ),
         )
         memory_mode = resolved_persistence_config.memory_mode
         memory_backend = resolved_persistence_config.memory_backend
@@ -741,22 +916,6 @@ class PersistentAgentRuntime:
         text_session_database_url = (
             resolved_persistence_config.text_session_database_url
         )
-
-        resolved_dependencies = _resolve_runtime_dependencies(
-            dependencies=dependencies,
-            memory_store=memory_store,
-            crisis_log_backend=crisis_log_backend,
-            session_feedback_backend=session_feedback_backend,
-            embedding_provider=embedding_provider,
-            default_llm_client=default_llm_client,
-            auto_finalize_excluded=auto_finalize_excluded,
-        )
-        memory_store = resolved_dependencies.memory_store
-        crisis_log_backend = resolved_dependencies.crisis_log_backend
-        session_feedback_backend = resolved_dependencies.session_feedback_backend
-        embedding_provider = resolved_dependencies.embedding_provider
-        default_llm_client = resolved_dependencies.default_llm_client
-        auto_finalize_excluded = resolved_dependencies.auto_finalize_excluded
 
         resolved_behavior_config = _resolve_runtime_behavior_config(
             behavior_config=behavior_config,

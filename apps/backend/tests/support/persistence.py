@@ -244,6 +244,8 @@ def runtime_storage_paths(tmp_path: Path) -> RuntimeStoragePaths:
         sqlite_path=tmp_path / "threads.sqlite3",
         memory_sqlite_path=tmp_path / "memory.sqlite3",
         crisis_log_sqlite_path=tmp_path / "crisis.sqlite3",
+        feedback_sqlite_path=tmp_path / "feedback.sqlite3",
+        text_session_sqlite_path=tmp_path / "text_sessions.sqlite3",
     )
 
 
