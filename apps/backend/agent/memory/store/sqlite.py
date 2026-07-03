@@ -144,6 +144,12 @@ CREATE INDEX IF NOT EXISTS idx_memory_last_ref
     ON memory_records(last_referenced_at);
 """
 
+MEMORY_RECORDS_UNIQUE_KEY_COLUMNS = ("id", "owner_id", "namespace_kind")
+MEMORY_RECORDS_UNIQUE_KEY_INDEX_DDL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_records_unique_key
+    ON memory_records(id, owner_id, namespace_kind);
+"""
+
 # All DDL statements to run on ``_ensure_schema``. Executing them in
 # order is safe because every statement is ``IF NOT EXISTS``.
 MEMORY_SCHEMA_DDL: tuple[str, ...] = (
@@ -250,6 +256,81 @@ class SqliteMemoryStore:
             return self._connection
 
     @staticmethod
+    def _quote_identifier(identifier: str) -> str:
+        """Quote a SQLite identifier for PRAGMA statements."""
+
+        return '"' + identifier.replace('"', '""') + '"'
+
+    @staticmethod
+    async def _has_compound_unique_key(conn: aiosqlite.Connection) -> bool:
+        """Return whether ``memory_records`` has the current unique key."""
+
+        async with conn.execute("PRAGMA index_list(memory_records)") as cursor:
+            indexes = await cursor.fetchall()
+        for row in indexes:
+            index_name = str(row[1])
+            is_unique = bool(row[2])
+            if not is_unique:
+                continue
+            quoted_index_name = SqliteMemoryStore._quote_identifier(index_name)
+            async with conn.execute(
+                f"PRAGMA index_info({quoted_index_name})"
+            ) as cursor:
+                index_columns = tuple(
+                    str(index_row[2]) for index_row in await cursor.fetchall()
+                )
+            if index_columns == MEMORY_RECORDS_UNIQUE_KEY_COLUMNS:
+                return True
+        return False
+
+    @staticmethod
+    async def _deduplicate_compound_keys(conn: aiosqlite.Connection) -> int:
+        """Collapse old duplicate rows before adding the compound unique key.
+
+        Older SQLite memory DBs could contain duplicate
+        ``(id, owner_id, namespace_kind)`` rows because the table lacked the
+        conflict target used by ``aput``. Migration keeps the highest
+        ``insertion_order`` row for each duplicate group, matching the observable
+        "latest write wins" semantics that current ``aput`` provides, and
+        preserves same-id rows in different owners or namespace kinds.
+        """
+
+        cursor = await conn.execute(
+            """
+            DELETE FROM memory_records
+            WHERE insertion_order NOT IN (
+                SELECT MAX(insertion_order)
+                FROM memory_records
+                GROUP BY id, owner_id, namespace_kind
+            )
+            """
+        )
+        try:
+            return int(cursor.rowcount or 0)
+        finally:
+            await cursor.close()
+
+    @staticmethod
+    async def _ensure_compound_unique_key(conn: aiosqlite.Connection) -> None:
+        """Ensure old SQLite files have the current ``aput`` conflict target."""
+
+        if await SqliteMemoryStore._has_compound_unique_key(conn):
+            return
+
+        deleted = await SqliteMemoryStore._deduplicate_compound_keys(conn)
+        if deleted:
+            logger.warning(
+                "SqliteMemoryStore: removed %s duplicate memory_records rows while "
+                "migrating compound unique key; kept latest insertion_order per key",
+                deleted,
+            )
+        await conn.execute(MEMORY_RECORDS_UNIQUE_KEY_INDEX_DDL)
+        logger.info(
+            "SqliteMemoryStore: migrated memory_records schema "
+            "(added compound unique key index)"
+        )
+
+    @staticmethod
     async def _ensure_schema(conn: aiosqlite.Connection) -> None:
         """Ensure the SQLite schema is present and migrated.
 
@@ -287,6 +368,7 @@ class SqliteMemoryStore:
                     column_name,
                 )
 
+        await SqliteMemoryStore._ensure_compound_unique_key(conn)
         await conn.commit()
 
     async def aput(
