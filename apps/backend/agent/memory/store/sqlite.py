@@ -439,34 +439,39 @@ class SqliteMemoryStore:
             None: Applies schema DDL and lightweight migrations.
         """
 
-        for ddl in MEMORY_SCHEMA_DDL:
-            await conn.execute(ddl)
+        await conn.execute("BEGIN")
+        try:
+            for ddl in MEMORY_SCHEMA_DDL:
+                await conn.execute(ddl)
 
-        # Add embedding columns to databases created before hybrid
-        # retrieval shipped. PRAGMA table_info returns one row per
-        # column; we collect column names and ALTER anything missing.
-        async with conn.execute("PRAGMA table_info(memory_records)") as cursor:
-            existing_columns = {row[1] for row in await cursor.fetchall()}
-        migrations: list[tuple[str, str]] = [
-            ("embedding", "ALTER TABLE memory_records ADD COLUMN embedding BLOB"),
-            (
-                "embedding_dim",
-                "ALTER TABLE memory_records ADD COLUMN embedding_dim INTEGER",
-            ),
-            (
-                "embedding_model",
-                "ALTER TABLE memory_records ADD COLUMN embedding_model TEXT",
-            ),
-        ]
-        for column_name, sql in migrations:
-            if column_name not in existing_columns:
-                await conn.execute(sql)
-                logger.info(
-                    "SqliteMemoryStore: migrated memory_records schema (added %s)",
-                    column_name,
-                )
+            # Add embedding columns to databases created before hybrid
+            # retrieval shipped. PRAGMA table_info returns one row per
+            # column; we collect column names and ALTER anything missing.
+            async with conn.execute("PRAGMA table_info(memory_records)") as cursor:
+                existing_columns = {row[1] for row in await cursor.fetchall()}
+            migrations: list[tuple[str, str]] = [
+                ("embedding", "ALTER TABLE memory_records ADD COLUMN embedding BLOB"),
+                (
+                    "embedding_dim",
+                    "ALTER TABLE memory_records ADD COLUMN embedding_dim INTEGER",
+                ),
+                (
+                    "embedding_model",
+                    "ALTER TABLE memory_records ADD COLUMN embedding_model TEXT",
+                ),
+            ]
+            for column_name, sql in migrations:
+                if column_name not in existing_columns:
+                    await conn.execute(sql)
+                    logger.info(
+                        "SqliteMemoryStore: migrated memory_records schema (added %s)",
+                        column_name,
+                    )
 
-        await SqliteMemoryStore._ensure_compound_unique_key(conn)
+            await SqliteMemoryStore._ensure_compound_unique_key(conn)
+        except BaseException:
+            await conn.rollback()
+            raise
         await conn.commit()
 
     async def aput(

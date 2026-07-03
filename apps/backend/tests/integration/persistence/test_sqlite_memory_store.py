@@ -29,7 +29,10 @@ from typing import Any
 
 import pytest
 
-from agent.memory.store.sqlite import SqliteMemoryStore
+from agent.memory.store.sqlite import (
+    MEMORY_RECORDS_REBUILD_BACKUP_TABLE,
+    SqliteMemoryStore,
+)
 from agent.memory.store import MemoryStore, StoreRecord
 
 
@@ -727,6 +730,63 @@ async def test_old_sqlite_db_global_id_unique_constraint_is_removed(
         "evidence_quote": "same id under another owner is allowed"
     }
     assert count == 3
+    assert _has_global_id_unique_key(db_path) is False
+    assert _has_compound_unique_key(db_path) is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_global_id_rebuild_rolls_back_on_copy_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "old_memory_rebuild_failure.sqlite3"
+    _create_old_memory_db(db_path, ddl=OLD_MEMORY_RECORDS_GLOBAL_ID_UNIQUE_DDL)
+    _insert_old_memory_record(
+        db_path,
+        key="shared-key",
+        owner_id="user-1",
+        namespace_kind="semantic",
+        value={"evidence_quote": "must survive failed migration"},
+    )
+
+    original_rebuild = SqliteMemoryStore._rebuild_without_legacy_global_id_unique
+
+    async def failing_rebuild(conn) -> int:  # noqa: ANN001
+        backup_table = SqliteMemoryStore._quote_identifier(  # noqa: SLF001
+            MEMORY_RECORDS_REBUILD_BACKUP_TABLE
+        )
+        await conn.execute(f"DROP TABLE IF EXISTS {backup_table}")
+        await conn.execute(f"ALTER TABLE memory_records RENAME TO {backup_table}")
+        raise RuntimeError("forced rebuild copy failure")
+
+    monkeypatch.setattr(
+        SqliteMemoryStore,
+        "_rebuild_without_legacy_global_id_unique",
+        staticmethod(failing_rebuild),
+    )
+    failing_store = SqliteMemoryStore(db_path)
+    with pytest.raises(RuntimeError, match="forced rebuild copy failure"):
+        await failing_store._ensure_connection()  # noqa: SLF001
+
+    monkeypatch.setattr(
+        SqliteMemoryStore,
+        "_rebuild_without_legacy_global_id_unique",
+        staticmethod(original_rebuild),
+    )
+    store = SqliteMemoryStore(db_path)
+    record = await store.aget(("user-1", "semantic"), "shared-key")
+    await store.aput(
+        ("user-1", "episodic"),
+        "shared-key",
+        {"summary": "post-rollback migration succeeds"},
+    )
+    episodic = await store.aget(("user-1", "episodic"), "shared-key")
+    await store.aclose()
+
+    assert record is not None
+    assert record.value == {"evidence_quote": "must survive failed migration"}
+    assert episodic is not None
+    assert episodic.value == {"summary": "post-rollback migration succeeds"}
     assert _has_global_id_unique_key(db_path) is False
     assert _has_compound_unique_key(db_path) is True
 
