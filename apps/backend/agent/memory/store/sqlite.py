@@ -145,6 +145,8 @@ CREATE INDEX IF NOT EXISTS idx_memory_last_ref
 """
 
 MEMORY_RECORDS_UNIQUE_KEY_COLUMNS = ("id", "owner_id", "namespace_kind")
+MEMORY_RECORDS_LEGACY_GLOBAL_ID_COLUMNS = ("id",)
+MEMORY_RECORDS_REBUILD_BACKUP_TABLE = "memory_records__legacy_unique_migration"
 MEMORY_RECORDS_UNIQUE_KEY_INDEX_DDL = """
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_records_unique_key
     ON memory_records(id, owner_id, namespace_kind);
@@ -262,8 +264,11 @@ class SqliteMemoryStore:
         return '"' + identifier.replace('"', '""') + '"'
 
     @staticmethod
-    async def _has_compound_unique_key(conn: aiosqlite.Connection) -> bool:
-        """Return whether ``memory_records`` has the current unique key."""
+    async def _has_unique_key(
+        conn: aiosqlite.Connection,
+        columns: tuple[str, ...],
+    ) -> bool:
+        """Return whether ``memory_records`` has a unique key on ``columns``."""
 
         async with conn.execute("PRAGMA index_list(memory_records)") as cursor:
             indexes = await cursor.fetchall()
@@ -279,9 +284,35 @@ class SqliteMemoryStore:
                 index_columns = tuple(
                     str(index_row[2]) for index_row in await cursor.fetchall()
                 )
-            if index_columns == MEMORY_RECORDS_UNIQUE_KEY_COLUMNS:
+            if index_columns == columns:
                 return True
         return False
+
+    @staticmethod
+    async def _has_compound_unique_key(conn: aiosqlite.Connection) -> bool:
+        """Return whether ``memory_records`` has the current unique key."""
+
+        return await SqliteMemoryStore._has_unique_key(
+            conn,
+            MEMORY_RECORDS_UNIQUE_KEY_COLUMNS,
+        )
+
+    @staticmethod
+    async def _has_legacy_global_id_unique_key(conn: aiosqlite.Connection) -> bool:
+        """Return whether an old global ``UNIQUE(id)`` key remains."""
+
+        return await SqliteMemoryStore._has_unique_key(
+            conn,
+            MEMORY_RECORDS_LEGACY_GLOBAL_ID_COLUMNS,
+        )
+
+    @staticmethod
+    async def _scalar_int(conn: aiosqlite.Connection, sql: str) -> int:
+        """Execute a scalar integer SELECT."""
+
+        async with conn.execute(sql) as cursor:
+            row = await cursor.fetchone()
+        return int(row[0]) if row is not None else 0
 
     @staticmethod
     async def _deduplicate_compound_keys(conn: aiosqlite.Connection) -> int:
@@ -311,8 +342,75 @@ class SqliteMemoryStore:
             await cursor.close()
 
     @staticmethod
+    async def _rebuild_without_legacy_global_id_unique(
+        conn: aiosqlite.Connection,
+    ) -> int:
+        """Rebuild old global-id-unique tables into the current table shape.
+
+        SQLite cannot drop a table-level ``UNIQUE(id)`` constraint in place.
+        Rebuilding removes the old autoindex, preserves rows, keeps the latest
+        row per compound key, and recreates non-unique helper indexes for the
+        new table.
+        """
+
+        backup_table = SqliteMemoryStore._quote_identifier(
+            MEMORY_RECORDS_REBUILD_BACKUP_TABLE
+        )
+        await conn.execute(f"DROP TABLE IF EXISTS {backup_table}")
+        total_before = await SqliteMemoryStore._scalar_int(
+            conn,
+            "SELECT COUNT(*) FROM memory_records",
+        )
+        await conn.execute(f"ALTER TABLE memory_records RENAME TO {backup_table}")
+        await conn.execute(MEMORY_RECORDS_DDL)
+        await conn.execute(
+            f"""
+            INSERT INTO memory_records
+                (insertion_order, id, owner_id, namespace_kind, category, value,
+                 created_at, last_referenced_at, dormant_at, user_visible,
+                 embedding, embedding_dim, embedding_model)
+            SELECT
+                insertion_order, id, owner_id, namespace_kind, category, value,
+                created_at, last_referenced_at, dormant_at, user_visible,
+                embedding, embedding_dim, embedding_model
+            FROM {backup_table}
+            WHERE insertion_order IN (
+                SELECT MAX(insertion_order)
+                FROM {backup_table}
+                GROUP BY id, owner_id, namespace_kind
+            )
+            ORDER BY insertion_order ASC
+            """
+        )
+        total_after = await SqliteMemoryStore._scalar_int(
+            conn,
+            "SELECT COUNT(*) FROM memory_records",
+        )
+        await conn.execute(f"DROP TABLE {backup_table}")
+        await conn.execute(MEMORY_RECORDS_INDEX_OWNER_KIND_DDL)
+        await conn.execute(MEMORY_RECORDS_INDEX_LAST_REF_DDL)
+        return max(0, total_before - total_after)
+
+    @staticmethod
     async def _ensure_compound_unique_key(conn: aiosqlite.Connection) -> None:
-        """Ensure old SQLite files have the current ``aput`` conflict target."""
+        """Ensure old SQLite files have only the current ``aput`` conflict target."""
+
+        if await SqliteMemoryStore._has_legacy_global_id_unique_key(conn):
+            deleted = await SqliteMemoryStore._rebuild_without_legacy_global_id_unique(
+                conn
+            )
+            if deleted:
+                logger.warning(
+                    "SqliteMemoryStore: removed %s duplicate memory_records rows "
+                    "while rebuilding legacy global-id-unique table; kept latest "
+                    "insertion_order per compound key",
+                    deleted,
+                )
+            logger.info(
+                "SqliteMemoryStore: rebuilt memory_records schema "
+                "(removed legacy UNIQUE(id) constraint)"
+            )
+            return
 
         if await SqliteMemoryStore._has_compound_unique_key(conn):
             return

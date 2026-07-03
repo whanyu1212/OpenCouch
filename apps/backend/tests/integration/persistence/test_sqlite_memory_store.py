@@ -52,11 +52,31 @@ CREATE TABLE memory_records (
 );
 """
 
+OLD_MEMORY_RECORDS_GLOBAL_ID_UNIQUE_DDL = """
+CREATE TABLE memory_records (
+    insertion_order INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    owner_id TEXT NOT NULL,
+    namespace_kind TEXT NOT NULL
+        CHECK (namespace_kind IN ('semantic', 'episodic', 'procedural')),
+    category TEXT,
+    value TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_referenced_at TEXT NOT NULL,
+    dormant_at TEXT,
+    user_visible INTEGER NOT NULL DEFAULT 1
+);
+"""
 
-def _create_old_memory_db(db_path: Path) -> None:
+
+def _create_old_memory_db(
+    db_path: Path,
+    *,
+    ddl: str = OLD_MEMORY_RECORDS_DDL,
+) -> None:
     conn = sqlite3.connect(db_path)
     try:
-        conn.execute(OLD_MEMORY_RECORDS_DDL)
+        conn.execute(ddl)
         conn.commit()
     finally:
         conn.close()
@@ -97,7 +117,7 @@ def _insert_old_memory_record(
         conn.close()
 
 
-def _has_compound_unique_key(db_path: Path) -> bool:
+def _has_unique_key(db_path: Path, columns: tuple[str, ...]) -> bool:
     conn = sqlite3.connect(db_path)
     try:
         for row in conn.execute("PRAGMA index_list(memory_records)").fetchall():
@@ -106,17 +126,25 @@ def _has_compound_unique_key(db_path: Path) -> bool:
             if not is_unique:
                 continue
             quoted_index_name = '"' + index_name.replace('"', '""') + '"'
-            columns = tuple(
+            index_columns = tuple(
                 str(index_row[2])
                 for index_row in conn.execute(
                     f"PRAGMA index_info({quoted_index_name})"
                 ).fetchall()
             )
-            if columns == ("id", "owner_id", "namespace_kind"):
+            if index_columns == columns:
                 return True
         return False
     finally:
         conn.close()
+
+
+def _has_compound_unique_key(db_path: Path) -> bool:
+    return _has_unique_key(db_path, ("id", "owner_id", "namespace_kind"))
+
+
+def _has_global_id_unique_key(db_path: Path) -> bool:
+    return _has_unique_key(db_path, ("id",))
 
 
 # ─── Round-trip tests ──────────────────────────────────────────────────
@@ -654,6 +682,52 @@ async def test_old_sqlite_db_without_compound_unique_index_migrates(
     assert record.embedding == pytest.approx([0.25, 0.75])
     assert record.embedding_model == "test-embedding-model"
     assert count == 1
+    assert _has_compound_unique_key(db_path) is True
+
+
+@pytest.mark.asyncio
+async def test_old_sqlite_db_global_id_unique_constraint_is_removed(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "old_memory_global_id_unique.sqlite3"
+    _create_old_memory_db(db_path, ddl=OLD_MEMORY_RECORDS_GLOBAL_ID_UNIQUE_DDL)
+    _insert_old_memory_record(
+        db_path,
+        key="shared-key",
+        owner_id="user-1",
+        namespace_kind="semantic",
+        value={"evidence_quote": "legacy global id row"},
+    )
+
+    store = SqliteMemoryStore(db_path)
+    await store.aput(
+        ("user-1", "episodic"),
+        "shared-key",
+        {"summary": "same id under another namespace is allowed"},
+    )
+    await store.aput(
+        ("user-2", "semantic"),
+        "shared-key",
+        {"evidence_quote": "same id under another owner is allowed"},
+    )
+    semantic_user_1 = await store.aget(("user-1", "semantic"), "shared-key")
+    episodic_user_1 = await store.aget(("user-1", "episodic"), "shared-key")
+    semantic_user_2 = await store.aget(("user-2", "semantic"), "shared-key")
+    count = await store.arecord_count()
+    await store.aclose()
+
+    assert semantic_user_1 is not None
+    assert semantic_user_1.value == {"evidence_quote": "legacy global id row"}
+    assert episodic_user_1 is not None
+    assert episodic_user_1.value == {
+        "summary": "same id under another namespace is allowed"
+    }
+    assert semantic_user_2 is not None
+    assert semantic_user_2.value == {
+        "evidence_quote": "same id under another owner is allowed"
+    }
+    assert count == 3
+    assert _has_global_id_unique_key(db_path) is False
     assert _has_compound_unique_key(db_path) is True
 
 
