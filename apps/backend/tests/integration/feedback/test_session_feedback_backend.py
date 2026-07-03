@@ -21,6 +21,8 @@ What these tests assert:
 
 from __future__ import annotations
 
+import asyncio
+import dataclasses
 import sqlite3
 from datetime import date
 from pathlib import Path
@@ -197,6 +199,69 @@ class TestNullBackend:
 
 
 class TestSqliteBackend:
+    @pytest.mark.asyncio
+    async def test_concurrent_first_append_list_count_share_one_connection(
+        self, tmp_path: Path
+    ) -> None:
+        backend = SqliteSessionFeedbackBackend(tmp_path / "feedback.sqlite3")
+        store = backend._store  # noqa: SLF001 - concurrency regression introspection
+        base_dialect = store._dialect  # noqa: SLF001
+        connect_calls = 0
+
+        async def delayed_connect(target: str):
+            nonlocal connect_calls
+            connect_calls += 1
+            await asyncio.sleep(0.01)
+            return await base_dialect.connect(target)
+
+        store._dialect = dataclasses.replace(  # noqa: SLF001
+            base_dialect,
+            _connect=delayed_connect,
+        )
+
+        try:
+            await asyncio.gather(
+                backend.aappend(_record(session="abc")),
+                backend.alist_by_session("abc"),
+                backend.arecord_count(),
+            )
+
+            assert connect_calls == 1
+            assert await backend.arecord_count() == 1
+        finally:
+            await backend.aclose()
+
+    @pytest.mark.asyncio
+    async def test_concurrent_first_appends_all_persist(self, tmp_path: Path) -> None:
+        backend = SqliteSessionFeedbackBackend(tmp_path / "feedback.sqlite3")
+        store = backend._store  # noqa: SLF001 - concurrency regression introspection
+        base_dialect = store._dialect  # noqa: SLF001
+        connect_calls = 0
+
+        async def delayed_connect(target: str):
+            nonlocal connect_calls
+            connect_calls += 1
+            await asyncio.sleep(0.01)
+            return await base_dialect.connect(target)
+
+        store._dialect = dataclasses.replace(  # noqa: SLF001
+            base_dialect,
+            _connect=delayed_connect,
+        )
+        records = [
+            _record(id_suffix=f"{i:012d}", session="concurrent") for i in range(10)
+        ]
+
+        try:
+            await asyncio.gather(*(backend.aappend(record) for record in records))
+
+            assert connect_calls == 1
+            assert await backend.arecord_count() == len(records)
+            listed = await backend.alist_by_session("concurrent")
+            assert {record.id for record in listed} == {record.id for record in records}
+        finally:
+            await backend.aclose()
+
     @pytest.mark.asyncio
     async def test_schema_is_idempotent_across_opens(self, tmp_path: Path) -> None:
         """Running the DDL twice (across two backend instances
