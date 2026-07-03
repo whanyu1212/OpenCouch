@@ -22,12 +22,132 @@ Test structure:
 from __future__ import annotations
 
 import asyncio
+import json
+import sqlite3
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from agent.memory.store.sqlite import SqliteMemoryStore
+from agent.memory.store.sqlite import (
+    MEMORY_RECORDS_REBUILD_BACKUP_TABLE,
+    SqliteMemoryStore,
+)
 from agent.memory.store import MemoryStore, StoreRecord
+
+
+# ─── Test helpers ──────────────────────────────────────────────────────
+
+
+OLD_MEMORY_RECORDS_DDL = """
+CREATE TABLE memory_records (
+    insertion_order INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
+    namespace_kind TEXT NOT NULL
+        CHECK (namespace_kind IN ('semantic', 'episodic', 'procedural')),
+    category TEXT,
+    value TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_referenced_at TEXT NOT NULL,
+    dormant_at TEXT,
+    user_visible INTEGER NOT NULL DEFAULT 1
+);
+"""
+
+OLD_MEMORY_RECORDS_GLOBAL_ID_UNIQUE_DDL = """
+CREATE TABLE memory_records (
+    insertion_order INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT NOT NULL UNIQUE,
+    owner_id TEXT NOT NULL,
+    namespace_kind TEXT NOT NULL
+        CHECK (namespace_kind IN ('semantic', 'episodic', 'procedural')),
+    category TEXT,
+    value TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    last_referenced_at TEXT NOT NULL,
+    dormant_at TEXT,
+    user_visible INTEGER NOT NULL DEFAULT 1
+);
+"""
+
+
+def _create_old_memory_db(
+    db_path: Path,
+    *,
+    ddl: str = OLD_MEMORY_RECORDS_DDL,
+) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(ddl)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _insert_old_memory_record(
+    db_path: Path,
+    *,
+    key: str,
+    owner_id: str,
+    namespace_kind: str,
+    value: dict[str, Any],
+    created_at: str = "2026-01-01T00:00:00Z",
+) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.execute(
+            """
+            INSERT INTO memory_records
+                (id, owner_id, namespace_kind, category, value, created_at,
+                 last_referenced_at, dormant_at, user_visible)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                key,
+                owner_id,
+                namespace_kind,
+                value.get("category"),
+                json.dumps(value),
+                created_at,
+                created_at,
+                None,
+                1,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _has_unique_key(db_path: Path, columns: tuple[str, ...]) -> bool:
+    conn = sqlite3.connect(db_path)
+    try:
+        for row in conn.execute("PRAGMA index_list(memory_records)").fetchall():
+            index_name = str(row[1])
+            is_unique = bool(row[2])
+            if not is_unique:
+                continue
+            quoted_index_name = '"' + index_name.replace('"', '""') + '"'
+            index_columns = tuple(
+                str(index_row[2])
+                for index_row in conn.execute(
+                    f"PRAGMA index_info({quoted_index_name})"
+                ).fetchall()
+            )
+            if index_columns == columns:
+                return True
+        return False
+    finally:
+        conn.close()
+
+
+def _has_compound_unique_key(db_path: Path) -> bool:
+    return _has_unique_key(db_path, ("id", "owner_id", "namespace_kind"))
+
+
+def _has_global_id_unique_key(db_path: Path) -> bool:
+    return _has_unique_key(db_path, ("id",))
 
 
 # ─── Round-trip tests ──────────────────────────────────────────────────
@@ -532,6 +652,199 @@ async def test_search_works_after_reopen(tmp_path) -> None:
 
 
 # ─── Schema + protocol conformance ─────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_old_sqlite_db_without_compound_unique_index_migrates(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "old_memory.sqlite3"
+    _create_old_memory_db(db_path)
+    _insert_old_memory_record(
+        db_path,
+        key="fact-1",
+        owner_id="user-1",
+        namespace_kind="semantic",
+        value={"evidence_quote": "old value"},
+    )
+
+    store = SqliteMemoryStore(db_path)
+    await store.aput(
+        ("user-1", "semantic"),
+        "fact-1",
+        {"evidence_quote": "new value"},
+        embedding=[0.25, 0.75],
+        embedding_model="test-embedding-model",
+    )
+    record = await store.aget(("user-1", "semantic"), "fact-1")
+    count = await store.arecord_count(("user-1", "semantic"))
+    await store.aclose()
+
+    assert record is not None
+    assert record.value == {"evidence_quote": "new value"}
+    assert record.embedding == pytest.approx([0.25, 0.75])
+    assert record.embedding_model == "test-embedding-model"
+    assert count == 1
+    assert _has_compound_unique_key(db_path) is True
+
+
+@pytest.mark.asyncio
+async def test_old_sqlite_db_global_id_unique_constraint_is_removed(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "old_memory_global_id_unique.sqlite3"
+    _create_old_memory_db(db_path, ddl=OLD_MEMORY_RECORDS_GLOBAL_ID_UNIQUE_DDL)
+    _insert_old_memory_record(
+        db_path,
+        key="shared-key",
+        owner_id="user-1",
+        namespace_kind="semantic",
+        value={"evidence_quote": "legacy global id row"},
+    )
+
+    store = SqliteMemoryStore(db_path)
+    await store.aput(
+        ("user-1", "episodic"),
+        "shared-key",
+        {"summary": "same id under another namespace is allowed"},
+    )
+    await store.aput(
+        ("user-2", "semantic"),
+        "shared-key",
+        {"evidence_quote": "same id under another owner is allowed"},
+    )
+    semantic_user_1 = await store.aget(("user-1", "semantic"), "shared-key")
+    episodic_user_1 = await store.aget(("user-1", "episodic"), "shared-key")
+    semantic_user_2 = await store.aget(("user-2", "semantic"), "shared-key")
+    count = await store.arecord_count()
+    await store.aclose()
+
+    assert semantic_user_1 is not None
+    assert semantic_user_1.value == {"evidence_quote": "legacy global id row"}
+    assert episodic_user_1 is not None
+    assert episodic_user_1.value == {
+        "summary": "same id under another namespace is allowed"
+    }
+    assert semantic_user_2 is not None
+    assert semantic_user_2.value == {
+        "evidence_quote": "same id under another owner is allowed"
+    }
+    assert count == 3
+    assert _has_global_id_unique_key(db_path) is False
+    assert _has_compound_unique_key(db_path) is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_global_id_rebuild_rolls_back_on_copy_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "old_memory_rebuild_failure.sqlite3"
+    _create_old_memory_db(db_path, ddl=OLD_MEMORY_RECORDS_GLOBAL_ID_UNIQUE_DDL)
+    _insert_old_memory_record(
+        db_path,
+        key="shared-key",
+        owner_id="user-1",
+        namespace_kind="semantic",
+        value={"evidence_quote": "must survive failed migration"},
+    )
+
+    original_rebuild = SqliteMemoryStore._rebuild_without_legacy_global_id_unique
+
+    async def failing_rebuild(conn) -> int:  # noqa: ANN001
+        backup_table = SqliteMemoryStore._quote_identifier(  # noqa: SLF001
+            MEMORY_RECORDS_REBUILD_BACKUP_TABLE
+        )
+        await conn.execute(f"DROP TABLE IF EXISTS {backup_table}")
+        await conn.execute(f"ALTER TABLE memory_records RENAME TO {backup_table}")
+        raise RuntimeError("forced rebuild copy failure")
+
+    monkeypatch.setattr(
+        SqliteMemoryStore,
+        "_rebuild_without_legacy_global_id_unique",
+        staticmethod(failing_rebuild),
+    )
+    failing_store = SqliteMemoryStore(db_path)
+    with pytest.raises(RuntimeError, match="forced rebuild copy failure"):
+        await failing_store._ensure_connection()  # noqa: SLF001
+
+    monkeypatch.setattr(
+        SqliteMemoryStore,
+        "_rebuild_without_legacy_global_id_unique",
+        staticmethod(original_rebuild),
+    )
+    store = SqliteMemoryStore(db_path)
+    record = await store.aget(("user-1", "semantic"), "shared-key")
+    await store.aput(
+        ("user-1", "episodic"),
+        "shared-key",
+        {"summary": "post-rollback migration succeeds"},
+    )
+    episodic = await store.aget(("user-1", "episodic"), "shared-key")
+    await store.aclose()
+
+    assert record is not None
+    assert record.value == {"evidence_quote": "must survive failed migration"}
+    assert episodic is not None
+    assert episodic.value == {"summary": "post-rollback migration succeeds"}
+    assert _has_global_id_unique_key(db_path) is False
+    assert _has_compound_unique_key(db_path) is True
+
+
+@pytest.mark.asyncio
+async def test_old_sqlite_db_duplicate_keys_keep_latest_record(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "old_memory_duplicates.sqlite3"
+    _create_old_memory_db(db_path)
+    _insert_old_memory_record(
+        db_path,
+        key="shared-key",
+        owner_id="user-1",
+        namespace_kind="semantic",
+        value={"evidence_quote": "older duplicate"},
+        created_at="2026-01-01T00:00:00Z",
+    )
+    _insert_old_memory_record(
+        db_path,
+        key="shared-key",
+        owner_id="user-1",
+        namespace_kind="semantic",
+        value={"evidence_quote": "newer duplicate"},
+        created_at="2026-01-02T00:00:00Z",
+    )
+    _insert_old_memory_record(
+        db_path,
+        key="shared-key",
+        owner_id="user-1",
+        namespace_kind="episodic",
+        value={"summary": "same id, different namespace survives"},
+        created_at="2026-01-03T00:00:00Z",
+    )
+
+    store = SqliteMemoryStore(db_path)
+    semantic = await store.aget(("user-1", "semantic"), "shared-key")
+    episodic = await store.aget(("user-1", "episodic"), "shared-key")
+    count_after_migration = await store.arecord_count()
+
+    await store.aput(
+        ("user-1", "semantic"),
+        "shared-key",
+        {"evidence_quote": "post-migration update"},
+    )
+    updated = await store.aget(("user-1", "semantic"), "shared-key")
+    count_after_update = await store.arecord_count()
+    await store.aclose()
+
+    assert semantic is not None
+    assert semantic.value == {"evidence_quote": "newer duplicate"}
+    assert episodic is not None
+    assert episodic.value == {"summary": "same id, different namespace survives"}
+    assert count_after_migration == 2
+    assert updated is not None
+    assert updated.value == {"evidence_quote": "post-migration update"}
+    assert count_after_update == 2
+    assert _has_compound_unique_key(db_path) is True
 
 
 def test_satisfies_memory_store_protocol() -> None:

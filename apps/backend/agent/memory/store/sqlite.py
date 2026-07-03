@@ -144,6 +144,14 @@ CREATE INDEX IF NOT EXISTS idx_memory_last_ref
     ON memory_records(last_referenced_at);
 """
 
+MEMORY_RECORDS_UNIQUE_KEY_COLUMNS = ("id", "owner_id", "namespace_kind")
+MEMORY_RECORDS_LEGACY_GLOBAL_ID_COLUMNS = ("id",)
+MEMORY_RECORDS_REBUILD_BACKUP_TABLE = "memory_records__legacy_unique_migration"
+MEMORY_RECORDS_UNIQUE_KEY_INDEX_DDL = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_records_unique_key
+    ON memory_records(id, owner_id, namespace_kind);
+"""
+
 # All DDL statements to run on ``_ensure_schema``. Executing them in
 # order is safe because every statement is ``IF NOT EXISTS``.
 MEMORY_SCHEMA_DDL: tuple[str, ...] = (
@@ -250,6 +258,177 @@ class SqliteMemoryStore:
             return self._connection
 
     @staticmethod
+    def _quote_identifier(identifier: str) -> str:
+        """Quote a SQLite identifier for PRAGMA statements."""
+
+        return '"' + identifier.replace('"', '""') + '"'
+
+    @staticmethod
+    async def _has_unique_key(
+        conn: aiosqlite.Connection,
+        columns: tuple[str, ...],
+    ) -> bool:
+        """Return whether ``memory_records`` has a unique key on ``columns``."""
+
+        async with conn.execute("PRAGMA index_list(memory_records)") as cursor:
+            indexes = await cursor.fetchall()
+        for row in indexes:
+            index_name = str(row[1])
+            is_unique = bool(row[2])
+            if not is_unique:
+                continue
+            quoted_index_name = SqliteMemoryStore._quote_identifier(index_name)
+            async with conn.execute(
+                f"PRAGMA index_info({quoted_index_name})"
+            ) as cursor:
+                index_columns = tuple(
+                    str(index_row[2]) for index_row in await cursor.fetchall()
+                )
+            if index_columns == columns:
+                return True
+        return False
+
+    @staticmethod
+    async def _has_compound_unique_key(conn: aiosqlite.Connection) -> bool:
+        """Return whether ``memory_records`` has the current unique key."""
+
+        return await SqliteMemoryStore._has_unique_key(
+            conn,
+            MEMORY_RECORDS_UNIQUE_KEY_COLUMNS,
+        )
+
+    @staticmethod
+    async def _has_legacy_global_id_unique_key(conn: aiosqlite.Connection) -> bool:
+        """Return whether an old global ``UNIQUE(id)`` key remains."""
+
+        return await SqliteMemoryStore._has_unique_key(
+            conn,
+            MEMORY_RECORDS_LEGACY_GLOBAL_ID_COLUMNS,
+        )
+
+    @staticmethod
+    async def _scalar_int(conn: aiosqlite.Connection, sql: str) -> int:
+        """Execute a scalar integer SELECT."""
+
+        async with conn.execute(sql) as cursor:
+            row = await cursor.fetchone()
+        return int(row[0]) if row is not None else 0
+
+    @staticmethod
+    async def _deduplicate_compound_keys(conn: aiosqlite.Connection) -> int:
+        """Collapse old duplicate rows before adding the compound unique key.
+
+        Older SQLite memory DBs could contain duplicate
+        ``(id, owner_id, namespace_kind)`` rows because the table lacked the
+        conflict target used by ``aput``. Migration keeps the highest
+        ``insertion_order`` row for each duplicate group, matching the observable
+        "latest write wins" semantics that current ``aput`` provides, and
+        preserves same-id rows in different owners or namespace kinds.
+        """
+
+        cursor = await conn.execute(
+            """
+            DELETE FROM memory_records
+            WHERE insertion_order NOT IN (
+                SELECT MAX(insertion_order)
+                FROM memory_records
+                GROUP BY id, owner_id, namespace_kind
+            )
+            """
+        )
+        try:
+            return int(cursor.rowcount or 0)
+        finally:
+            await cursor.close()
+
+    @staticmethod
+    async def _rebuild_without_legacy_global_id_unique(
+        conn: aiosqlite.Connection,
+    ) -> int:
+        """Rebuild old global-id-unique tables into the current table shape.
+
+        SQLite cannot drop a table-level ``UNIQUE(id)`` constraint in place.
+        Rebuilding removes the old autoindex, preserves rows, keeps the latest
+        row per compound key, and recreates non-unique helper indexes for the
+        new table.
+        """
+
+        backup_table = SqliteMemoryStore._quote_identifier(
+            MEMORY_RECORDS_REBUILD_BACKUP_TABLE
+        )
+        await conn.execute(f"DROP TABLE IF EXISTS {backup_table}")
+        total_before = await SqliteMemoryStore._scalar_int(
+            conn,
+            "SELECT COUNT(*) FROM memory_records",
+        )
+        await conn.execute(f"ALTER TABLE memory_records RENAME TO {backup_table}")
+        await conn.execute(MEMORY_RECORDS_DDL)
+        await conn.execute(
+            f"""
+            INSERT INTO memory_records
+                (insertion_order, id, owner_id, namespace_kind, category, value,
+                 created_at, last_referenced_at, dormant_at, user_visible,
+                 embedding, embedding_dim, embedding_model)
+            SELECT
+                insertion_order, id, owner_id, namespace_kind, category, value,
+                created_at, last_referenced_at, dormant_at, user_visible,
+                embedding, embedding_dim, embedding_model
+            FROM {backup_table}
+            WHERE insertion_order IN (
+                SELECT MAX(insertion_order)
+                FROM {backup_table}
+                GROUP BY id, owner_id, namespace_kind
+            )
+            ORDER BY insertion_order ASC
+            """
+        )
+        total_after = await SqliteMemoryStore._scalar_int(
+            conn,
+            "SELECT COUNT(*) FROM memory_records",
+        )
+        await conn.execute(f"DROP TABLE {backup_table}")
+        await conn.execute(MEMORY_RECORDS_INDEX_OWNER_KIND_DDL)
+        await conn.execute(MEMORY_RECORDS_INDEX_LAST_REF_DDL)
+        return max(0, total_before - total_after)
+
+    @staticmethod
+    async def _ensure_compound_unique_key(conn: aiosqlite.Connection) -> None:
+        """Ensure old SQLite files have only the current ``aput`` conflict target."""
+
+        if await SqliteMemoryStore._has_legacy_global_id_unique_key(conn):
+            deleted = await SqliteMemoryStore._rebuild_without_legacy_global_id_unique(
+                conn
+            )
+            if deleted:
+                logger.warning(
+                    "SqliteMemoryStore: removed %s duplicate memory_records rows "
+                    "while rebuilding legacy global-id-unique table; kept latest "
+                    "insertion_order per compound key",
+                    deleted,
+                )
+            logger.info(
+                "SqliteMemoryStore: rebuilt memory_records schema "
+                "(removed legacy UNIQUE(id) constraint)"
+            )
+            return
+
+        if await SqliteMemoryStore._has_compound_unique_key(conn):
+            return
+
+        deleted = await SqliteMemoryStore._deduplicate_compound_keys(conn)
+        if deleted:
+            logger.warning(
+                "SqliteMemoryStore: removed %s duplicate memory_records rows while "
+                "migrating compound unique key; kept latest insertion_order per key",
+                deleted,
+            )
+        await conn.execute(MEMORY_RECORDS_UNIQUE_KEY_INDEX_DDL)
+        logger.info(
+            "SqliteMemoryStore: migrated memory_records schema "
+            "(added compound unique key index)"
+        )
+
+    @staticmethod
     async def _ensure_schema(conn: aiosqlite.Connection) -> None:
         """Ensure the SQLite schema is present and migrated.
 
@@ -260,33 +439,39 @@ class SqliteMemoryStore:
             None: Applies schema DDL and lightweight migrations.
         """
 
-        for ddl in MEMORY_SCHEMA_DDL:
-            await conn.execute(ddl)
+        await conn.execute("BEGIN")
+        try:
+            for ddl in MEMORY_SCHEMA_DDL:
+                await conn.execute(ddl)
 
-        # Add embedding columns to databases created before hybrid
-        # retrieval shipped. PRAGMA table_info returns one row per
-        # column; we collect column names and ALTER anything missing.
-        async with conn.execute("PRAGMA table_info(memory_records)") as cursor:
-            existing_columns = {row[1] for row in await cursor.fetchall()}
-        migrations: list[tuple[str, str]] = [
-            ("embedding", "ALTER TABLE memory_records ADD COLUMN embedding BLOB"),
-            (
-                "embedding_dim",
-                "ALTER TABLE memory_records ADD COLUMN embedding_dim INTEGER",
-            ),
-            (
-                "embedding_model",
-                "ALTER TABLE memory_records ADD COLUMN embedding_model TEXT",
-            ),
-        ]
-        for column_name, sql in migrations:
-            if column_name not in existing_columns:
-                await conn.execute(sql)
-                logger.info(
-                    "SqliteMemoryStore: migrated memory_records schema (added %s)",
-                    column_name,
-                )
+            # Add embedding columns to databases created before hybrid
+            # retrieval shipped. PRAGMA table_info returns one row per
+            # column; we collect column names and ALTER anything missing.
+            async with conn.execute("PRAGMA table_info(memory_records)") as cursor:
+                existing_columns = {row[1] for row in await cursor.fetchall()}
+            migrations: list[tuple[str, str]] = [
+                ("embedding", "ALTER TABLE memory_records ADD COLUMN embedding BLOB"),
+                (
+                    "embedding_dim",
+                    "ALTER TABLE memory_records ADD COLUMN embedding_dim INTEGER",
+                ),
+                (
+                    "embedding_model",
+                    "ALTER TABLE memory_records ADD COLUMN embedding_model TEXT",
+                ),
+            ]
+            for column_name, sql in migrations:
+                if column_name not in existing_columns:
+                    await conn.execute(sql)
+                    logger.info(
+                        "SqliteMemoryStore: migrated memory_records schema (added %s)",
+                        column_name,
+                    )
 
+            await SqliteMemoryStore._ensure_compound_unique_key(conn)
+        except BaseException:
+            await conn.rollback()
+            raise
         await conn.commit()
 
     async def aput(
