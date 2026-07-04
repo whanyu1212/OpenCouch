@@ -141,6 +141,15 @@ def render_exercise_skill_context(
     return "\n".join(lines)
 
 
+def _supported_channels_for_definition(
+    definition: ExerciseDefinition,
+) -> tuple[str, ...]:
+    channels = list(definition.channels)
+    if definition.voice_supported and "voice" not in channels:
+        channels.append("voice")
+    return tuple(channels)
+
+
 def _skill_doc_guidance(exercise_type: str) -> list[str]:
     skill_doc = get_guided_exercise_skill_doc(exercise_type)
     if skill_doc is None:
@@ -161,7 +170,7 @@ def _skill_from_definition(definition: ExerciseDefinition) -> ExerciseSkill:
         tags=definition.tags,
         intensity=definition.intensity,
         duration_seconds=definition.duration_seconds,
-        supported_channels=definition.channels,
+        supported_channels=_supported_channels_for_definition(definition),
         required_capability=definition.required_skill,
         steps=tuple(
             ExerciseSkillStep(

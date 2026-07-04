@@ -160,6 +160,10 @@ LEAVES_ON_STREAM_DEFINITION = ExerciseDefinition(
     duration_seconds=480,
     intensity="medium",
     selection_aliases=("defusion", "leaves exercise", "let go"),
+    text_fit="okay",
+    voice_fit="poor",
+    interaction_pattern="imagery",
+    cognitive_load="medium",
 )
 
 VALUES_COMPASS_DEFINITION = ExerciseDefinition(
@@ -173,6 +177,10 @@ VALUES_COMPASS_DEFINITION = ExerciseDefinition(
     intensity="medium",
     selection_aliases=("values", "values compass", "what matters"),
     voice_supported=True,
+    text_fit="good",
+    voice_fit="okay",
+    interaction_pattern="planning",
+    cognitive_load="medium",
 )
 
 
