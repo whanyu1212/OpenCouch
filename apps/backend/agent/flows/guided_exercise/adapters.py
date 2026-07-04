@@ -123,6 +123,26 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
             session=self._session,
         )
         chunks: list[str] = []
+        if tool_request is None:
+            async for sdk_event in stream.stream_events():
+                chunk = chunk_from_sdk_event(sdk_event)
+                if chunk:
+                    chunks.append(chunk)
+                    yield chunk
+
+            self.last_duration_ms = elapsed_ms(run_start)
+            final_text = final_output_text(
+                getattr(stream, "final_output", None),
+                fallback="".join(chunks),
+            )
+            if final_text and not chunks:
+                yield final_text
+            return
+
+        # Tool-forcing prompts need a post-stream fallback decision: if the
+        # SDK did not call the requested skill tool, we retry non-streaming with
+        # the original prompt. Keep that path buffered so we never emit partial
+        # first-pass chunks and then replace them with fallback prose.
         async for sdk_event in stream.stream_events():
             chunk = chunk_from_sdk_event(sdk_event)
             if chunk:
@@ -133,7 +153,7 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
             getattr(stream, "final_output", None),
             fallback="".join(chunks),
         )
-        if tool_request is not None and not _guided_exercise_skill_tool_called(
+        if not _guided_exercise_skill_tool_called(
             self._run_context,
             tool_call_count=tool_call_count,
         ):
