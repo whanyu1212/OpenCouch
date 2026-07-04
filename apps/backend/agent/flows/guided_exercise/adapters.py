@@ -125,12 +125,20 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
         chunks: list[str] = []
         buffered_chunks: list[str] = []
         tool_called = tool_request is None
+
+        async def flush_buffered_chunks() -> AsyncIterator[str]:
+            while buffered_chunks:
+                yield buffered_chunks.pop(0)
+
         async for sdk_event in stream.stream_events():
             if tool_request is not None and not tool_called:
                 tool_called = _guided_exercise_skill_tool_called(
                     self._run_context,
                     tool_call_count=tool_call_count,
                 )
+                if tool_called:
+                    async for buffered_chunk in flush_buffered_chunks():
+                        yield buffered_chunk
             chunk = chunk_from_sdk_event(sdk_event)
             if chunk:
                 chunks.append(chunk)
@@ -144,9 +152,8 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
                     tool_call_count=tool_call_count,
                 )
                 if tool_called:
-                    for buffered_chunk in buffered_chunks:
+                    async for buffered_chunk in flush_buffered_chunks():
                         yield buffered_chunk
-                    buffered_chunks.clear()
 
         self.last_duration_ms = elapsed_ms(run_start)
         final_text = final_output_text(

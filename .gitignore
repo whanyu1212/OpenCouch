@@ -247,6 +247,7 @@ TELEGRAM_CHANNEL_IMPLEMENTATION.md
 # local references / skills worktrees
 refs/
 skills/
+.codegraph/
 !apps/backend/agent/skills/
 !apps/backend/agent/skills/**
 !apps/backend/tests/unit/skills/
