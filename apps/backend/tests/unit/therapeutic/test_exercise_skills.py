@@ -8,7 +8,7 @@ from agent.skills.guided_exercises.registry import (
     EXERCISE_5_4_3_2_1,
     EXERCISE_BOX_BREATHING,
 )
-from agent.skills.guided_exercises.skills import (
+from agent.skills.guided_exercises.rendering.skill_context import (
     build_exercise_skill,
     render_exercise_skill_context,
 )

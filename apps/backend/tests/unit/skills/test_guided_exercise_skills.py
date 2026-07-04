@@ -157,21 +157,6 @@ def test_available_exercises_filter_by_channel_and_capability() -> None:
     )
 
 
-def test_legacy_skill_context_import_path_reexports_renderer() -> None:
-    from agent.skills.guided_exercises.skills import (
-        render_exercise_skill_context as legacy_render,
-    )
-
-    rendered = legacy_render(
-        EXERCISE_5_4_3_2_1,
-        current_step_index=0,
-        runtime_action="start",
-    )
-
-    assert "Exercise skill:" in rendered
-    assert f"- skill_id: {EXERCISE_5_4_3_2_1}" in rendered
-
-
 def test_build_exercise_skill_rejects_unknown_exercise() -> None:
     assert get_exercise_definition("unknown_exercise") is None
     with pytest.raises(KeyError):
