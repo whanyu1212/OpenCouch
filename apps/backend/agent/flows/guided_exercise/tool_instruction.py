@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
-from agent.flows.tool_forcing import force_tool_directive
 from agent.runtime.context import OpenAITextRunContext
+from agent.skills.guided_exercises.rendering.directives import (
+    GuidedExerciseDirective,
+    render_tool_forced_guided_exercise_directive,
+)
 
 
 @dataclass(frozen=True)
@@ -32,29 +34,29 @@ def _replace_exercise_skill_context_with_tool_instruction(
         return prompt, None
 
     current_step_index = _parse_optional_int(_skill_block_value(skill_block, "index"))
-    arguments: dict[str, Any] = {
-        "exercise_type": exercise_type,
-        "runtime_action": runtime_action,
-    }
-    if current_step_index is not None:
-        arguments["current_step_index"] = current_step_index
-
-    replacement = (
-        "Exercise skill:\n"
-        "(skill context is owned by GuidedExerciseAgent tools)\n"
-        + force_tool_directive("load_guided_exercise_skill", arguments)
-        + "Use only the "
-        "returned skill_context plus the Runtime task below. Do not invent "
-        "exercise steps, switch exercises, or offer a menu."
+    request = _ExerciseSkillToolRequest(
+        exercise_type=exercise_type,
+        runtime_action=runtime_action,
+        current_step_index=current_step_index,
     )
+    replacement = _render_tool_forced_skill_block(request)
     return (
         f"{prompt[:skill_start]}{replacement}{prompt[runtime_task_start:]}",
-        _ExerciseSkillToolRequest(
-            exercise_type=exercise_type,
-            runtime_action=runtime_action,
-            current_step_index=current_step_index,
-        ),
+        request,
     )
+
+
+def _render_tool_forced_skill_block(request: _ExerciseSkillToolRequest) -> str:
+    """Render the forced-tool skill block while preserving the legacy suffix."""
+
+    directive = GuidedExerciseDirective(
+        exercise_type=request.exercise_type,
+        runtime_action=request.runtime_action,
+        current_step_index=request.current_step_index,
+        runtime_task="",
+    )
+    rendered = render_tool_forced_guided_exercise_directive(directive)
+    return rendered.removesuffix("\n\nRuntime task:\n")
 
 
 def _skill_block_value(block: str, key: str) -> str:

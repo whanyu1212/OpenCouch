@@ -20,8 +20,9 @@ from agent.skills.guided_exercises.registry import (
     get_exercise_display_name,
     get_exercise_steps,
 )
-from agent.skills.guided_exercises.rendering.skill_context import (
-    render_exercise_skill_context,
+from agent.skills.guided_exercises.rendering.directives import (
+    GuidedExerciseDirective,
+    render_full_guided_exercise_directive,
 )
 from agent.skills.guided_exercises.engine.state import (
     _advance_step_delta,
@@ -84,6 +85,12 @@ async def generate_streamed_therapeutic_text(
     return "".join(chunks)
 
 
+def _render_response_directive(directive: GuidedExerciseDirective) -> str:
+    """Render a guided-exercise directive for response generation."""
+
+    return render_full_guided_exercise_directive(directive)
+
+
 async def _build_start_delta(
     state: AgentState,
     *,
@@ -108,14 +115,17 @@ async def _build_start_delta(
         raise KeyError(exercise_type)
     first_step = steps[0]
     display_name = get_exercise_display_name(exercise_type)
-    directive = (
-        f"{_render_skill_context(exercise_type, 0, runtime_action='start')}\n\n"
-        "Runtime task:\n"
-        f"Start the guided exercise {display_name}. "
-        f"Briefly name the exercise and invite the user into step 0.\n"
-        f'Step 0 instruction: "{first_step.instruction}"\n'
-        f"Rephrase naturally in your own words. Do NOT present a menu or "
-        f"ask whether they want a different exercise."
+    directive = GuidedExerciseDirective(
+        exercise_type=exercise_type,
+        runtime_action="start",
+        current_step_index=0,
+        runtime_task=(
+            f"Start the guided exercise {display_name}. "
+            f"Briefly name the exercise and invite the user into step 0.\n"
+            f'Step 0 instruction: "{first_step.instruction}"\n'
+            f"Rephrase naturally in your own words. Do NOT present a menu or "
+            f"ask whether they want a different exercise."
+        ),
     )
 
     response_text = await generate_streamed_therapeutic_text(
@@ -123,7 +133,7 @@ async def _build_start_delta(
         llm_client=llm_client,
         response_style="guided_exercise",
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=directive,
+        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -156,19 +166,22 @@ async def _build_exit_delta(
     exercise_state = state.get("exercise_state", {})
     step_index = exercise_state.get("exercise_step", 0)
     exercise_type = exercise_state.get("exercise_type") or EXERCISE_5_4_3_2_1
-    directive = (
-        f"{_render_skill_context(exercise_type, step_index, runtime_action='exit')}"
-        "\n\nRuntime task:\n"
-        "The user wants to stop or leave the current guided exercise. "
-        "Briefly acknowledge that choice, do not continue the exercise, and "
-        "ask what would feel most helpful now."
+    directive = GuidedExerciseDirective(
+        exercise_type=exercise_type,
+        runtime_action="exit",
+        current_step_index=step_index,
+        runtime_task=(
+            "The user wants to stop or leave the current guided exercise. "
+            "Briefly acknowledge that choice, do not continue the exercise, and "
+            "ask what would feel most helpful now."
+        ),
     )
     response_text = await generate_streamed_therapeutic_text(
         state=state,
         llm_client=llm_client,
         response_style="guided_exercise",
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=directive,
+        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -205,15 +218,18 @@ async def _build_resume_delta(
     current_step = _get_current_step(exercise_type, step_index)
     step_ref = current_step.instruction if current_step else ""
 
-    directive = (
-        f"{_render_skill_context(exercise_type, step_index, runtime_action='resume')}"
-        "\n\nRuntime task:\n"
-        f"The user is asking to return to the active guided exercise after a "
-        f"side turn. Resume at step {step_index}; do not classify their message "
-        f"as an answer to the step and do not exit the exercise.\n"
-        f'Step {step_index} instruction: "{step_ref}"\n'
-        f"Briefly re-orient them, then restate this same step in short, "
-        f"concrete language."
+    directive = GuidedExerciseDirective(
+        exercise_type=exercise_type,
+        runtime_action="resume",
+        current_step_index=step_index,
+        runtime_task=(
+            f"The user is asking to return to the active guided exercise after a "
+            f"side turn. Resume at step {step_index}; do not classify their message "
+            f"as an answer to the step and do not exit the exercise.\n"
+            f'Step {step_index} instruction: "{step_ref}"\n'
+            f"Briefly re-orient them, then restate this same step in short, "
+            f"concrete language."
+        ),
     )
 
     response_text = await generate_streamed_therapeutic_text(
@@ -221,7 +237,7 @@ async def _build_resume_delta(
         llm_client=llm_client,
         response_style="guided_exercise",
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=directive,
+        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -254,14 +270,17 @@ async def _build_stuck_delta(
     current_step = _get_current_step(exercise_type, step_index)
     step_ref = current_step.instruction if current_step else ""
 
-    directive = (
-        f"{_render_skill_context(exercise_type, step_index, runtime_action='stuck')}\n\n"
-        "Runtime task:\n"
-        f"The user is STUCK on step {step_index} of the exercise. "
-        f'The step asked: "{step_ref}"\n'
-        f"Offer a simpler version of the same step — make it smaller and "
-        f"more concrete. Do NOT advance to the next step or repeat the "
-        f"original instruction verbatim."
+    directive = GuidedExerciseDirective(
+        exercise_type=exercise_type,
+        runtime_action="stuck",
+        current_step_index=step_index,
+        runtime_task=(
+            f"The user is STUCK on step {step_index} of the exercise. "
+            f'The step asked: "{step_ref}"\n'
+            f"Offer a simpler version of the same step — make it smaller and "
+            f"more concrete. Do NOT advance to the next step or repeat the "
+            f"original instruction verbatim."
+        ),
     )
 
     response_text = await generate_streamed_therapeutic_text(
@@ -269,7 +288,7 @@ async def _build_stuck_delta(
         llm_client=llm_client,
         response_style="guided_exercise",
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=directive,
+        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -302,15 +321,18 @@ async def _build_hold_delta(
     current_step = _get_current_step(exercise_type, step_index)
     step_ref = current_step.instruction if current_step else ""
 
-    directive = (
-        f"{_render_skill_context(exercise_type, step_index, runtime_action='hold')}\n\n"
-        "Runtime task:\n"
-        f"The user gave a tentative or partial response to step {step_index}. "
-        f'The step asked: "{step_ref}"\n'
-        f"Give brief encouragement, then restate this same step in short, "
-        f"concrete language so the user knows exactly what to do next. "
-        f"Preserve the core task wording from the step instead of drifting "
-        f"into generic encouragement. Do NOT advance to the next step."
+    directive = GuidedExerciseDirective(
+        exercise_type=exercise_type,
+        runtime_action="hold",
+        current_step_index=step_index,
+        runtime_task=(
+            f"The user gave a tentative or partial response to step {step_index}. "
+            f'The step asked: "{step_ref}"\n'
+            f"Give brief encouragement, then restate this same step in short, "
+            f"concrete language so the user knows exactly what to do next. "
+            f"Preserve the core task wording from the step instead of drifting "
+            f"into generic encouragement. Do NOT advance to the next step."
+        ),
     )
 
     response_text = await generate_streamed_therapeutic_text(
@@ -318,7 +340,7 @@ async def _build_hold_delta(
         llm_client=llm_client,
         response_style="guided_exercise",
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=directive,
+        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -357,15 +379,18 @@ async def _build_advance_delta(
         raise KeyError(exercise_type)
     next_step = steps[next_step_index]
     total_steps = len(steps)
-    directive = (
-        f"{_render_skill_context(exercise_type, next_step_index, runtime_action='advance')}"
-        "\n\nRuntime task:\n"
-        f"The user completed step {next_step_index - 1} of {total_steps - 1}. "
-        f"Briefly acknowledge what they shared, then move to step "
-        f"{next_step_index}.\n"
-        f'Step {next_step_index} instruction: "{next_step.instruction}"\n'
-        f"Rephrase naturally in your own words — do NOT repeat this "
-        f"instruction verbatim. Do NOT repeat any earlier step."
+    directive = GuidedExerciseDirective(
+        exercise_type=exercise_type,
+        runtime_action="advance",
+        current_step_index=next_step_index,
+        runtime_task=(
+            f"The user completed step {next_step_index - 1} of {total_steps - 1}. "
+            f"Briefly acknowledge what they shared, then move to step "
+            f"{next_step_index}.\n"
+            f'Step {next_step_index} instruction: "{next_step.instruction}"\n'
+            f"Rephrase naturally in your own words — do NOT repeat this "
+            f"instruction verbatim. Do NOT repeat any earlier step."
+        ),
     )
 
     response_text = await generate_streamed_therapeutic_text(
@@ -373,7 +398,7 @@ async def _build_advance_delta(
         llm_client=llm_client,
         response_style="guided_exercise",
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=directive,
+        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -419,15 +444,18 @@ async def _build_complete_delta(
     display_name = get_exercise_display_name(exercise_type, default="that exercise")
     step_index = exercise_state.get("exercise_step", 0)
 
-    directive = (
-        f"{_render_skill_context(exercise_type, step_index, runtime_action='complete')}"
-        "\n\nRuntime task:\n"
-        f"The user just finished the LAST step of the exercise. "
-        f"Briefly acknowledge what they shared, name what they just did "
-        f"({display_name}), and invite them to notice how their body "
-        f"feels now. End with a gentle, open check-in question about "
-        f"how the exercise felt for them (e.g. 'How was that for you?'). "
-        f"Do NOT start a new exercise."
+    directive = GuidedExerciseDirective(
+        exercise_type=exercise_type,
+        runtime_action="complete",
+        current_step_index=step_index,
+        runtime_task=(
+            f"The user just finished the LAST step of the exercise. "
+            f"Briefly acknowledge what they shared, name what they just did "
+            f"({display_name}), and invite them to notice how their body "
+            f"feels now. End with a gentle, open check-in question about "
+            f"how the exercise felt for them (e.g. 'How was that for you?'). "
+            f"Do NOT start a new exercise."
+        ),
     )
 
     response_text = await generate_streamed_therapeutic_text(
@@ -435,7 +463,7 @@ async def _build_complete_delta(
         llm_client=llm_client,
         response_style="guided_exercise",
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=directive,
+        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -459,28 +487,3 @@ async def _build_complete_delta(
             response_text=response_text,
         ),
     }
-
-
-def _render_skill_context(
-    exercise_type: str,
-    step_index: int | None,
-    *,
-    runtime_action: str,
-) -> str:
-    """Render best-effort exercise skill context for a response directive."""
-
-    try:
-        return render_exercise_skill_context(
-            exercise_type,
-            current_step_index=step_index,
-            runtime_action=runtime_action,
-        )
-    except KeyError:
-        return (
-            "Exercise skill:\n"
-            f"- skill_id: {exercise_type}\n"
-            f"- runtime_action: {runtime_action}\n"
-            "- registry_status: unavailable\n"
-            "Operating boundaries:\n"
-            "- Follow the runtime task exactly and do not invent extra steps."
-        )
