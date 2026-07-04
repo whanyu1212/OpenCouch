@@ -917,8 +917,8 @@ async def test_persistent_runtime_openai_low_confidence_triage_preserves_active_
             second.state.get("exercise_state", {}).get("exercise_therapeutic_approach")
             == "dbt_skills"
         )
-        assert runner.run_calls
-        assert "guided exercise" in runner.run_calls[-1]["agent"].name.lower()
+        assert runner.stream_calls
+        assert "guided exercise" in runner.stream_calls[-1]["agent"].name.lower()
 
 
 @pytest.mark.asyncio
