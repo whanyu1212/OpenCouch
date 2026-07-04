@@ -163,7 +163,11 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
             tool_call_count=tool_call_count,
         )
         if tool_called:
-            if final_text and not chunks:
+            if buffered_chunks:
+                for buffered_chunk in buffered_chunks:
+                    yield buffered_chunk
+                buffered_chunks.clear()
+            elif final_text and not chunks:
                 yield final_text
             return
 

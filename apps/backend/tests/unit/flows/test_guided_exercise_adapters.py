@@ -30,9 +30,15 @@ def _sdk_delta(text: str) -> SimpleNamespace:
 
 
 class _ControlledOpenAIStream:
-    def __init__(self, *, call_skill_tool_before_first_chunk: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        call_skill_tool_before_first_chunk: bool = False,
+        call_skill_tool_after_last_chunk: bool = False,
+    ) -> None:
         self.final_output = "first second"
         self.call_skill_tool_before_first_chunk = call_skill_tool_before_first_chunk
+        self.call_skill_tool_after_last_chunk = call_skill_tool_after_last_chunk
         self.context: OpenAITextRunContext | None = None
         self.first_event_seen = asyncio.Event()
         self.release_completion = asyncio.Event()
@@ -41,17 +47,22 @@ class _ControlledOpenAIStream:
     async def stream_events(self):  # noqa: ANN202
         self.first_event_seen.set()
         if self.call_skill_tool_before_first_chunk:
-            assert self.context is not None
-            self.context.record_guided_exercise_skill_tool_result(
-                exercise_type="grounding_box_breathing",
-                current_step_index=0,
-                runtime_action="start",
-                skill_context="Box breathing context.",
-            )
+            self._record_skill_tool_result()
         yield _sdk_delta("first ")
         await self.release_completion.wait()
         yield _sdk_delta("second")
+        if self.call_skill_tool_after_last_chunk:
+            self._record_skill_tool_result()
         self.completed.set()
+
+    def _record_skill_tool_result(self) -> None:
+        assert self.context is not None
+        self.context.record_guided_exercise_skill_tool_result(
+            exercise_type="grounding_box_breathing",
+            current_step_index=0,
+            runtime_action="start",
+            skill_context="Box breathing context.",
+        )
 
 
 class _ControlledStreamingRunner:
@@ -153,6 +164,57 @@ async def test_guided_exercise_openai_adapter_yields_tool_compliant_chunk_before
         stream.release_completion.set()
         rest = [chunk async for chunk in generator]
 
+        assert rest == ["second"]
+        assert stream.completed.is_set() is True
+        assert adapter.last_duration_ms is not None
+        assert adapter.used_skill_tool_fallback is False
+        assert runner.run_calls == []
+        assert (
+            "Required tool: load_guided_exercise_skill"
+            in runner.stream_calls[0]["input_text"]
+        )
+    finally:
+        stream.release_completion.set()
+        if not first_task.done():
+            first_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await first_task
+        await generator.aclose()
+
+
+@pytest.mark.asyncio
+async def test_guided_exercise_openai_adapter_flushes_buffer_when_tool_called_after_final_event() -> (
+    None
+):
+    stream = _ControlledOpenAIStream(call_skill_tool_after_last_chunk=True)
+    runner = _ControlledStreamingRunner(stream)
+    roster = build_openai_text_agent_roster(model="gpt-test")
+    adapter = OpenAIGuidedExerciseResponseLLM(
+        runner=runner,
+        guided_exercise_agent=roster.guided_exercise_agent,
+        run_context=_run_context(),
+    )
+    prompt = (
+        f"{render_exercise_skill_context(EXERCISE_BOX_BREATHING, current_step_index=0, runtime_action='start')}"
+        "\n\nRuntime task:\nStart the guided breathing exercise."
+    )
+    generator = adapter.generate_text_stream(prompt=prompt)
+
+    first_task = asyncio.create_task(generator.__anext__())
+    try:
+        await asyncio.wait_for(stream.first_event_seen.wait(), timeout=1.0)
+        try:
+            first = await asyncio.wait_for(asyncio.shield(first_task), timeout=0.1)
+        except TimeoutError:
+            first = None
+        assert first is None, "forced-tool stream yielded before tool compliance"
+        assert stream.completed.is_set() is False
+
+        stream.release_completion.set()
+        first = await asyncio.wait_for(first_task, timeout=1.0)
+        rest = [chunk async for chunk in generator]
+
+        assert first == "first "
         assert rest == ["second"]
         assert stream.completed.is_set() is True
         assert adapter.last_duration_ms is not None
