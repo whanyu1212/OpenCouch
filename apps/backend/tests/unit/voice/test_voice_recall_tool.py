@@ -84,8 +84,10 @@ def _install_stubs(
             proactive_recall_enabled=proactive_recall_enabled,
         )
 
-    monkeypatch.setattr("agent.voice.tools.aget_procedural_profile", fake_profile)
-    monkeypatch.setattr("agent.voice.tools.load_memory_for_turn", fake_loader)
+    monkeypatch.setattr(
+        "agent.voice.tools.handlers.aget_procedural_profile", fake_profile
+    )
+    monkeypatch.setattr("agent.voice.tools.handlers.load_memory_for_turn", fake_loader)
     return calls
 
 
