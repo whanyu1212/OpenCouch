@@ -180,7 +180,6 @@ async def test_openai_runtime_runs_safe_therapeutic_turn_and_persists_state() ->
         runtime._roster.therapeutic_agent.handoff_description
     )
     assert [tool.name for tool in runner.run_calls[0]["agent"].tools] == [
-        "load_therapeutic_response_skill",
         "show_saved_memory",
         "show_memory_status",
         "set_proactive_memory_recall",
@@ -340,24 +339,16 @@ async def test_response_llm_stream_sanitizes_pseudo_tool_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_runtime_uses_therapeutic_response_skill_metadata() -> None:
+async def test_openai_runtime_injects_therapeutic_style_guidance() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner(
-        "reflective reply",
-        tool_calls=[
-            (
-                "load_therapeutic_response_skill",
-                {
-                    "response_style": "reflective",
-                    "therapeutic_approach": "cbt",
-                },
-            )
-        ],
-    )
+    runner = FakeOpenAISDKRunner("reflective reply")
     runtime = _runtime(workflow, runner)
+    initial_state = _initial_state("I keep getting stuck in the same loop.")
+    initial_state["response_style"] = "reflective"
+    initial_state["therapeutic_approach"] = "cbt"
 
     state = await runtime.run_turn(
-        cast(Any, _initial_state("I keep getting stuck in the same loop.")),
+        cast(Any, initial_state),
         config={"configurable": {"thread_id": "thread-1"}},
         context=_context(),
     )
@@ -365,12 +356,16 @@ async def test_openai_runtime_uses_therapeutic_response_skill_metadata() -> None
     assert state["response_text"] == "reflective reply"
     assert state["response_style"] == "reflective"
     assert state["therapeutic_approach"] == "cbt"
-    assert state["diagnostics"]["openai_therapeutic_skill_tool_calls"] == [
-        "load_therapeutic_response_skill"
-    ]
-    assert state["diagnostics"]["openai_therapeutic_skill_response_style"] == (
-        "reflective"
+    assert "Therapeutic response guidance:" in runner.run_calls[0]["input_text"]
+    assert "- response_style: reflective" in runner.run_calls[0]["input_text"]
+    assert "- therapeutic_approach: cbt" in runner.run_calls[0]["input_text"]
+    assert "load_therapeutic_response_skill" not in runner.run_calls[0]["input_text"]
+    assert (
+        state["diagnostics"]["openai_therapeutic_style_guidance_response_style"]
+        == "reflective"
     )
+    assert state["diagnostics"]["openai_therapeutic_style_guidance_approach"] == "cbt"
+    assert "openai_therapeutic_skill_tool_calls" not in state["diagnostics"]
 
 
 @pytest.mark.asyncio

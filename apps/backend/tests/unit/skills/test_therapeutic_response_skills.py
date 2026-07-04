@@ -6,7 +6,9 @@ import pytest
 
 from agent.skills.therapeutic_response import (
     THERAPEUTIC_RESPONSE_SKILL_STYLES,
+    THERAPEUTIC_RESPONSE_STYLE_GUIDANCE_STYLES,
     render_therapeutic_response_skill_context,
+    render_therapeutic_response_style_guidance,
 )
 
 
@@ -41,6 +43,23 @@ def test_response_style_skill_renders_bounded_context(style: str) -> None:
     assert "- retry_safe: true" in rendered
     assert "Operating boundaries:" in rendered
     assert "Skill guidance:" in rendered
+
+
+@pytest.mark.parametrize("style", THERAPEUTIC_RESPONSE_STYLE_GUIDANCE_STYLES)
+def test_response_style_guidance_renders_without_tool_metadata(style: str) -> None:
+    rendered = render_therapeutic_response_style_guidance(
+        _state(),
+        response_style=style,
+        therapeutic_approach="act",
+    )
+
+    assert rendered.startswith("Therapeutic response guidance:")
+    assert f"- response_style: {style}" in rendered
+    assert "- therapeutic_approach: act" in rendered
+    assert "Style guidance:" in rendered
+    assert "skill_id" not in rendered
+    assert "side_effect" not in rendered
+    assert "retry_safe" not in rendered
 
 
 def test_unknown_response_style_falls_back_to_supportive() -> None:

@@ -37,6 +37,9 @@ from agent.runtime.types import (
     TextRuntimeStreamEvent,
 )
 from agent.runtime.workflow_context import WorkflowContext
+from agent.skills.therapeutic_response import (
+    render_therapeutic_response_style_guidance,
+)
 from agent.state import AgentState
 from llm.base import BaseLLMClient
 
@@ -346,15 +349,21 @@ def response_llm_prompt_for_state(
 
 def therapeutic_agent_prompt_for_state(state: AgentState) -> str:
     memory_block = _format_working_memory(state)
+    style = response_style_from_state(state)
+    approach = therapeutic_approach_from_state(state)
+    style_guidance = render_therapeutic_response_style_guidance(
+        state,
+        response_style=style,
+        therapeutic_approach=approach,
+    )
     return (
         "Write the next assistant message for a mental health support "
         "conversation.\n\n"
-        "For an ordinary therapeutic reply, first call "
-        "load_therapeutic_response_skill with the response_style that best fits "
-        "this turn, then use the returned skill_context as private guidance. "
-        "Do not expose internal style names unless the user asks how the system "
-        "works. Do not start or continue guided exercises here; the runtime "
-        "routes those turns to GuidedExerciseAgent.\n\n"
+        "Use the runtime-provided therapeutic response guidance below as "
+        "private drafting guidance. Do not expose internal style names unless "
+        "the user asks how the system works. Do not start or continue guided "
+        "exercises here; the runtime routes those turns to GuidedExerciseAgent.\n\n"
+        f"{style_guidance}\n\n"
         f"Recent conversation:\n{format_recent_history(state)}\n"
         f"{memory_block}\n"
         f"Current user message:\nuser: {state['message']}"
@@ -365,9 +374,8 @@ def operational_context_for_prompt(state: AgentState) -> str:
     lines = [
         "Operational context:",
         "- The current turn has already passed the app-owned crisis gate.",
-        "- For ordinary therapeutic replies, call "
-        "load_therapeutic_response_skill before answering and use the returned "
-        "skill_context as private style guidance.",
+        "- For ordinary therapeutic replies, apply the runtime-provided "
+        "therapeutic response guidance already included in this prompt.",
         "- Use memory or grounded lookup tools instead when the user explicitly "
         "asks for saved-memory management or grounded lookup.",
     ]
@@ -423,6 +431,11 @@ def response_style_from_state(state: Mapping[str, Any]) -> str:
     if style and style != "pending":
         return style
     return "supportive"
+
+
+def therapeutic_approach_from_state(state: Mapping[str, Any]) -> str:
+    approach = str(state.get("therapeutic_approach") or "").strip()
+    return approach if approach else "none"
 
 
 def therapeutic_response_llm_request_for_state(
@@ -565,9 +578,14 @@ def merge_therapeutic_tool_results(
 
     memory_calls = list(run_context.memory_tool_calls)
     grounded_calls = list(run_context.grounded_tool_calls)
-    therapeutic_skill_calls = list(run_context.therapeutic_response_skill_tool_calls)
     diagnostics: dict[str, Any] = {
         **dict(state.get("diagnostics", {}) or {}),
+        "openai_therapeutic_style_guidance_response_style": (
+            response_style_from_state(state)
+        ),
+        "openai_therapeutic_style_guidance_approach": (
+            therapeutic_approach_from_state(state)
+        ),
     }
 
     for call in memory_calls:
@@ -608,38 +626,6 @@ def merge_therapeutic_tool_results(
                     call.tool_name for call in grounded_calls
                 ],
                 "openai_grounded_tool_fallback": False,
-            }
-        )
-
-    if therapeutic_skill_calls:
-        latest_therapeutic_skill_call = therapeutic_skill_calls[-1]
-        apply_state_delta(
-            state,
-            {
-                "response_style": latest_therapeutic_skill_call.response_style,
-                "therapeutic_approach": (
-                    latest_therapeutic_skill_call.therapeutic_approach
-                ),
-            },
-        )
-        diagnostics.update(
-            {
-                "openai_therapeutic_skill_tool_expected": (
-                    "load_therapeutic_response_skill"
-                ),
-                "openai_therapeutic_skill_tool_selected": (
-                    latest_therapeutic_skill_call.tool_name
-                ),
-                "openai_therapeutic_skill_tool_calls": [
-                    call.tool_name for call in therapeutic_skill_calls
-                ],
-                "openai_therapeutic_skill_response_style": (
-                    latest_therapeutic_skill_call.response_style
-                ),
-                "openai_therapeutic_skill_approach": (
-                    latest_therapeutic_skill_call.therapeutic_approach
-                ),
-                "openai_therapeutic_skill_tool_fallback": False,
             }
         )
 
