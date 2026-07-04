@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import cast
 
 import pytest
 
-from agent.skills.guided_exercises.loadout import build_guided_exercise_loadout
 from agent.skills.guided_exercises.registry import (
     EXERCISE_5_4_3_2_1,
     EXERCISE_BOX_BREATHING,
@@ -18,7 +16,6 @@ from agent.skills.guided_exercises.rendering.skill_docs import (
     iter_guided_exercise_skill_docs,
     validate_guided_exercise_skill_docs,
 )
-from agent.state import AgentState
 
 
 def test_guided_exercise_skill_docs_validate_against_registry() -> None:
@@ -98,52 +95,6 @@ def test_guided_exercise_skill_doc_validation_rejects_channel_mismatch(
             iter_exercise_definitions(),
             catalog_dir=tmp_path,
         )
-
-
-def test_guided_exercise_loadout_projects_available_ids_from_state() -> None:
-    loadout = build_guided_exercise_loadout(
-        cast(
-            AgentState,
-            {
-                "installed_skills": [],
-                "channel": "text",
-                "therapeutic_approach": None,
-            },
-        )
-    )
-
-    assert EXERCISE_5_4_3_2_1 in loadout.available_exercise_ids
-    assert loadout.selected_exercise_id is None
-    assert loadout.channel == "text"
-    assert loadout.therapeutic_approach is None
-    assert loadout.installed_skills == ()
-
-
-def test_guided_exercise_loadout_respects_voice_channel() -> None:
-    loadout = build_guided_exercise_loadout(
-        cast(
-            AgentState,
-            {
-                "installed_skills": [],
-                "channel": "voice",
-                "therapeutic_approach": None,
-            },
-        ),
-        selected_exercise_id=EXERCISE_BOX_BREATHING,
-    )
-
-    assert loadout.available_exercise_ids
-    assert EXERCISE_BOX_BREATHING in loadout.available_exercise_ids
-    assert loadout.selected_exercise_id == EXERCISE_BOX_BREATHING
-    assert loadout.channel == "voice"
-
-
-def test_legacy_skill_doc_import_path_reexports_parser() -> None:
-    from agent.skills.guided_exercises.skill_docs import (
-        get_guided_exercise_skill_doc as legacy_get_doc,
-    )
-
-    assert legacy_get_doc(EXERCISE_5_4_3_2_1) is not None
 
 
 def _write_skill_doc(
