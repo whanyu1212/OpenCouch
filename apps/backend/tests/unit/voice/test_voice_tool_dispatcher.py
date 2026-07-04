@@ -507,7 +507,7 @@ async def test_voice_tool_dispatcher_executes_grounded_lookup(
         }
 
     monkeypatch.setattr(
-        "agent.voice.tools.execute_grounded_lookup_tool",
+        "agent.voice.tools.handlers.execute_grounded_lookup_tool",
         fake_execute_grounded_lookup_tool,
     )
 
