@@ -918,6 +918,44 @@ async def test_openai_runtime_starts_guided_exercise_with_guided_agent() -> None
 
 
 @pytest.mark.asyncio
+async def test_openai_runtime_falls_back_when_guided_stream_skips_required_skill_tool() -> (
+    None
+):
+    workflow = _StatefulWorkflow()
+    runner = FakeOpenAISDKRunner("fallback guided start")
+    runtime = _runtime(workflow, runner)
+
+    result = await runtime.run_turn(
+        cast(Any, _initial_state("Can you walk me through box breathing?")),
+        config={"configurable": {"thread_id": "thread-1"}},
+        context=_context(
+            _RouteLLM(
+                route="therapeutic",
+                therapeutic_response_style="guided_exercise",
+                exercise_start_basis="explicit_user_request",
+                exercise_type="grounding_box_breathing",
+            )
+        ),
+    )
+
+    assert result["response_text"] == "fallback guided start"
+    assert result["response_style"] == "guided_exercise"
+    assert result["diagnostics"]["openai_text_runtime_mode"] == "guided_exercise"
+    assert result["diagnostics"]["openai_guided_exercise_tool_calls"] == []
+    assert result["diagnostics"]["openai_guided_exercise_tool_fallback"] is True
+    assert runner.stream_calls
+    assert len(runner.run_calls) == 1
+    assert (
+        "Required tool: load_guided_exercise_skill"
+        in runner.stream_calls[0]["input_text"]
+    )
+    assert (
+        "Required tool: load_guided_exercise_skill"
+        not in runner.run_calls[0]["input_text"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_openai_runtime_continues_active_guided_exercise() -> None:
     workflow = _StatefulWorkflow()
     runner = FakeOpenAISDKRunner(

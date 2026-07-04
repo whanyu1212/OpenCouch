@@ -123,39 +123,75 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
             session=self._session,
         )
         chunks: list[str] = []
+        buffered_chunks: list[str] = []
+        tool_called = tool_request is None
+
+        async def flush_buffered_chunks() -> AsyncIterator[str]:
+            while buffered_chunks:
+                yield buffered_chunks.pop(0)
+
         async for sdk_event in stream.stream_events():
+            if tool_request is not None and not tool_called:
+                tool_called = _guided_exercise_skill_tool_called(
+                    self._run_context,
+                    tool_call_count=tool_call_count,
+                )
+                if tool_called:
+                    async for buffered_chunk in flush_buffered_chunks():
+                        yield buffered_chunk
             chunk = chunk_from_sdk_event(sdk_event)
             if chunk:
                 chunks.append(chunk)
+                if tool_called:
+                    yield chunk
+                else:
+                    buffered_chunks.append(chunk)
+            if tool_request is not None and not tool_called:
+                tool_called = _guided_exercise_skill_tool_called(
+                    self._run_context,
+                    tool_call_count=tool_call_count,
+                )
+                if tool_called:
+                    async for buffered_chunk in flush_buffered_chunks():
+                        yield buffered_chunk
 
         self.last_duration_ms = elapsed_ms(run_start)
         final_text = final_output_text(
             getattr(stream, "final_output", None),
             fallback="".join(chunks),
         )
-        if tool_request is not None and not _guided_exercise_skill_tool_called(
+        if tool_request is None:
+            if final_text and not chunks:
+                yield final_text
+            return
+
+        tool_called = tool_called or _guided_exercise_skill_tool_called(
             self._run_context,
             tool_call_count=tool_call_count,
-        ):
-            self.used_skill_tool_fallback = True
-            result = await self._runner.run(
-                agent=_build_guided_exercise_agent(
-                    self._guided_exercise_agent,
-                    system_instruction=system_instruction,
-                    runtime_instructions=GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
-                ),
-                input_text=original_prompt,
-                context=self._run_context,
-                session=self._session,
-            )
-            self.last_duration_ms = elapsed_ms(run_start)
-            final_text = final_output_text(getattr(result, "final_output", None))
-            chunks = [final_text]
+        )
+        if tool_called:
+            if buffered_chunks:
+                for buffered_chunk in buffered_chunks:
+                    yield buffered_chunk
+                buffered_chunks.clear()
+            elif final_text and not chunks:
+                yield final_text
+            return
 
-        for chunk in chunks:
-            yield chunk
-        if final_text and not chunks:
-            yield final_text
+        self.used_skill_tool_fallback = True
+        result = await self._runner.run(
+            agent=_build_guided_exercise_agent(
+                self._guided_exercise_agent,
+                system_instruction=system_instruction,
+                runtime_instructions=GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
+            ),
+            input_text=original_prompt,
+            context=self._run_context,
+            session=self._session,
+        )
+        self.last_duration_ms = elapsed_ms(run_start)
+        final_text = final_output_text(getattr(result, "final_output", None))
+        yield final_text
 
     async def generate_structured(
         self,
