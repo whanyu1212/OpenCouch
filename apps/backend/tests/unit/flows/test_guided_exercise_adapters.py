@@ -11,11 +11,19 @@ import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.flows.guided_exercise.adapters import OpenAIGuidedExerciseResponseLLM
+from agent.flows.guided_exercise.tool_instruction import (
+    _replace_exercise_skill_context_with_tool_instruction,
+)
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.workflow_context import WorkflowContext
 from agent.skills.guided_exercises.registry import EXERCISE_BOX_BREATHING
+from agent.skills.guided_exercises.rendering.directives import (
+    GuidedExerciseDirective,
+    render_full_guided_exercise_directive,
+    render_tool_forced_guided_exercise_directive,
+)
 from agent.skills.guided_exercises.rendering.skill_context import (
     render_exercise_skill_context,
 )
@@ -132,6 +140,27 @@ def _run_context() -> OpenAITextRunContext:
             memory_mode=MemoryMode.LOCAL,
         ),
     )
+
+
+def test_guided_exercise_tool_instruction_rewrites_full_directive_with_renderer() -> (
+    None
+):
+    directive = GuidedExerciseDirective(
+        exercise_type=EXERCISE_BOX_BREATHING,
+        runtime_action="start",
+        current_step_index=0,
+        runtime_task="Start the guided breathing exercise.",
+    )
+
+    rewritten, request = _replace_exercise_skill_context_with_tool_instruction(
+        render_full_guided_exercise_directive(directive)
+    )
+
+    assert request is not None
+    assert request.exercise_type == EXERCISE_BOX_BREATHING
+    assert request.runtime_action == "start"
+    assert request.current_step_index == 0
+    assert rewritten == render_tool_forced_guided_exercise_directive(directive)
 
 
 @pytest.mark.asyncio
