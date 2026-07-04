@@ -15,6 +15,10 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.workflow_context import WorkflowContext
+from agent.skills.guided_exercises.registry import EXERCISE_BOX_BREATHING
+from agent.skills.guided_exercises.rendering.skill_context import (
+    render_exercise_skill_context,
+)
 from agent.specialists.roster import build_openai_text_agent_roster
 
 
@@ -91,7 +95,11 @@ async def test_guided_exercise_openai_adapter_yields_first_chunk_before_stream_d
         guided_exercise_agent=roster.guided_exercise_agent,
         run_context=_run_context(),
     )
-    generator = adapter.generate_text_stream(prompt="Please guide me.")
+    prompt = (
+        f"{render_exercise_skill_context(EXERCISE_BOX_BREATHING, current_step_index=0, runtime_action='start')}"
+        "\n\nRuntime task:\nStart the guided breathing exercise."
+    )
+    generator = adapter.generate_text_stream(prompt=prompt)
 
     first_task = asyncio.create_task(generator.__anext__())
     try:
@@ -112,7 +120,10 @@ async def test_guided_exercise_openai_adapter_yields_first_chunk_before_stream_d
         assert rest == ["second"]
         assert stream.completed.is_set() is True
         assert adapter.last_duration_ms is not None
-        assert runner.stream_calls[0]["input_text"] == "Please guide me."
+        assert (
+            "Required tool: load_guided_exercise_skill"
+            in runner.stream_calls[0]["input_text"]
+        )
     finally:
         stream.release_completion.set()
         if not first_task.done():

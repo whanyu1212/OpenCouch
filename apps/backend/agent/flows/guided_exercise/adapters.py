@@ -123,59 +123,50 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
             session=self._session,
         )
         chunks: list[str] = []
-        if tool_request is None:
-            async for sdk_event in stream.stream_events():
-                chunk = chunk_from_sdk_event(sdk_event)
-                if chunk:
-                    chunks.append(chunk)
-                    yield chunk
-
-            self.last_duration_ms = elapsed_ms(run_start)
-            final_text = final_output_text(
-                getattr(stream, "final_output", None),
-                fallback="".join(chunks),
-            )
-            if final_text and not chunks:
-                yield final_text
-            return
-
-        # Tool-forcing prompts need a post-stream fallback decision: if the
-        # SDK did not call the requested skill tool, we retry non-streaming with
-        # the original prompt. Keep that path buffered so we never emit partial
-        # first-pass chunks and then replace them with fallback prose.
         async for sdk_event in stream.stream_events():
             chunk = chunk_from_sdk_event(sdk_event)
             if chunk:
                 chunks.append(chunk)
+                yield chunk
 
         self.last_duration_ms = elapsed_ms(run_start)
         final_text = final_output_text(
             getattr(stream, "final_output", None),
             fallback="".join(chunks),
         )
-        if not _guided_exercise_skill_tool_called(
+        if tool_request is None:
+            if final_text and not chunks:
+                yield final_text
+            return
+
+        if _guided_exercise_skill_tool_called(
             self._run_context,
             tool_call_count=tool_call_count,
         ):
-            self.used_skill_tool_fallback = True
-            result = await self._runner.run(
-                agent=_build_guided_exercise_agent(
-                    self._guided_exercise_agent,
-                    system_instruction=system_instruction,
-                    runtime_instructions=GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
-                ),
-                input_text=original_prompt,
-                context=self._run_context,
-                session=self._session,
-            )
-            self.last_duration_ms = elapsed_ms(run_start)
-            final_text = final_output_text(getattr(result, "final_output", None))
-            chunks = [final_text]
+            if final_text and not chunks:
+                yield final_text
+            return
 
-        for chunk in chunks:
-            yield chunk
-        if final_text and not chunks:
-            yield final_text
+        if chunks:
+            # We already emitted user-visible text, so a post-hoc fallback would
+            # duplicate or replace streamed prose. Keep the incremental output
+            # and skip fallback for this turn.
+            return
+
+        self.used_skill_tool_fallback = True
+        result = await self._runner.run(
+            agent=_build_guided_exercise_agent(
+                self._guided_exercise_agent,
+                system_instruction=system_instruction,
+                runtime_instructions=GUIDED_EXERCISE_AGENT_INSTRUCTIONS,
+            ),
+            input_text=original_prompt,
+            context=self._run_context,
+            session=self._session,
+        )
+        self.last_duration_ms = elapsed_ms(run_start)
+        final_text = final_output_text(getattr(result, "final_output", None))
+        yield final_text
 
     async def generate_structured(
         self,
