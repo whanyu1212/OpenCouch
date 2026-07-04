@@ -123,11 +123,30 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
             session=self._session,
         )
         chunks: list[str] = []
+        buffered_chunks: list[str] = []
+        tool_called = tool_request is None
         async for sdk_event in stream.stream_events():
+            if tool_request is not None and not tool_called:
+                tool_called = _guided_exercise_skill_tool_called(
+                    self._run_context,
+                    tool_call_count=tool_call_count,
+                )
             chunk = chunk_from_sdk_event(sdk_event)
             if chunk:
                 chunks.append(chunk)
-                yield chunk
+                if tool_called:
+                    yield chunk
+                else:
+                    buffered_chunks.append(chunk)
+            if tool_request is not None and not tool_called:
+                tool_called = _guided_exercise_skill_tool_called(
+                    self._run_context,
+                    tool_call_count=tool_call_count,
+                )
+                if tool_called:
+                    for buffered_chunk in buffered_chunks:
+                        yield buffered_chunk
+                    buffered_chunks.clear()
 
         self.last_duration_ms = elapsed_ms(run_start)
         final_text = final_output_text(
@@ -139,18 +158,13 @@ class OpenAIGuidedExerciseResponseLLM(BaseLLMClient):
                 yield final_text
             return
 
-        if _guided_exercise_skill_tool_called(
+        tool_called = tool_called or _guided_exercise_skill_tool_called(
             self._run_context,
             tool_call_count=tool_call_count,
-        ):
+        )
+        if tool_called:
             if final_text and not chunks:
                 yield final_text
-            return
-
-        if chunks:
-            # We already emitted user-visible text, so a post-hoc fallback would
-            # duplicate or replace streamed prose. Keep the incremental output
-            # and skip fallback for this turn.
             return
 
         self.used_skill_tool_fallback = True
