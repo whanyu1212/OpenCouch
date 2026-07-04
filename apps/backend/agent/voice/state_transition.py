@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, cast
 
 from agent.models import Channel, CrisisAssessment
+from agent.runtime.state_ops import build_effective_turn_state
 from agent.observability.decorators import trace_event
 from agent.observability.events import VOICE_TURN_STATE_BUILT
 from agent.state import AgentState
@@ -40,9 +41,10 @@ class VoiceTurnStateResult:
 
 def build_voice_turn_state(inputs: VoiceTurnStateInputs) -> VoiceTurnStateResult:
     """Build the final persisted state for one voice turn."""
-    state = cast(
-        AgentState,
-        {**dict(inputs.initial_state), **dict(inputs.prior_state or {})},
+    state = build_effective_turn_state(
+        inputs.prior_state,
+        inputs.initial_state,
+        prior_state_wins=True,
     )
     # Crisis-resource fields persist across turns so a within-turn
     # get_crisis_support_template can reuse the lookup from the same
@@ -91,7 +93,17 @@ def build_voice_turn_state(inputs: VoiceTurnStateInputs) -> VoiceTurnStateResult
     if not entries:
         raise ValueError("record_voice_turn requires user_text or assistant_text.")
 
-    state.update(
+    grounded_lookup_state = dict(
+        cast(Mapping[str, Any], state.get("grounded_lookup", {}) or {})
+    )
+    diagnostics_state = dict(
+        cast(Mapping[str, Any], state.get("diagnostics", {}) or {})
+    )
+    session_progress_state = dict(
+        cast(Mapping[str, Any], state.get("session_progress", {}) or {})
+    )
+    state_values = cast(dict[str, Any], state)
+    state_values.update(
         {
             "message": inputs.user_text.strip(),
             "channel": Channel.VOICE,
@@ -103,12 +115,9 @@ def build_voice_turn_state(inputs: VoiceTurnStateInputs) -> VoiceTurnStateResult
             "session_action": "none",
             "should_persist_memory": False,
             "transcript": [*prior_transcript, *entries],
-            "grounded_lookup": {
-                **dict(state.get("grounded_lookup", {}) or {}),
-                **grounded_lookup,
-            },
+            "grounded_lookup": {**grounded_lookup_state, **grounded_lookup},
             "diagnostics": {
-                **dict(state.get("diagnostics", {}) or {}),
+                **diagnostics_state,
                 "voice_runtime": "openai_realtime",
                 "voice_tool_calls": [
                     str(call.get("tool_name"))
@@ -117,7 +126,7 @@ def build_voice_turn_state(inputs: VoiceTurnStateInputs) -> VoiceTurnStateResult
                 ],
             },
             "session_progress": {
-                **dict(state.get("session_progress", {}) or {}),
+                **session_progress_state,
                 "turn_count": inputs.prior_turn_count + 1,
                 "is_guest": inputs.user_id is None,
             },

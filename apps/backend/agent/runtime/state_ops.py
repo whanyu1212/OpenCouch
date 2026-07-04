@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Mapping
 from typing import Any, cast
 
 from agent.models import MessageRole
 from agent.observability.decorators import trace_event
 from agent.observability.diagnostics import diagnostics_from_state, merge_diagnostics
 from agent.observability.events import RUNTIME_TEXT_TURN_FINALIZED
-from agent.state import AgentState
+from agent.state import AgentState, AgentTurnInputState
 
 
 # Channels merged via shallow dict spread ({**old, **new}) instead of
@@ -28,18 +29,92 @@ DICT_REDUCER_KEYS = {
 }
 
 
+def _dict_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, Mapping):
+        return dict(value)
+    return {}
+
+
+def _merge_mapping_channel(
+    prior_value: Any,
+    next_value: Any,
+) -> dict[str, Any]:
+    return {
+        **_dict_value(prior_value),
+        **_dict_value(next_value),
+    }
+
+
+def _merge_turn_lifecycle(
+    prior_value: Any,
+    next_value: Any,
+) -> dict[str, Any]:
+    prior_lifecycle = _dict_value(prior_value)
+    seeded_lifecycle = _dict_value(next_value)
+    preserved_clarification = {
+        preserve_key: prior_lifecycle[preserve_key]
+        for preserve_key in ("tentative_route", "triage_confidence")
+        if prior_lifecycle.get(preserve_key) is not None
+    }
+    return {
+        **seeded_lifecycle,
+        **preserved_clarification,
+    }
+
+
+def build_effective_turn_state(
+    prior_state: Mapping[str, Any] | None,
+    initial_state: AgentTurnInputState,
+    *,
+    prior_state_wins: bool = False,
+) -> AgentState:
+    if prior_state is None:
+        return cast(AgentState, dict(initial_state))
+
+    state: dict[str, Any] = (
+        dict(initial_state) if prior_state_wins else dict(prior_state)
+    )
+    for key, value in dict(initial_state).items():
+        prior_value = prior_state.get(key)
+        if key == "transcript":
+            state[key] = [
+                *list(cast(Any, prior_state.get("transcript", []) or [])),
+                *list(cast(Any, value or [])),
+            ]
+        elif key in DICT_REDUCER_KEYS:
+            state[key] = (
+                _merge_mapping_channel(value, prior_value)
+                if prior_state_wins
+                else _merge_mapping_channel(prior_value, value)
+            )
+        elif key == "turn_lifecycle":
+            state[key] = (
+                _merge_turn_lifecycle(value, prior_value)
+                if prior_state_wins
+                else _merge_turn_lifecycle(prior_value, value)
+            )
+        elif prior_state_wins:
+            state[key] = prior_value if key in prior_state else value
+        else:
+            state[key] = value
+    if prior_state_wins:
+        state.update(
+            {
+                key: value
+                for key, value in prior_state.items()
+                if key not in dict(initial_state)
+            }
+        )
+    return cast(AgentState, state)
+
+
 def apply_state_delta(state: AgentState, delta: dict[str, Any]) -> None:
+    state_values = cast(dict[str, Any], state)
     for key, value in delta.items():
         if key in DICT_REDUCER_KEYS:
-            state[key] = cast(
-                Any,
-                {
-                    **dict(state.get(key, {}) or {}),
-                    **dict(value or {}),
-                },
-            )
+            state_values[key] = _merge_mapping_channel(state_values.get(key), value)
         else:
-            state[key] = cast(Any, value)
+            state_values[key] = value
 
 
 def route_for_runtime_mode(runtime_mode: str) -> str | None:
