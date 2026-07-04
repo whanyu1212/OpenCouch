@@ -224,6 +224,10 @@ THOUGHT_RECORD_DEFINITION = ExerciseDefinition(
     duration_seconds=600,
     intensity="high",
     selection_aliases=("thought record", "thought check", "belief"),
+    text_fit="good",
+    voice_fit="poor",
+    interaction_pattern="cognitive_reframe",
+    cognitive_load="high",
 )
 
 BEHAVIORAL_EXPERIMENT_DEFINITION = ExerciseDefinition(
@@ -238,6 +242,10 @@ BEHAVIORAL_EXPERIMENT_DEFINITION = ExerciseDefinition(
     duration_seconds=600,
     intensity="high",
     selection_aliases=("behavioral experiment", "test this belief", "test a belief"),
+    text_fit="good",
+    voice_fit="poor",
+    interaction_pattern="planning",
+    cognitive_load="high",
 )
 
 CONTINUUM_DEFINITION = ExerciseDefinition(
@@ -254,6 +262,10 @@ CONTINUUM_DEFINITION = ExerciseDefinition(
     intensity="medium",
     selection_aliases=("continuum", "all-or-nothing", "black-and-white"),
     voice_supported=True,
+    text_fit="good",
+    voice_fit="okay",
+    interaction_pattern="cognitive_reframe",
+    cognitive_load="medium",
 )
 
 

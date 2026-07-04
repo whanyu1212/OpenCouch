@@ -83,6 +83,10 @@ TINY_ACTION_DEFINITION = ExerciseDefinition(
     intensity="medium",
     selection_aliases=("tiny action", "small action", "motivation"),
     voice_supported=True,
+    text_fit="good",
+    voice_fit="okay",
+    interaction_pattern="planning",
+    cognitive_load="medium",
 )
 
 

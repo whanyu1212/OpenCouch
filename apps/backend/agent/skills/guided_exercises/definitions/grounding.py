@@ -243,6 +243,10 @@ GROUNDING_5_4_3_2_1_DEFINITION = ExerciseDefinition(
     intensity="low",
     selection_aliases=("grounding", "ground me", "5-4-3-2-1"),
     voice_supported=True,
+    text_fit="good",
+    voice_fit="good",
+    interaction_pattern="item_collection",
+    cognitive_load="low",
 )
 
 BOX_BREATHING_DEFINITION = ExerciseDefinition(
@@ -259,6 +263,10 @@ BOX_BREATHING_DEFINITION = ExerciseDefinition(
     intensity="low",
     selection_aliases=("breathing", "box breathing", "breath"),
     voice_supported=True,
+    text_fit="good",
+    voice_fit="good",
+    interaction_pattern="paced_confirmation",
+    cognitive_load="low",
 )
 
 STOP_TECHNIQUE_DEFINITION = ExerciseDefinition(
@@ -275,6 +283,10 @@ STOP_TECHNIQUE_DEFINITION = ExerciseDefinition(
     intensity="medium",
     selection_aliases=("STOP technique", "S.T.O.P.", "pause technique"),
     voice_supported=True,
+    text_fit="good",
+    voice_fit="good",
+    interaction_pattern="reflection",
+    cognitive_load="medium",
 )
 
 MUSCLE_RELAXATION_DEFINITION = ExerciseDefinition(
@@ -294,6 +306,10 @@ MUSCLE_RELAXATION_DEFINITION = ExerciseDefinition(
         "PMR",
     ),
     voice_supported=True,
+    text_fit="good",
+    voice_fit="good",
+    interaction_pattern="paced_confirmation",
+    cognitive_load="low",
 )
 
 

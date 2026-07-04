@@ -173,6 +173,10 @@ SELF_COMPASSION_DEFINITION = ExerciseDefinition(
     intensity="medium",
     selection_aliases=("self-compassion", "compassion break", "kinder to myself"),
     voice_supported=True,
+    text_fit="good",
+    voice_fit="good",
+    interaction_pattern="reflection",
+    cognitive_load="medium",
 )
 
 IMPROVE_DEFINITION = ExerciseDefinition(
@@ -186,6 +190,10 @@ IMPROVE_DEFINITION = ExerciseDefinition(
     intensity="medium",
     selection_aliases=("IMPROVE", "IMPROVE the moment", "emotion regulation"),
     voice_supported=True,
+    text_fit="good",
+    voice_fit="good",
+    interaction_pattern="reflection",
+    cognitive_load="medium",
 )
 
 GRATITUDE_DEFINITION = ExerciseDefinition(
@@ -202,6 +210,10 @@ GRATITUDE_DEFINITION = ExerciseDefinition(
     intensity="low",
     selection_aliases=("gratitude", "gratitude exercise", "grateful"),
     voice_supported=True,
+    text_fit="good",
+    voice_fit="good",
+    interaction_pattern="item_collection",
+    cognitive_load="low",
 )
 
 

@@ -37,6 +37,10 @@ class GuidedExerciseSkillSummary(BaseModel):
         description="Approximate duration in seconds, when known.",
     )
     intensity: str = Field(description="Expected user effort or emotional load.")
+    text_fit: str = Field(description="Suitability for text delivery.")
+    voice_fit: str = Field(description="Suitability for voice delivery.")
+    interaction_pattern: str = Field(description="Primary interaction shape.")
+    cognitive_load: str = Field(description="Expected cognitive effort.")
     supported_channels: list[str] = Field(description="Supported delivery channels.")
     required_capability: str | None = Field(
         default=None,
@@ -131,6 +135,13 @@ class GuidedExerciseSkillToolResult(BaseModel):
     )
 
 
+def _supported_channels_for_definition(definition: Any) -> list[str]:
+    channels = list(definition.channels)
+    if definition.voice_supported and "voice" not in channels:
+        channels.append("voice")
+    return channels
+
+
 async def execute_guided_exercise_discovery_tool(
     context: OpenAITextRunContext,
     *,
@@ -163,7 +174,11 @@ async def execute_guided_exercise_discovery_tool(
             tags=list(definition.tags),
             estimated_seconds=definition.duration_seconds,
             intensity=definition.intensity,
-            supported_channels=list(definition.channels),
+            supported_channels=_supported_channels_for_definition(definition),
+            text_fit=definition.text_fit,
+            voice_fit=definition.voice_fit,
+            interaction_pattern=definition.interaction_pattern,
+            cognitive_load=definition.cognitive_load,
             required_capability=definition.required_skill,
         )
         for definition in definitions

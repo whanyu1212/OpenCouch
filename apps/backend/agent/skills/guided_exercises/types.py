@@ -14,6 +14,16 @@ StepState = Literal["complete", "hold", "stuck", "exit"]
 CompletionMode = Literal["items", "confirmation", "response", "llm_judged"]
 
 ExerciseIntensity = Literal["low", "medium", "high"]
+DeliveryFit = Literal["good", "okay", "poor"]
+InteractionPattern = Literal[
+    "paced_confirmation",
+    "item_collection",
+    "reflection",
+    "planning",
+    "cognitive_reframe",
+    "imagery",
+]
+CognitiveLoad = Literal["low", "medium", "high"]
 
 
 @dataclass(frozen=True)
@@ -70,6 +80,10 @@ class ExerciseDefinition:
         required_skill: Optional capability key required before this exercise
             can be offered.
         voice_supported: Whether the exercise is suitable for voice mode.
+        text_fit: Suitability for text delivery.
+        voice_fit: Suitability for voice delivery.
+        interaction_pattern: Primary interaction shape for selection/pacing.
+        cognitive_load: Expected cognitive effort independent of emotional intensity.
     """
 
     id: str
@@ -86,6 +100,10 @@ class ExerciseDefinition:
     channels: tuple[str, ...] = ("text",)
     required_skill: str | None = None
     voice_supported: bool = False
+    text_fit: DeliveryFit = "good"
+    voice_fit: DeliveryFit = "okay"
+    interaction_pattern: InteractionPattern = "reflection"
+    cognitive_load: CognitiveLoad = "medium"
 
 
 class ExerciseStepDecision(BaseModel):
