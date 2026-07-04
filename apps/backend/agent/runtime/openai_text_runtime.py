@@ -43,8 +43,8 @@ from agent.flows.therapeutic import (
 from agent.guardrails import run_crisis_input_guardrail
 from agent.runtime.memory_context import build_turn_memory_delta
 from agent.runtime.state_ops import (
-    DICT_REDUCER_KEYS,
     apply_state_delta,
+    build_effective_turn_state,
     finalize_openai_turn,
 )
 from agent.runtime.prompt_utils import final_output_text
@@ -494,9 +494,12 @@ class OpenAITextRuntime:
         context: WorkflowContext,
         prior_state: AgentState | None | object = _PRIOR_STATE_NOT_PROVIDED,
     ) -> PreparedTurn:
-        if prior_state is _PRIOR_STATE_NOT_PROVIDED:
-            prior_state = None
-        state = _effective_turn_state(prior_state, initial_state)
+        effective_prior_state = (
+            None
+            if prior_state is _PRIOR_STATE_NOT_PROVIDED
+            else cast(AgentState | None, prior_state)
+        )
+        state = _effective_turn_state(effective_prior_state, initial_state)
 
         run_context = self._run_context_for_state(state, config, context)
         guardrail_output = await run_crisis_input_guardrail(
@@ -784,36 +787,7 @@ def _effective_turn_state(
     prior_state: AgentState | None,
     initial_state: AgentTurnInputState,
 ) -> AgentState:
-    if prior_state is None:
-        return cast(AgentState, dict(initial_state))
-
-    state: dict[str, Any] = dict(prior_state)
-    for key, value in dict(initial_state).items():
-        if key == "transcript":
-            state[key] = [
-                *list(prior_state.get("transcript", [])),
-                *list(value or []),
-            ]
-        elif key in DICT_REDUCER_KEYS:
-            state[key] = {
-                **dict(prior_state.get(key, {}) or {}),
-                **dict(value or {}),
-            }
-        elif key == "turn_lifecycle":
-            prior_lifecycle = dict(prior_state.get("turn_lifecycle", {}) or {})
-            seeded_lifecycle = dict(value or {})
-            preserved_clarification = {
-                preserve_key: prior_lifecycle[preserve_key]
-                for preserve_key in ("tentative_route", "triage_confidence")
-                if prior_lifecycle.get(preserve_key) is not None
-            }
-            state[key] = {
-                **seeded_lifecycle,
-                **preserved_clarification,
-            }
-        else:
-            state[key] = value
-    return cast(AgentState, state)
+    return build_effective_turn_state(prior_state, initial_state)
 
 
 def _deterministic_smoke_state(
