@@ -237,6 +237,40 @@ async def test_response_llm_uses_structured_contract_and_omits_tool_prompt() -> 
 
 
 @pytest.mark.asyncio
+async def test_response_llm_uses_triage_selected_style_guidance() -> None:
+    """Response-LLM overrides should receive dynamic style guidance too."""
+
+    runtime = _runtime(_StatefulWorkflow(), FakeOpenAISDKRunner("unused sdk reply"))
+    response_llm = _RecordingResponseLLM("Try naming one thing you can do next.")
+    context = WorkflowContext(
+        llm_client=_RouteLLM(
+            route="therapeutic",
+            therapeutic_response_style="technique",
+            therapeutic_approach="dbt_skills",
+        ),
+        response_llm=response_llm,
+        memory_store=OpenCouchMemoryStore(),
+        crisis_log_backend=InMemoryCrisisLogBackend(),
+        memory_mode=MemoryMode.LOCAL,
+    )
+
+    state = await runtime.run_turn(
+        cast(Any, _initial_state("Can you give me a concrete skill?")),
+        config={"configurable": {"thread_id": "thread-response-llm-style"}},
+        context=context,
+    )
+
+    assert state["response_style"] == "technique"
+    assert state["therapeutic_approach"] == "dbt_skills"
+    assert response_llm.structured_calls == 1
+    system_instruction = response_llm.system_instructions[-1] or ""
+    assert "Therapeutic response guidance:" in system_instruction
+    assert "- response_style: technique" in system_instruction
+    assert "- therapeutic_approach: dbt_skills" in system_instruction
+    assert "TECHNIQUE response style" in system_instruction
+
+
+@pytest.mark.asyncio
 async def test_response_llm_structured_contract_sanitizes_pseudo_tool_text() -> None:
     """Structured response text is still sanitized before user exposure."""
 

@@ -16,11 +16,7 @@ from agent.flows.sdk_fallback import (
 )
 from agent.observability.timing import elapsed_ms
 from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
-from agent.specialists.therapeutic_response.prompts import (
-    _format_working_memory,
-    build_clarifying_system_prompt,
-    build_supportive_system_prompt,
-)
+from agent.specialists.therapeutic_response.prompts import _format_working_memory
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.session.state import format_recent_history
 from agent.runtime.prompt_utils import (
@@ -318,9 +314,11 @@ def resolve_therapeutic_result(
 
 
 def therapeutic_system_prompt_for_state(state: AgentState) -> str:
-    if response_style_from_state(state) == "clarifying":
-        return build_clarifying_system_prompt(state)
-    return build_supportive_system_prompt(state)
+    return render_therapeutic_response_style_guidance(
+        state,
+        response_style=response_style_from_state(state),
+        therapeutic_approach=therapeutic_approach_from_state(state),
+    )
 
 
 def response_llm_prompt_for_state(
