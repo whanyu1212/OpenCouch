@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from agent.memory.modes import MemoryMode
+from agent.memory.notebook import build_memory_notebook
 from agent.models import Message, StreamEvent
 from agent.runtime import (
     DEFAULT_CRISIS_LOG_DB_PATH,
@@ -244,11 +245,13 @@ class ConsoleRuntime:
             (owner_id, "procedural"),
             "user_response_style",
         )
+        notebook = await build_memory_notebook(runtime.memory_store, owner_id=owner_id)
         return {
             "owner_id": owner_id,
             "semantic": [record.value for record in semantic],
             "episodic": [record.value for record in episodic],
             "procedural": procedural.value if procedural is not None else None,
+            "notebook": notebook.model_dump(mode="json"),
         }
 
     def _require_runtime(self) -> PersistentAgentRuntime:

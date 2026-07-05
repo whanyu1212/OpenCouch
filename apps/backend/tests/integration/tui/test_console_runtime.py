@@ -183,6 +183,65 @@ async def test_console_runtime_uses_grouped_storage_paths(
     assert session.user_id == expected_user_id
 
 
+@pytest.mark.asyncio
+async def test_console_runtime_memory_snapshot_includes_notebook_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The TUI runtime snapshot should include raw records plus the notebook view."""
+
+    from agent.memory.store import OpenCouchMemoryStore
+    from opencouch_tui.runtime import ConsoleConfig, ConsoleRuntime
+
+    class _NotebookPersistentRuntime:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.memory_store = OpenCouchMemoryStore()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def get_history(self, thread_id):
+            return []
+
+        async def get_state(self, thread_id):
+            return None
+
+    monkeypatch.setattr(
+        "opencouch_tui.runtime.get_settings",
+        lambda: SimpleNamespace(
+            persistence_backend="sqlite",
+            memory_database_url=None,
+            allow_legacy_sqlite=True,
+            text_session_backend="disabled",
+            text_session_database_url=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.runtime.PersistentAgentRuntime",
+        _NotebookPersistentRuntime,
+    )
+
+    async with ConsoleRuntime(
+        ConsoleConfig(
+            requested_mode="deterministic",
+            thread_id="tui-notebook",
+            user_id="alice",
+            memory_mode="persistent",
+        )
+    ) as runtime:
+        snapshot = await runtime.load_memory_snapshot()
+
+    assert snapshot["owner_id"] == "alice"
+    assert snapshot["semantic"] == []
+    assert snapshot["episodic"] == []
+    assert snapshot["procedural"] is None
+    assert snapshot["notebook"]["owner_id"] == "alice"
+    assert snapshot["notebook"]["counts"]["total_entries"] == 0
+    assert snapshot["notebook"]["topics"] == []
+
+
 def test_console_config_defaults_are_tui_safe() -> None:
     """The adapter defaults should be safe for credential-free TUI smoke runs."""
 

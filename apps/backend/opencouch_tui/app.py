@@ -1184,67 +1184,102 @@ class OpenCouchTuiApp(App[None]):
         return debug
 
     def _render_memory_snapshot(self, snapshot: dict[str, Any]) -> Text:
+        notebook = snapshot.get("notebook")
+        if not isinstance(notebook, dict):
+            notebook = {
+                "counts": {
+                    "semantic": 0,
+                    "episodic": 0,
+                    "procedural_rules": 0,
+                    "total_entries": 0,
+                },
+                "topics": [],
+                "proactive_recall_enabled": False,
+            }
+        return self._render_memory_notebook(snapshot["owner_id"], notebook)
+
+    def _render_memory_notebook(
+        self, owner_id: object, notebook: dict[str, Any]
+    ) -> Text:
         memory = Text()
-        memory.append(
-            f"Owner: {snapshot['owner_id']}\n\n",
-            style=self._role_style("assistant"),
-        )
-        semantic = snapshot.get("semantic", [])
-        episodic = snapshot.get("episodic", [])
-        procedural = snapshot.get("procedural")
+        memory.append(f"Owner: {owner_id}\n", style=self._role_style("assistant"))
 
-        memory.append("Semantic\n", style=self._role_style("user"))
-        if semantic:
-            for record in semantic:
-                memory.append(
-                    f"- {record.get('predicate', '?')}: ", style=self._muted_style()
-                )
-                target = record.get("object", {})
-                if isinstance(target, dict):
-                    memory.append(
-                        f"{target.get('identifier', '?')}\n",
-                        style=self._message_style("user"),
-                    )
-                else:
-                    memory.append(f"{target}\n", style=self._message_style("user"))
-        else:
-            memory.append("- none\n", style=self._debug_style())
-
-        memory.append("\nEpisodic\n", style=self._role_style("assistant"))
-        if episodic:
-            for record in episodic:
-                memory.append(
-                    f"- {record.get('session_id', '?')}: {record.get('summary', '?')}\n",
-                    style=self._message_style("assistant"),
-                )
-        else:
-            memory.append("- none\n", style=self._debug_style())
-
-        memory.append("\nProcedural\n", style=self._role_style("assistant"))
-        if isinstance(procedural, dict):
-            memory.append(
-                f"- recall: {'on' if procedural.get('proactive_recall_enabled') else 'off'}\n",
-                style=self._message_style("assistant"),
+        counts = notebook.get("counts", {})
+        count_text = "0 entries"
+        if isinstance(counts, dict):
+            total = int(counts.get("total_entries") or 0)
+            semantic = int(counts.get("semantic") or 0)
+            episodic = int(counts.get("episodic") or 0)
+            procedural = int(counts.get("procedural_rules") or 0)
+            count_text = (
+                f"{total} entries ({semantic} facts, "
+                f"{episodic} sessions, {procedural} rules)"
             )
-            rules = procedural.get("rules", [])
-            if rules:
-                for rule in rules:
-                    if isinstance(rule, dict):
-                        memory.append(
-                            f"  • {rule.get('rule', '?')}\n",
-                            style=self._message_style("assistant"),
-                        )
-                    else:
-                        memory.append(
-                            f"  • {rule}\n",
-                            style=self._message_style("assistant"),
-                        )
-            else:
-                memory.append("  • none\n", style=self._debug_style())
-        else:
-            memory.append("- none\n", style=self._debug_style())
+        recall = "on" if notebook.get("proactive_recall_enabled") else "off"
+        memory.append(
+            f"Notebook: {count_text} · recall: {recall}\n\n",
+            style=self._muted_style(),
+        )
 
+        topics = notebook.get("topics", [])
+        if not isinstance(topics, list) or not topics:
+            memory.append("No visible memory records.\n", style=self._debug_style())
+            return memory
+
+        rendered_topics = 0
+        for topic in topics:
+            if not isinstance(topic, dict):
+                continue
+            entries = topic.get("entries", [])
+            if not isinstance(entries, list):
+                entries = []
+            if rendered_topics:
+                memory.append("\n")
+            label = str(topic.get("label") or topic.get("id") or "Memory")
+            memory.append(f"{label}\n", style=self._role_style("user"))
+            if not entries:
+                memory.append("- none\n", style=self._debug_style())
+                rendered_topics += 1
+                continue
+
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                title = str(entry.get("title") or entry.get("category") or "Memory")
+                summary = str(entry.get("summary") or "").strip()
+                memory.append(f"- {title}\n", style=self._message_style("assistant"))
+                if summary:
+                    memory.append(f"  {summary}\n", style=self._muted_style())
+                provenance = self._memory_notebook_provenance_text(
+                    entry.get("provenance")
+                )
+                if provenance:
+                    memory.append(f"  · {provenance}\n", style=self._debug_style())
+            rendered_topics += 1
+
+        if rendered_topics == 0:
+            memory.append("No visible memory records.\n", style=self._debug_style())
         return memory
+
+    @staticmethod
+    def _memory_notebook_provenance_text(provenance: object) -> str:
+        if not isinstance(provenance, dict):
+            return ""
+        parts: list[str] = []
+        confidence = provenance.get("confidence")
+        if confidence:
+            parts.append(f"confidence: {confidence}")
+        source_session = provenance.get("source_session_id")
+        if source_session:
+            source = f"source: {source_session}"
+            source_turn = provenance.get("source_turn_index")
+            if source_turn is not None:
+                source = f"{source} turn {source_turn}"
+            parts.append(source)
+        write_reason = provenance.get("write_reason")
+        if write_reason:
+            parts.append(f"reason: {write_reason}")
+        return " · ".join(parts)
 
     def _render_help_bar(self) -> None:
         help_text = Text()

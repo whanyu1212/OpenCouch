@@ -192,13 +192,53 @@ async def test_tui_memory_workspace_renders_snapshot() -> None:
         memory_text = str(app.query_one("#memory-transcript").renderable)
 
     assert "Owner: local-tui" in memory_text
-    assert "Semantic" in memory_text
-    assert "WORRIES_ABOUT: presentations" in memory_text
-    assert "Episodic" in memory_text
-    assert "session-1: User discussed presentation anxiety." in memory_text
-    assert "Procedural" in memory_text
-    assert "recall: on" in memory_text
+    assert (
+        "Notebook: 3 entries (1 facts, 1 sessions, 1 rules) · recall: on" in memory_text
+    )
+    assert "Triggers and sensitivities" in memory_text
+    assert "user worries about presentations" in memory_text
+    assert "Presentations make me anxious." in memory_text
+    assert "confidence: high" in memory_text
+    assert "Response preferences" in memory_text
     assert "You prefer short step-by-step plans." in memory_text
+    assert "Session arcs" in memory_text
+    assert "User discussed presentation anxiety." in memory_text
+
+
+def test_tui_memory_snapshot_renderer_shows_empty_notebook_state() -> None:
+    """An empty generated notebook should render a compact empty state."""
+
+    from opencouch_tui.app import OpenCouchTuiApp
+
+    app = OpenCouchTuiApp(runtime_factory=_fake_runtime_factory)
+    memory_text = str(
+        app._render_memory_snapshot(
+            {
+                "owner_id": "empty-owner",
+                "semantic": [],
+                "episodic": [],
+                "procedural": None,
+                "notebook": {
+                    "owner_id": "empty-owner",
+                    "topics": [],
+                    "counts": {
+                        "semantic": 0,
+                        "episodic": 0,
+                        "procedural_rules": 0,
+                        "total_entries": 0,
+                    },
+                    "proactive_recall_enabled": False,
+                },
+            }
+        )
+    )
+
+    assert "Owner: empty-owner" in memory_text
+    assert (
+        "Notebook: 0 entries (0 facts, 0 sessions, 0 rules) · recall: off"
+        in memory_text
+    )
+    assert "No visible memory records." in memory_text
 
 
 @pytest.mark.asyncio
@@ -617,6 +657,67 @@ class _FakeConsoleRuntime:
                 "proactive_recall_enabled": True,
                 "rules": [
                     {"rule": "You prefer short step-by-step plans."},
+                ],
+            },
+            "notebook": {
+                "owner_id": self.session.owner_id,
+                "counts": {
+                    "semantic": 1,
+                    "episodic": 1,
+                    "procedural_rules": 1,
+                    "total_entries": 3,
+                },
+                "proactive_recall_enabled": True,
+                "topics": [
+                    {
+                        "id": "triggers",
+                        "label": "Triggers and sensitivities",
+                        "entries": [
+                            {
+                                "id": "fact-1",
+                                "kind": "semantic",
+                                "title": "user worries about presentations",
+                                "summary": "Presentations make me anxious.",
+                                "category": "trigger",
+                                "provenance": {
+                                    "source_session_id": "session-1",
+                                    "source_turn_index": 2,
+                                    "confidence": "high",
+                                },
+                                "metadata": {},
+                            }
+                        ],
+                    },
+                    {
+                        "id": "procedural_rules",
+                        "label": "Response preferences",
+                        "entries": [
+                            {
+                                "id": "rule-1",
+                                "kind": "procedural",
+                                "title": "Response preference",
+                                "summary": "You prefer short step-by-step plans.",
+                                "category": "procedural_rule",
+                                "provenance": {"confidence": "medium"},
+                                "metadata": {},
+                            }
+                        ],
+                    },
+                    {
+                        "id": "session_arcs",
+                        "label": "Session arcs",
+                        "entries": [
+                            {
+                                "id": "arc-1",
+                                "kind": "episodic",
+                                "title": "presentation anxiety",
+                                "summary": "User discussed presentation anxiety.",
+                                "category": "session_arc",
+                                "provenance": {"source_session_id": "session-1"},
+                                "metadata": {},
+                            }
+                        ],
+                    },
                 ],
             },
         }
