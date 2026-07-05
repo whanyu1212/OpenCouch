@@ -1,165 +1,250 @@
 # Memory Module
 
-This package is the OpenCouch prompt-memory layer.
+`agent.memory` is the OpenCouch long-term prompt-memory subsystem. It owns the
+records that can later influence therapeutic responses, plus the policy and
+retrieval code that decides when those records are read or written.
 
-It owns:
-- long-term memory storage abstractions
-- retrieval and ranking
-- procedural-profile reads and writes
-- extraction and summarization prompt builders
-- write-policy, dedup, and reconciliation helpers
-- per-turn write orchestration and session-end commit
-- memory helpers used by user-facing memory controls
-- memory-layer data models and small utility helpers
+Postgres-backed typed records are the source of truth for durable deployments.
+In-memory stores are for incognito/test paths, and SQLite remains an explicit
+legacy fallback while migration work continues.
 
-It does **not** own always-on audit persistence.
-It also does not own the memory-control gate that handles user-facing
-commands such as recall toggles, saved preferences, and forget requests.
+## Boundary
 
-Those backends live outside `agent.memory`:
-- crisis log backends live in [agent/audit](../audit)
-- session feedback backends live in [agent/feedback](../feedback)
+Use `agent.memory` for:
 
-Important distinction:
-- `agent.audit.models` owns audit-related record schemas
-- `agent.feedback.models` owns explicit session-feedback schemas
+- semantic facts and user-context records that may affect future prompts
+- episodic session arcs and summaries
+- procedural response preferences and recall controls
+- retrieval, ranking, deduplication, reconciliation, and write policy
+- user-facing memory control services such as recall, save, and forget
+- per-session candidate buffers promoted at session end
+
+Do **not** use `agent.memory` for:
+
+- safety audit rows; those live in [`agent/audit`](../audit)
+- explicit feedback ratings; those live in [`agent/feedback`](../feedback)
+- raw OpenAI SDK session history; that lives under [`agent/runtime`](../runtime)
+- tool schemas; those live in [`agent/tools`](../tools)
 
 ## Mental Model
 
-There are 3 main memory shapes:
+There are three durable memory kinds:
 
-1. Semantic memory
-- many records per user
-- factual / user-context style data
-- retrieved by lexical + embedding ranking
+1. **Semantic memory**
+   - many records per user
+   - factual/user-context style data
+   - retrieved by lexical + optional embedding ranking
 
-2. Episodic memory
-- many records per user
-- session summaries / arcs
-- retrieved similarly to semantic memory
+2. **Episodic memory**
+   - many records per user
+   - session summaries and arcs
+   - used as cross-session context and support evidence for future writes
 
-3. Procedural memory
-- one profile document per user
-- response-style rules plus `proactive_recall_enabled`
-- updated via load → mutate → put helpers
+3. **Procedural memory**
+   - one profile per user
+   - response-style rules plus `proactive_recall_enabled`
+   - updated by explicit user controls and policy-gated write paths
 
-## File Map
+A fourth shape, `SessionMemoryBuffer`, is runtime-owned session state rather than
+long-term memory. It holds candidates until the session-end commit pass decides
+what should become durable semantic or procedural memory.
+
+## Claude-Style UX, Postgres Source of Truth
+
+The target user/developer experience is inspired by Claude Code's memory model:
+a concise always-readable index plus topic-oriented details that can be inspected
+on demand. In OpenCouch, that should be a **generated/read model over typed
+Postgres records**, not raw markdown as the canonical store.
+
+Practical direction:
+
+- Keep Postgres typed records as the durable source of truth.
+- Keep semantic / episodic / procedural schemas explicit and testable.
+- Expose a notebook-like inspection layer in future UI/CLI work:
+  - a concise memory index: "what do we remember?"
+  - topic groupings: preferences, coping strategies, relationships, goals,
+    sensitivities, session arcs
+  - provenance: source session, timestamps, confidence/policy reason, and
+    whether a record can influence prompts
+  - controls: delete, toggle recall, and inspect why a memory was or was not
+    written
+- Treat procedural preferences as the closest analogue to auto-memory notes.
+- Keep therapeutic semantic/episodic memory policy-gated because it is sensitive
+  user data, not general coding-agent notes.
+
+This gives us Claude-style inspectability without giving up consent, deletion,
+retention, multi-user storage, incognito behavior, or structured retrieval.
+
+## Current Data Flow
+
+### Per-turn recall
+
+1. `agent.runtime.memory_context` decides whether recall is allowed for the turn
+   and calls `memory.retrieval.service`.
+2. `memory.retrieval.service` loads semantic, episodic, and procedural records
+   for the resolved owner.
+3. `memory.retrieval.ranking` performs lexical / dense / RRF ranking where
+   applicable.
+4. Retrieved records are converted into structured working-memory entries via
+   `memory.entries`.
+5. Specialist prompt builders render those entries into response prompts.
+
+### Hot-path candidate capture
+
+1. Response/runtime paths identify possible semantic or procedural candidates.
+2. `memory.policy.write` and policy clamps decide whether to write now, hold for
+   session end, require repetition, or skip.
+3. Held candidates go into `SessionMemoryBuffer` under `memory.policy.candidates`.
+4. The buffer is attached to active-session state, not immediately persisted as
+   long-term memory.
+
+### Session-end commit
+
+1. `agent.runtime.session.commit` orchestrates session finalization memory work.
+2. `memory.commit.service` evaluates held candidates with clustering, scoring,
+   prior-session support, and overlap checks.
+3. Semantic writes go through `memory.operations.semantic_writes`.
+4. Procedural writes go through `memory.operations.procedural_profile`.
+5. Episodic session arcs are extracted/summarized and persisted for future recall
+   and support evidence.
+
+### User-facing memory controls
+
+1. Text/voice tools and runtime dispatch route explicit memory commands to
+   `memory.control.service`.
+2. Read, mutation, deletion, and pending-action helpers live under
+   `memory.control`.
+3. Control paths respect memory mode and owner resolution; they should not bypass
+   policy or incognito boundaries.
+
+## Package Map
 
 ### Storage
 
-- [store/](./store): `MemoryStore` protocol, `StoreRecord`, in-memory `OpenCouchMemoryStore`, namespace conventions, and search thresholds.
-- [store/postgres.py](./store/postgres.py): primary durable Postgres implementation (default backend).
-- [store/sqlite.py](./store/sqlite.py): legacy SQLite fallback backend, selectable only with `OPENCOUCH_PERSISTENCE_BACKEND=sqlite` plus `OPENCOUCH_ALLOW_LEGACY_SQLITE=1`.
-- [modes.py](./modes.py): `MemoryMode` enum used by the runtime to choose in-memory vs durable behavior.
+- [`store/base.py`](./store/base.py): `MemoryStore` protocol, `StoreRecord`,
+  namespace helpers, and shared record parsing.
+- [`store/memory.py`](./store/memory.py): in-memory store for incognito/tests.
+- [`store/postgres.py`](./store/postgres.py): primary durable Postgres store.
+- [`store/sqlite.py`](./store/sqlite.py): legacy SQLite fallback store.
+- [`modes.py`](./modes.py): `MemoryMode` enum used by runtime wiring.
 
 ### Retrieval
 
-- [retrieval.py](./retrieval.py): lexical ranking, dense ranking, cosine similarity, Reciprocal Rank Fusion.
-- [recall.py](./recall.py): per-turn retrieval entry point used by the runtime turn memory context; assembles the semantic + episodic + procedural working-memory bundle.
-- [embeddings.py](./embeddings.py): embedding provider protocol, OpenAI / null providers, provider factory.
-- [text_tokens.py](./text_tokens.py): shared tokenizer used by retrieval and dedup.
+- [`retrieval/service.py`](./retrieval/service.py): per-turn recall entry point
+  used by the runtime memory context.
+- [`retrieval/ranking.py`](./retrieval/ranking.py): lexical ranking, dense
+  ranking, cosine similarity, and Reciprocal Rank Fusion.
+- [`providers/embeddings.py`](./providers/embeddings.py): embedding provider
+  protocol and provider factory.
+- [`entries.py`](./entries.py): working-memory entry models and rendering
+  helpers.
+- [`text_tokens.py`](./text_tokens.py): shared tokenization helpers used by
+  retrieval and dedup.
 
-### Write Pipeline
+### Write Policy And Candidate Buffers
 
-- [session_commit_service.py](./session_commit_service.py): session-end commit of buffered candidates.
-- [semantic_writes.py](./semantic_writes.py): batch semantic-write helper (`apply_semantic_writes_batch`) used by session-end paths.
-- [dedup.py](./dedup.py): hot-path semantic near-duplicate detection.
-- [reconciliation.py](./reconciliation.py): conservative merge / replace / skip planning for semantic and procedural writes.
+- [`policy/candidates.py`](./policy/candidates.py): semantic/procedural
+  candidates plus `SessionMemoryBuffer`.
+- [`policy/write.py`](./policy/write.py): LLM-primary write-timing policy.
+- [`policy/clamps.py`](./policy/clamps.py): post-policy safety/storage clamps.
+- [`policy/thresholds.py`](./policy/thresholds.py): policy thresholds.
+- [`policy/markers.py`](./policy/markers.py): marker helpers for memory-control
+  requests.
 
-### Policy Layer
+### Operations
 
-The [policy/](./policy) subpackage owns the decision layer between memory candidates and persisted writes:
+- [`operations/semantic_writes.py`](./operations/semantic_writes.py): semantic
+  batch write, bump, and skip handling.
+- [`operations/procedural_profile.py`](./operations/procedural_profile.py):
+  procedural profile reads, rule construction, upsert, and recall toggles.
+- [`operations/reconciliation.py`](./operations/reconciliation.py): conservative
+  merge / replace / skip planning.
+- [`operations/dedup.py`](./operations/dedup.py): semantic near-duplicate checks.
+- [`operations/episodic.py`](./operations/episodic.py): episodic session-arc
+  helpers.
 
-- [policy/candidates.py](./policy/candidates.py): candidate objects for semantic / procedural writes plus `SessionMemoryBuffer`; held candidates carry the policy decision that held them.
-- [policy/write.py](./policy/write.py): LLM-primary write-timing policy for semantic / procedural candidates, with narrow post-policy safety / storage clamps.
-- [policy/semantic.py](./policy/semantic.py): semantic policy constants for session-only categories.
+### Session-End Commit
 
-### Procedural Profile
+- [`commit/service.py`](./commit/service.py): session-end promotion pass.
+- [`commit/clustering.py`](./commit/clustering.py): semantic/procedural cluster
+  text helpers.
+- [`commit/scoring.py`](./commit/scoring.py): support and transcript scoring
+  helpers.
+- [`commit/selection.py`](./commit/selection.py): candidate selection and
+  semantic/procedural overlap resolution.
 
-- [procedural_profile.py](./procedural_profile.py): main helper surface for procedural memory; profile reads / writes, rule upserts, proactive-recall toggle.
+### Control Plane
 
-### Episodic
+- [`control/service.py`](./control/service.py): user-facing memory-control
+  service facade.
+- [`control/read_service.py`](./control/read_service.py): memory inspection and
+  recall reads.
+- [`control/mutation_service.py`](./control/mutation_service.py): preference and
+  saved-memory mutations.
+- [`control/deletion_service.py`](./control/deletion_service.py): deletion and
+  pending delete flows.
+- [`control/actions.py`](./control/actions.py),
+  [`control/operations.py`](./control/operations.py), and
+  [`control/types.py`](./control/types.py): shared action helpers and schemas.
 
-- [episodic.py](./episodic.py): episodic session-arc helpers used at session-end summarization.
+### Extraction And Prompts
 
-### Prompt Builders
+- [`extraction/session_extractor.py`](./extraction/session_extractor.py):
+  session-level memory extraction.
+- [`prompts/session_extraction.py`](./prompts/session_extraction.py): extraction
+  prompt builders.
+- [`prompts/summarization.py`](./prompts/summarization.py): summarization prompt
+  builders.
 
-The [prompts/](./prompts) subpackage groups memory-layer prompts:
+### Types And Utilities
 
-- [prompts/summarization.py](./prompts/summarization.py): session summarization prompts.
-
-### Working-Memory Rendering
-
-- [entries.py](./entries.py): structured working-memory entries and rendering helpers for prompts / diagnostics.
-
-### Utilities
-
-- [hashing.py](./hashing.py): `hash_session_id()` and `iso_now()`.
-
-### Types
-
-- [models.py](./models.py): compatibility export surface for memory-layer models.
-- [types/](./types): pydantic model definitions and compatibility exports grouped by concern:
-  - `semantic.py`
-  - `episodic.py`
-  - `procedural.py`
-  - `therapeutic.py`
-  - `primitives.py`
+- [`types/semantic.py`](./types/semantic.py): semantic memory models.
+- [`types/episodic.py`](./types/episodic.py): episodic session-arc models.
+- [`types/procedural.py`](./types/procedural.py): procedural profile and rule
+  models.
+- [`types/therapeutic.py`](./types/therapeutic.py): therapeutic context models.
+- [`types/primitives.py`](./types/primitives.py): shared primitive types.
+- [`hashing.py`](./hashing.py): owner/session hashing helpers.
 
 ## Common Entry Points
 
-If you are trying to understand a specific behavior, start here:
+- "How is memory stored?" Start with [`store/base.py`](./store/base.py), then
+  [`store/postgres.py`](./store/postgres.py).
+- "How does recall work?" Start with
+  [`runtime/memory_context.py`](../runtime/memory_context.py), then
+  [`retrieval/service.py`](./retrieval/service.py) and
+  [`retrieval/ranking.py`](./retrieval/ranking.py).
+- "Why did a fact/rule get written or skipped?" Start with
+  [`policy/write.py`](./policy/write.py), [`policy/clamps.py`](./policy/clamps.py),
+  and [`operations/reconciliation.py`](./operations/reconciliation.py).
+- "What happens at session end?" Start with
+  [`runtime/session/commit.py`](../runtime/session/commit.py), then
+  [`commit/service.py`](./commit/service.py).
+- "How does the user inspect, save, or forget memory?" Start with
+  [`control/service.py`](./control/service.py).
+- "Where are prompt-facing memory entries formatted?" Start with
+  [`entries.py`](./entries.py) and the specialist prompt builders under
+  [`agent/specialists`](../specialists).
 
-- "How is memory stored?"
-  Start with [store/](./store), then [store/postgres.py](./store/postgres.py). For SQLite-fallback behavior, see [store/sqlite.py](./store/sqlite.py).
+## Persistence Behavior
 
-- "How does retrieval work?"
-  Start with [retrieval.py](./retrieval.py), then [embeddings.py](./embeddings.py), then [text_tokens.py](./text_tokens.py).
+- Durable deployments use Postgres selected by runtime configuration.
+- Incognito mode uses in-memory stores and must not write durable user memory.
+- SQLite is legacy compatibility only and requires explicit opt-in.
+- Crisis audit and session feedback persistence are separate from prompt memory
+  even when they share the same deployment database.
 
-- "How are procedural rules managed?"
-  Start with [procedural_profile.py](./procedural_profile.py).
+## Extension Rules
 
-- "Why did a fact or rule get written or skipped?"
-  Start with [policy/candidates.py](./policy/candidates.py), [policy/write.py](./policy/write.py), and [reconciliation.py](./reconciliation.py).
+When adding memory behavior:
 
-- "What runs on every turn vs at session end?"
-  Start with [recall.py](./recall.py), [session_commit_service.py](./session_commit_service.py), and [episodic.py](./episodic.py).
-
-- "What prompt is used for summarization?"
-  Start in [prompts/](./prompts).
-
-- "How does the user toggle recall or save a preference?"
-  Start with [control](./control).
-
-- "Where did the crisis log / session feedback code go?"
-  Crisis logs live in [agent/audit](../audit); session feedback lives in
-  [agent/feedback](../feedback).
-
-## Runtime Wiring
-
-This package is mostly infrastructure. The main runtime integration points are outside this directory:
-
-- [agent/runtime/runtime.py](../runtime/runtime.py): chooses memory store implementation and owns lifecycle.
-- [agent/runtime/backends.py](../runtime/backends.py): selects Postgres vs SQLite vs in-memory based on settings.
-- [control](./control): handles user-facing memory tool requests and
-  memory-control service operations.
-- [agent/runtime/memory_context.py](../runtime/memory_context.py): builds the
-  runner-turn memory delta consumed by the text runtime.
-- [agent/runtime/openai_text_runtime.py](../runtime/openai_text_runtime.py): wires
-  memory loading into the OpenAI Agents SDK text runtime.
-
-## Persistence Backend
-
-Postgres is the default durable backend (see `config.py:DEFAULT_PERSISTENCE_BACKEND`). SQLite is a legacy durable fallback and requires both `OPENCOUCH_PERSISTENCE_BACKEND=sqlite` and `OPENCOUCH_ALLOW_LEGACY_SQLITE=1` when selected through runtime configuration. The in-memory `OpenCouchMemoryStore` is used for `INCOGNITO` mode and tests.
-
-## Practical Boundary
-
-Use `agent.memory` for:
-- memory that can later influence prompts or retrieval
-- helper logic that decides what should become memory
-- shared schemas for semantic / episodic / procedural records
-
-Use `agent.audit` for:
-- safety / audit records that must be persisted regardless of prompt-memory behavior
-- session feedback persistence
-- operator-facing audit trails
+1. Decide which memory kind it belongs to: semantic, episodic, procedural, or
+   session-buffer-only.
+2. Preserve owner resolution, memory mode, recall toggle, deletion, and incognito
+   boundaries.
+3. Store typed records through `MemoryStore`; do not introduce raw markdown or
+   ad hoc files as durable source of truth.
+4. Add tests at the policy/service boundary and, for storage changes, contract or
+   backend round-trip coverage.
+5. If the data is operational safety or feedback rather than prompt context, use
+   `agent.audit` or `agent.feedback` instead.
