@@ -143,6 +143,8 @@ async def build_memory_notebook(
     counts = MemoryNotebookCounts()
 
     for record in semantic_records:
+        if counts.semantic >= semantic_limit:
+            break
         try:
             fact = SemanticFact.model_validate(record.value)
         except ValidationError:
@@ -160,6 +162,8 @@ async def build_memory_notebook(
         counts.procedural_rules += 1
 
     for record in episodic_records:
+        if counts.episodic >= episodic_limit:
+            break
         try:
             arc = StoredSessionArc.model_validate(record.value)
         except ValidationError:
@@ -198,7 +202,11 @@ async def _records_for_namespace(
     record_count = await store.arecord_count(namespace)
     if record_count == 0:
         return []
-    return await store.asearch(namespace, query=None, limit=min(record_count, limit))
+    # ``asearch(query=None)`` returns insertion-order slices. Fetch the whole
+    # namespace, then apply the notebook's visible-entry limit after validation
+    # and hidden/superseded filtering so an old hidden prefix does not mask later
+    # visible replacement records.
+    return await store.asearch(namespace, query=None, limit=record_count)
 
 
 def _is_visible_memory(record: Any) -> bool:

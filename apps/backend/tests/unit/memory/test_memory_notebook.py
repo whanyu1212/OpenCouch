@@ -49,23 +49,30 @@ def _semantic_fact(
     )
 
 
-def _session_arc() -> StoredSessionArc:
+def _session_arc(
+    arc_id: str = "arc-1",
+    *,
+    primary_themes: list[str] | None = None,
+    summary: str = "The user connected work stress with disrupted sleep.",
+    user_visible: bool = True,
+) -> StoredSessionArc:
     return StoredSessionArc(
-        id="arc-1",
+        id=arc_id,
         owner_id="user-1",
         session_id="session-2",
         started_at="2026-07-03T00:00:00Z",
         ended_at="2026-07-03T00:30:00Z",
         duration_seconds=1800,
         turn_count=6,
-        primary_themes=["work stress", "sleep"],
-        summary="The user connected work stress with disrupted sleep.",
+        primary_themes=primary_themes or ["work stress", "sleep"],
+        summary=summary,
         mood_arc=MoodArc(opened="tense", closed="calmer"),
         open_loops=["try a wind-down routine"],
         resolved_threads=["named the stressor"],
         approach_used="cbt",
         created_at="2026-07-03T00:31:00Z",
         last_referenced_at="2026-07-04T00:00:00Z",
+        user_visible=user_visible,
         write_reason="session summary",
         policy_version="phase5_v1",
         crisis_level_max=0,
@@ -124,6 +131,65 @@ async def test_memory_notebook_groups_visible_records_by_topic() -> None:
         "I prefer short step-by-step plans."
     )
     assert notebook.topics[1].entries[0].title == "user uses box breathing"
+
+
+@pytest.mark.asyncio
+async def test_memory_notebook_applies_semantic_limit_after_visibility_filter() -> None:
+    store = OpenCouchMemoryStore()
+    owner_id = "user-1"
+    hidden = _semantic_fact(
+        "fact-hidden",
+        category="preference",
+        predicate="WANTS",
+        obj=_entity("Goal", "hidden preference"),
+        evidence_quote="This hidden preference should not mask visible records.",
+        user_visible=False,
+    )
+    visible = _semantic_fact(
+        "fact-visible",
+        category="preference",
+        predicate="WANTS",
+        obj=_entity("Goal", "visible preference"),
+        evidence_quote="This visible preference was inserted after hidden data.",
+    )
+    await store.aput((owner_id, "semantic"), hidden.id, hidden.model_dump(mode="json"))
+    await store.aput(
+        (owner_id, "semantic"), visible.id, visible.model_dump(mode="json")
+    )
+
+    notebook = await build_memory_notebook(
+        store,
+        owner_id=owner_id,
+        semantic_limit=1,
+    )
+
+    assert notebook.counts.semantic == 1
+    assert notebook.topics[0].entries[0].id == "fact-visible"
+
+
+@pytest.mark.asyncio
+async def test_memory_notebook_applies_episodic_limit_after_visibility_filter() -> None:
+    store = OpenCouchMemoryStore()
+    owner_id = "user-1"
+    hidden = _session_arc("arc-hidden", user_visible=False)
+    visible = _session_arc(
+        "arc-visible",
+        primary_themes=["visible session"],
+        summary="This visible session was inserted after hidden data.",
+    )
+    await store.aput((owner_id, "episodic"), hidden.id, hidden.model_dump(mode="json"))
+    await store.aput(
+        (owner_id, "episodic"), visible.id, visible.model_dump(mode="json")
+    )
+
+    notebook = await build_memory_notebook(
+        store,
+        owner_id=owner_id,
+        episodic_limit=1,
+    )
+
+    assert notebook.counts.episodic == 1
+    assert notebook.topics[0].entries[0].id == "arc-visible"
 
 
 @pytest.mark.asyncio
