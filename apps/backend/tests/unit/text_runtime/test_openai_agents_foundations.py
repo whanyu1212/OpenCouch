@@ -177,7 +177,6 @@ def test_agent_roster_builds_dormant_specialists() -> None:
     assert roster.crisis_agent.model == "gpt-test"
     assert roster.guided_exercise_agent.model == "gpt-test"
     assert [tool.name for tool in roster.therapeutic_agent.tools] == [
-        "load_therapeutic_response_skill",
         "show_saved_memory",
         "show_memory_status",
         "set_proactive_memory_recall",

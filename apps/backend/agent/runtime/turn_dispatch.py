@@ -69,6 +69,15 @@ def state_delta_for_turn_dispatch(
             "query": decision.query or str(state.get("message") or "").strip(),
         }
         delta["response_style"] = "grounded_lookup"
+    if decision.route == "therapeutic":
+        delta["response_style"] = decision.therapeutic_response_style
+        delta["therapeutic_approach"] = decision.therapeutic_approach
+        diagnostics["openai_triage_therapeutic_response_style"] = (
+            decision.therapeutic_response_style
+        )
+        diagnostics["openai_triage_therapeutic_approach"] = (
+            decision.therapeutic_approach
+        )
     if decision.route == "guided_exercise":
         delta["response_style"] = "guided_exercise"
         delta["therapeutic_approach"] = state.get("therapeutic_approach") or "none"

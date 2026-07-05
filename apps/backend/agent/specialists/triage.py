@@ -25,6 +25,18 @@ Choose the primary route contract for this turn:
   external-resource lookup
 - guided_exercise: explicit request to start or continue a guided exercise
 
+For therapeutic routes, also choose therapeutic_response_style so the runtime can
+inject private response-style guidance without a separate style-loading tool:
+- supportive: warm validation and steady support
+- reflective: mirror feelings, patterns, and meanings when the user is processing
+- psychoeducation: explain a mental-health concept the user is asking about
+- closing: help wrap up, summarize, or end the session
+- clarifying: ask one concise question before giving substantive guidance
+- technique: offer a concrete coping, CBT, ACT, DBT, or regulation technique
+Choose therapeutic_approach only when it is useful private guidance; otherwise
+use none. Do not use therapeutic_response_style to start guided exercises; route
+explicit exercise requests to guided_exercise.
+
 Also decide the active_flow_action for the current turn:
 - none: no active flow implication
 - continue: user is continuing the current active flow

@@ -180,7 +180,6 @@ async def test_openai_runtime_runs_safe_therapeutic_turn_and_persists_state() ->
         runtime._roster.therapeutic_agent.handoff_description
     )
     assert [tool.name for tool in runner.run_calls[0]["agent"].tools] == [
-        "load_therapeutic_response_skill",
         "show_saved_memory",
         "show_memory_status",
         "set_proactive_memory_recall",
@@ -235,6 +234,40 @@ async def test_response_llm_uses_structured_contract_and_omits_tool_prompt() -> 
     assert state["diagnostics"]["openai_response_llm_output_sanitized"] is False
     assert state["diagnostics"]["openai_response_llm_response_text_length"] == 37
     assert "openai_response_llm_raw_text_sha256" not in state["diagnostics"]
+
+
+@pytest.mark.asyncio
+async def test_response_llm_uses_triage_selected_style_guidance() -> None:
+    """Response-LLM overrides should receive dynamic style guidance too."""
+
+    runtime = _runtime(_StatefulWorkflow(), FakeOpenAISDKRunner("unused sdk reply"))
+    response_llm = _RecordingResponseLLM("Try naming one thing you can do next.")
+    context = WorkflowContext(
+        llm_client=_RouteLLM(
+            route="therapeutic",
+            therapeutic_response_style="technique",
+            therapeutic_approach="dbt_skills",
+        ),
+        response_llm=response_llm,
+        memory_store=OpenCouchMemoryStore(),
+        crisis_log_backend=InMemoryCrisisLogBackend(),
+        memory_mode=MemoryMode.LOCAL,
+    )
+
+    state = await runtime.run_turn(
+        cast(Any, _initial_state("Can you give me a concrete skill?")),
+        config={"configurable": {"thread_id": "thread-response-llm-style"}},
+        context=context,
+    )
+
+    assert state["response_style"] == "technique"
+    assert state["therapeutic_approach"] == "dbt_skills"
+    assert response_llm.structured_calls == 1
+    system_instruction = response_llm.system_instructions[-1] or ""
+    assert "Therapeutic response guidance:" in system_instruction
+    assert "- response_style: technique" in system_instruction
+    assert "- therapeutic_approach: dbt_skills" in system_instruction
+    assert "TECHNIQUE response style" in system_instruction
 
 
 @pytest.mark.asyncio
@@ -340,37 +373,61 @@ async def test_response_llm_stream_sanitizes_pseudo_tool_text() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openai_runtime_uses_therapeutic_response_skill_metadata() -> None:
+async def test_openai_runtime_injects_therapeutic_style_guidance() -> None:
     workflow = _StatefulWorkflow()
-    runner = FakeOpenAISDKRunner(
-        "reflective reply",
-        tool_calls=[
-            (
-                "load_therapeutic_response_skill",
-                {
-                    "response_style": "reflective",
-                    "therapeutic_approach": "cbt",
-                },
-            )
-        ],
-    )
+    runner = FakeOpenAISDKRunner("reflective reply")
     runtime = _runtime(workflow, runner)
 
     state = await runtime.run_turn(
         cast(Any, _initial_state("I keep getting stuck in the same loop.")),
         config={"configurable": {"thread_id": "thread-1"}},
-        context=_context(),
+        context=_context(
+            _RouteLLM(
+                route="therapeutic",
+                therapeutic_response_style="reflective",
+                therapeutic_approach="cbt",
+            )
+        ),
     )
 
     assert state["response_text"] == "reflective reply"
     assert state["response_style"] == "reflective"
     assert state["therapeutic_approach"] == "cbt"
-    assert state["diagnostics"]["openai_therapeutic_skill_tool_calls"] == [
-        "load_therapeutic_response_skill"
-    ]
-    assert state["diagnostics"]["openai_therapeutic_skill_response_style"] == (
+    assert "Therapeutic response guidance:" in runner.run_calls[0]["input_text"]
+    assert "- response_style: reflective" in runner.run_calls[0]["input_text"]
+    assert "- therapeutic_approach: cbt" in runner.run_calls[0]["input_text"]
+    assert "load_therapeutic_response_skill" not in runner.run_calls[0]["input_text"]
+    assert (
+        state["diagnostics"]["openai_therapeutic_style_guidance_response_style"]
+        == "reflective"
+    )
+    assert state["diagnostics"]["openai_therapeutic_style_guidance_approach"] == "cbt"
+    assert state["diagnostics"]["openai_triage_therapeutic_response_style"] == (
         "reflective"
     )
+    assert state["diagnostics"]["openai_triage_therapeutic_approach"] == "cbt"
+    assert "openai_therapeutic_skill_tool_calls" not in state["diagnostics"]
+
+
+def test_triage_decision_sets_therapeutic_style_guidance_state() -> None:
+    state = cast(Any, _initial_state("Can you give me a concrete skill?"))
+    decision = TurnDispatchDecision(
+        route="therapeutic",
+        therapeutic_response_style="technique",
+        therapeutic_approach="dbt_skills",
+        reasoning="user asked for a concrete coping skill",
+        confidence="high",
+    )
+
+    result = apply_triage_decision_to_state(state, decision)
+
+    assert result["route"] == "therapeutic"
+    assert result["response_style"] == "technique"
+    assert result["therapeutic_approach"] == "dbt_skills"
+    assert result["diagnostics"]["openai_triage_therapeutic_response_style"] == (
+        "technique"
+    )
+    assert result["diagnostics"]["openai_triage_therapeutic_approach"] == "dbt_skills"
 
 
 @pytest.mark.asyncio

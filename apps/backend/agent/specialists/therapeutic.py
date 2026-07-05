@@ -16,7 +16,6 @@ from agent.runtime.context import OpenAITextRunContext
 from agent.tools.grounded import build_grounded_lookup_tools
 from agent.tools.guided_exercise import build_guided_exercise_discovery_tools
 from agent.tools.memory import build_memory_tools
-from agent.tools.therapeutic import build_therapeutic_response_tools
 
 
 THERAPEUTIC_AGENT_NAME = "OpenCouch therapeutic response agent"
@@ -45,16 +44,10 @@ Guided exercise discovery:
   structured guided exercise. Use the returned metadata to offer one suitable
   option; do not start or run the exercise yourself.
 
-Therapeutic response skills:
-- Call load_therapeutic_response_skill before drafting an ordinary non-crisis
-  therapeutic reply when no memory or grounded lookup tool owns the answer.
-- Do not call load_therapeutic_response_skill for memory-control requests or
-  factual/external lookup requests that are better handled by their dedicated
-  tools.
-- Choose the response_style argument that best fits the user's current turn:
-  supportive, reflective, clarifying, psychoeducation, closing, or technique.
-- Use the returned skill_context as response-style guidance. Do not recite the
-  skill name, internal labels, or tool metadata to the user.
+Therapeutic response guidance:
+- The runtime injects private response-style guidance into the current prompt.
+- Use that guidance silently for ordinary non-crisis therapeutic replies.
+- Do not recite internal style names, labels, or guidance metadata to the user.
 
 Do not claim to own crisis classification or guided-exercise state. Those
 remain application-owned.
@@ -66,9 +59,8 @@ turn. The application runtime owns crisis assessment, memory mutation,
 guided-exercise state, persistence, and audit logging.
 
 Operational tools may be attached:
-- Call load_therapeutic_response_skill before drafting an ordinary non-crisis
-  therapeutic reply when no memory or grounded lookup tool owns the answer.
-  Use the returned skill_context as private response-style guidance.
+- For ordinary non-crisis therapeutic replies, use the runtime-injected response
+  guidance already included in the prompt; no style-loading tool is needed.
 - Call show_saved_memory only when the prompt explicitly requires it or the
   user asks what saved memory contains.
 - Call show_memory_status only when the prompt explicitly requires it or the
@@ -106,7 +98,6 @@ def build_therapeutic_agent(
             tools
             if tools is not None
             else [
-                *build_therapeutic_response_tools(),
                 *build_memory_tools(),
                 *build_guided_exercise_discovery_tools(),
                 *build_grounded_lookup_tools(),

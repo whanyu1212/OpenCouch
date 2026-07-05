@@ -22,6 +22,14 @@ TherapeuticResponseStyle = Literal[
     "clarifying",
     "technique",
 ]
+TherapeuticResponseGuidanceStyle = Literal[
+    "supportive",
+    "reflective",
+    "psychoeducation",
+    "closing",
+    "clarifying",
+    "technique",
+]
 
 SessionStage = Literal["opening", "deepening", "stabilizing", "closing"]
 
@@ -51,6 +59,22 @@ class TurnDispatchDecision(BaseModel):
     """Structured turn-level routing decision for runtime-owned dispatch."""
 
     route: TurnRoute
+    therapeutic_response_style: TherapeuticResponseGuidanceStyle = Field(
+        default="supportive",
+        description=(
+            "Private response-style guidance to inject when route is therapeutic. "
+            "Use supportive, reflective, psychoeducation, closing, clarifying, "
+            "or technique. Do not use this field to start guided exercises; route "
+            "explicit exercises to guided_exercise instead."
+        ),
+    )
+    therapeutic_approach: TherapeuticApproach = Field(
+        default="none",
+        description=(
+            "Optional private therapeutic approach label for ordinary therapeutic "
+            "response guidance, such as cbt, act, dbt_skills, grief_support, or none."
+        ),
+    )
     active_flow_action: ActiveFlowAction = "none"
     clarification_needed: bool = False
     clarification_kind: ClarificationKind = "none"
@@ -136,6 +160,7 @@ class DispatchDecision(BaseModel):
 
 __all__ = [
     "TherapeuticResponseStyle",
+    "TherapeuticResponseGuidanceStyle",
     "TherapeuticApproach",
     "SessionIntent",
     "SessionStage",
