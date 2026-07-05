@@ -200,7 +200,9 @@ def build_voice_realtime_tools(*, memory_mode: str) -> list[dict[str, Any]]:
             name="record_guided_exercise_progress",
             description=(
                 "Record the user's latest response to the active guided-exercise "
-                "step. Side effects: active exercise state may update."
+                "step in Realtime voice. The runtime validates the expected skill "
+                "and step, computes the next action, and may update active "
+                "exercise state."
             ),
             properties={
                 "expected_skill_id": {

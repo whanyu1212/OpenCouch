@@ -4,6 +4,7 @@ import pytest
 
 from agent.memory.modes import MemoryMode
 from agent.memory.operations.procedural_profile import aget_procedural_profile
+from agent.models import Channel
 from agent.observability.config import TraceConfig
 from agent.observability.context import TraceContext, use_trace_context
 from agent.observability.events import (
@@ -81,6 +82,145 @@ async def test_wait_for_user_tool_is_fast_path_without_context_build() -> None:
         "response_text": "",
         "should_respond": False,
         "side_effect": "none",
+    }
+
+
+@pytest.mark.asyncio
+async def test_voice_guided_exercise_progress_persists_exercise_state_delta() -> None:
+    runtime = PersistentAgentRuntime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        memory_mode=MemoryMode.INCOGNITO,
+        finalize_active_sessions_on_close=False,
+    )
+
+    async with runtime:
+        await runtime._prepare_session_for_turn(  # noqa: SLF001
+            thread_id="voice-thread",
+            prior_state=None,
+            llm_client=None,
+        )
+        await runtime._state_store.save_state(  # noqa: SLF001
+            "voice-thread",
+            {
+                "thread_id": "voice-thread",
+                "channel": Channel.VOICE,
+                "transcript": [],
+                "exercise_state": {
+                    "exercise_type": "grounding_box_breathing",
+                    "exercise_step": 0,
+                    "exercise_step_id": "inhale",
+                    "exercise_version": 1,
+                    "exercise_therapeutic_approach": "dbt_skills",
+                },
+            },
+        )
+
+        output = await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="record_guided_exercise_progress",
+            arguments={
+                "expected_skill_id": "grounding_box_breathing",
+                "expected_step_id": "inhale",
+                "outcome": "complete",
+                "user_response_summary": "User completed the inhale step.",
+            },
+            thread_id="voice-thread",
+            user_id=None,
+            current_user_message="I breathed in.",
+            transcript=[{"role": "user", "content": "I breathed in."}],
+            llm_client=None,
+            memory_mode="incognito",
+        )
+        saved_state = await runtime.get_state("voice-thread")
+        final_state = await runtime.voice.record_voice_turn(
+            thread_id="voice-thread",
+            user_id=None,
+            user_text="I breathed in.",
+            assistant_text="Good. Now hold gently.",
+            tool_calls=[
+                {
+                    "tool_name": "record_guided_exercise_progress",
+                    "output": {
+                        "exercise_state_delta": {
+                            "exercise_state": {
+                                "exercise_type": None,
+                                "exercise_step": None,
+                                "exercise_step_id": None,
+                                "exercise_version": None,
+                                "exercise_therapeutic_approach": None,
+                            }
+                        }
+                    },
+                }
+            ],
+        )
+
+    assert output["status"] == "active"
+    assert output["runtime_action"] == "advance"
+    assert output["current_step_id"] == "hold_full"
+    assert saved_state is not None
+    assert saved_state["exercise_state"] == {
+        "exercise_type": "grounding_box_breathing",
+        "exercise_step": 1,
+        "exercise_step_id": "hold_full",
+        "exercise_version": 1,
+        "exercise_therapeutic_approach": "dbt_skills",
+    }
+    assert final_state["exercise_state"] == saved_state["exercise_state"]
+
+
+@pytest.mark.asyncio
+async def test_voice_guided_exercise_progress_clears_stale_absent_session() -> None:
+    runtime = PersistentAgentRuntime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        memory_mode=MemoryMode.INCOGNITO,
+        finalize_active_sessions_on_close=False,
+    )
+
+    async with runtime:
+        await runtime._state_store.save_state(  # noqa: SLF001
+            "voice-thread",
+            {
+                "thread_id": "voice-thread",
+                "channel": Channel.VOICE,
+                "transcript": [],
+                "exercise_state": {
+                    "exercise_type": "grounding_box_breathing",
+                    "exercise_step": 0,
+                    "exercise_step_id": "inhale",
+                    "exercise_version": 1,
+                    "exercise_therapeutic_approach": "dbt_skills",
+                },
+            },
+        )
+
+        output = await execute_voice_tool_call(
+            runtime=runtime,
+            tool_name="record_guided_exercise_progress",
+            arguments={
+                "expected_skill_id": "grounding_box_breathing",
+                "expected_step_id": "inhale",
+                "outcome": "complete",
+                "user_response_summary": "A stale voice client reported progress.",
+            },
+            thread_id="voice-thread",
+            user_id=None,
+            current_user_message="I breathed in.",
+            transcript=[{"role": "user", "content": "I breathed in."}],
+            llm_client=None,
+            memory_mode="incognito",
+        )
+        saved_state = await runtime.get_state("voice-thread")
+
+    assert output["status"] == "conflict"
+    assert output["side_effect"] == "none"
+    assert saved_state is not None
+    assert saved_state["exercise_state"] == {
+        "exercise_type": None,
+        "exercise_step": None,
+        "exercise_step_id": None,
+        "exercise_version": None,
+        "exercise_therapeutic_approach": None,
     }
 
 

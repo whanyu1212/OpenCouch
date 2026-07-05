@@ -32,30 +32,6 @@ MemoryToolSideEffect = Literal[
     "cancel_pending",
 ]
 GroundedToolStatus = Literal["answered", "no_verified_answer"]
-GuidedExerciseProgressOutcome = Literal[
-    "complete",
-    "partial",
-    "hold",
-    "stuck",
-    "exit",
-    "unsafe",
-]
-GuidedExerciseProgressStatus = Literal[
-    "active",
-    "completed",
-    "cancelled",
-    "conflict",
-    "unsafe",
-]
-GuidedExerciseRuntimeAction = Literal[
-    "advance",
-    "hold",
-    "simplify",
-    "complete",
-    "cancel",
-    "crisis",
-    "conflict",
-]
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,22 +88,6 @@ class GuidedExerciseSkillToolCallRecord:
 
 
 @dataclass(frozen=True, slots=True)
-class GuidedExerciseProgressToolCallRecord:
-    """One guided-exercise progress update captured from an SDK run."""
-
-    tool_name: str
-    expected_skill_id: str
-    expected_step_id: str
-    outcome: GuidedExerciseProgressOutcome
-    status: GuidedExerciseProgressStatus
-    runtime_action: GuidedExerciseRuntimeAction
-    exercise_state_delta: dict[str, Any]
-    response_instruction: str
-    side_effect: Literal["active_skill_state_update", "none"] = "none"
-    retry_safe: bool = False
-
-
-@dataclass(frozen=True, slots=True)
 class TherapeuticResponseSkillToolCallRecord:
     """One therapeutic response skill load captured from an SDK run."""
 
@@ -168,9 +128,6 @@ class OpenAITextRunContext:
     )
     guided_exercise_skill_tool_calls: list[GuidedExerciseSkillToolCallRecord] = field(
         default_factory=list
-    )
-    guided_exercise_progress_tool_calls: list[GuidedExerciseProgressToolCallRecord] = (
-        field(default_factory=list)
     )
     therapeutic_response_skill_tool_calls: list[
         TherapeuticResponseSkillToolCallRecord
@@ -288,47 +245,6 @@ class OpenAITextRunContext:
         return (
             self.guided_exercise_skill_tool_calls[-1]
             if self.guided_exercise_skill_tool_calls
-            else None
-        )
-
-    def record_guided_exercise_progress_tool_result(
-        self,
-        *,
-        expected_skill_id: str,
-        expected_step_id: str,
-        outcome: GuidedExerciseProgressOutcome,
-        status: GuidedExerciseProgressStatus,
-        runtime_action: GuidedExerciseRuntimeAction,
-        exercise_state_delta: Mapping[str, Any],
-        response_instruction: str,
-        side_effect: Literal["active_skill_state_update", "none"],
-        retry_safe: bool,
-    ) -> None:
-        """Remember a guided-exercise progress update for diagnostics."""
-
-        self.guided_exercise_progress_tool_calls.append(
-            GuidedExerciseProgressToolCallRecord(
-                tool_name="record_guided_exercise_progress",
-                expected_skill_id=expected_skill_id,
-                expected_step_id=expected_step_id,
-                outcome=outcome,
-                status=status,
-                runtime_action=runtime_action,
-                exercise_state_delta=dict(exercise_state_delta),
-                response_instruction=response_instruction,
-                side_effect=side_effect,
-                retry_safe=retry_safe,
-            )
-        )
-
-    def latest_guided_exercise_progress_tool_result(
-        self,
-    ) -> GuidedExerciseProgressToolCallRecord | None:
-        """Return the latest guided-exercise progress tool result."""
-
-        return (
-            self.guided_exercise_progress_tool_calls[-1]
-            if self.guided_exercise_progress_tool_calls
             else None
         )
 
