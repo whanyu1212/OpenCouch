@@ -5,15 +5,12 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.flows.guided_exercise.adapters import OpenAIGuidedExerciseResponseLLM
-from agent.flows.guided_exercise.tool_instruction import (
-    _replace_exercise_skill_context_with_tool_instruction,
-)
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.context import OpenAITextRunContext
@@ -24,10 +21,11 @@ from agent.skills.guided_exercises.rendering.directives import (
     render_full_guided_exercise_directive,
     render_tool_forced_guided_exercise_directive,
 )
-from agent.skills.guided_exercises.rendering.skill_context import (
-    render_exercise_skill_context,
-)
 from agent.specialists.roster import build_openai_text_agent_roster
+from agent.specialists.therapeutic_response.prompts import (
+    build_therapeutic_response_prompt,
+)
+from agent.state import AgentState
 
 
 def _sdk_delta(text: str) -> SimpleNamespace:
@@ -142,25 +140,89 @@ def _run_context() -> OpenAITextRunContext:
     )
 
 
-def test_guided_exercise_tool_instruction_rewrites_full_directive_with_renderer() -> (
-    None
-):
-    directive = GuidedExerciseDirective(
+def _state() -> AgentState:
+    return cast(
+        AgentState,
+        {
+            "message": "start a breathing exercise",
+            "session_id": "session-1",
+            "transcript": [],
+            "working_memory": [],
+            "exercise_state": {},
+            "turn_lifecycle": {"active_flow": "guided_exercise", "action": "start"},
+        },
+    )
+
+
+def _directive() -> GuidedExerciseDirective:
+    return GuidedExerciseDirective(
         exercise_type=EXERCISE_BOX_BREATHING,
         runtime_action="start",
         current_step_index=0,
         runtime_task="Start the guided breathing exercise.",
     )
 
-    rewritten, request = _replace_exercise_skill_context_with_tool_instruction(
-        render_full_guided_exercise_directive(directive)
+
+def _prompt_for_directive(
+    state: AgentState,
+    directive: GuidedExerciseDirective,
+    *,
+    tool_forced: bool,
+) -> str:
+    renderer = (
+        render_tool_forced_guided_exercise_directive
+        if tool_forced
+        else render_full_guided_exercise_directive
+    )
+    return build_therapeutic_response_prompt(
+        state,
+        response_style="guided_exercise",
+        step_directive=renderer(directive),
     )
 
-    assert request is not None
-    assert request.exercise_type == EXERCISE_BOX_BREATHING
-    assert request.runtime_action == "start"
-    assert request.current_step_index == 0
-    assert rewritten == render_tool_forced_guided_exercise_directive(directive)
+
+@pytest.mark.asyncio
+async def test_guided_exercise_openai_adapter_renders_tool_prompt_from_directive() -> (
+    None
+):
+    stream = _ControlledOpenAIStream(call_skill_tool_before_first_chunk=True)
+    runner = _ControlledStreamingRunner(stream)
+    roster = build_openai_text_agent_roster(model="gpt-test")
+    state = _state()
+    directive = _directive()
+    adapter = OpenAIGuidedExerciseResponseLLM(
+        runner=runner,
+        guided_exercise_agent=roster.guided_exercise_agent,
+        run_context=_run_context(),
+    )
+
+    generator = adapter.generate_guided_exercise_text_stream(
+        state=state,
+        directive=directive,
+        system_instruction="system",
+    )
+
+    first_task = asyncio.create_task(generator.__anext__())
+    try:
+        await asyncio.wait_for(stream.first_event_seen.wait(), timeout=1.0)
+        first = await asyncio.wait_for(first_task, timeout=1.0)
+        assert first == "first "
+        assert runner.stream_calls[0]["input_text"] == _prompt_for_directive(
+            state,
+            directive,
+            tool_forced=True,
+        )
+        assert (
+            "Required tool: load_guided_exercise_skill"
+            in runner.stream_calls[0]["input_text"]
+        )
+    finally:
+        stream.release_completion.set()
+        if not first_task.done():
+            first_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await first_task
+        await generator.aclose()
 
 
 @pytest.mark.asyncio
@@ -175,11 +237,10 @@ async def test_guided_exercise_openai_adapter_yields_tool_compliant_chunk_before
         guided_exercise_agent=roster.guided_exercise_agent,
         run_context=_run_context(),
     )
-    prompt = (
-        f"{render_exercise_skill_context(EXERCISE_BOX_BREATHING, current_step_index=0, runtime_action='start')}"
-        "\n\nRuntime task:\nStart the guided breathing exercise."
+    generator = adapter.generate_guided_exercise_text_stream(
+        state=_state(),
+        directive=_directive(),
     )
-    generator = adapter.generate_text_stream(prompt=prompt)
 
     first_task = asyncio.create_task(generator.__anext__())
     try:
@@ -227,11 +288,10 @@ async def test_guided_exercise_openai_adapter_preserves_order_when_tool_called_m
         guided_exercise_agent=roster.guided_exercise_agent,
         run_context=_run_context(),
     )
-    prompt = (
-        f"{render_exercise_skill_context(EXERCISE_BOX_BREATHING, current_step_index=0, runtime_action='start')}"
-        "\n\nRuntime task:\nStart the guided breathing exercise."
+    generator = adapter.generate_guided_exercise_text_stream(
+        state=_state(),
+        directive=_directive(),
     )
-    generator = adapter.generate_text_stream(prompt=prompt)
 
     first_task = asyncio.create_task(generator.__anext__())
     try:
@@ -274,11 +334,10 @@ async def test_guided_exercise_openai_adapter_flushes_buffer_when_tool_called_af
         guided_exercise_agent=roster.guided_exercise_agent,
         run_context=_run_context(),
     )
-    prompt = (
-        f"{render_exercise_skill_context(EXERCISE_BOX_BREATHING, current_step_index=0, runtime_action='start')}"
-        "\n\nRuntime task:\nStart the guided breathing exercise."
+    generator = adapter.generate_guided_exercise_text_stream(
+        state=_state(),
+        directive=_directive(),
     )
-    generator = adapter.generate_text_stream(prompt=prompt)
 
     first_task = asyncio.create_task(generator.__anext__())
     try:
@@ -320,16 +379,17 @@ async def test_guided_exercise_openai_adapter_falls_back_when_forced_tool_stream
     stream = _ControlledOpenAIStream()
     runner = _ControlledStreamingRunner(stream)
     roster = build_openai_text_agent_roster(model="gpt-test")
+    state = _state()
+    directive = _directive()
     adapter = OpenAIGuidedExerciseResponseLLM(
         runner=runner,
         guided_exercise_agent=roster.guided_exercise_agent,
         run_context=_run_context(),
     )
-    prompt = (
-        f"{render_exercise_skill_context(EXERCISE_BOX_BREATHING, current_step_index=0, runtime_action='start')}"
-        "\n\nRuntime task:\nStart the guided breathing exercise."
+    generator = adapter.generate_guided_exercise_text_stream(
+        state=state,
+        directive=directive,
     )
-    generator = adapter.generate_text_stream(prompt=prompt)
 
     first_task = asyncio.create_task(generator.__anext__())
     try:
@@ -351,10 +411,18 @@ async def test_guided_exercise_openai_adapter_falls_back_when_forced_tool_stream
         assert adapter.last_duration_ms is not None
         assert adapter.used_skill_tool_fallback is True
         assert len(runner.run_calls) == 1
-        assert runner.run_calls[0]["input_text"] == prompt
+        assert runner.run_calls[0]["input_text"] == _prompt_for_directive(
+            state,
+            directive,
+            tool_forced=False,
+        )
         assert (
             "Required tool: load_guided_exercise_skill"
             in runner.stream_calls[0]["input_text"]
+        )
+        assert (
+            "Required tool: load_guided_exercise_skill"
+            not in runner.run_calls[0]["input_text"]
         )
     finally:
         stream.release_completion.set()
