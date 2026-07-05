@@ -160,7 +160,7 @@ def _skill_from_definition(definition: ExerciseDefinition) -> ExerciseSkill:
         intensity=definition.intensity,
         duration_seconds=definition.duration_seconds,
         supported_channels=_supported_channels_for_definition(definition),
-        required_capability=definition.required_skill,
+        required_capability=definition.required_capability,
         steps=tuple(
             ExerciseSkillStep(
                 index=index,

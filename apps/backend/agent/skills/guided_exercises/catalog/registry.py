@@ -102,10 +102,12 @@ def _validate_catalog(definitions: tuple[ExerciseDefinition, ...]) -> None:
         if not definition.channels:
             raise ValueError(f"Exercise {definition.id} has no supported channels")
         if (
-            definition.required_skill is not None
-            and not definition.required_skill.strip()
+            definition.required_capability is not None
+            and not definition.required_capability.strip()
         ):
-            raise ValueError(f"Exercise {definition.id} has an empty required skill")
+            raise ValueError(
+                f"Exercise {definition.id} has an empty required capability"
+            )
         for alias in definition.selection_aliases:
             if not alias.strip():
                 raise ValueError(f"Exercise {definition.id} has an empty alias")
@@ -258,14 +260,14 @@ def available_exercise_definitions(
         Tuple of available exercise definitions in catalog order.
     """
 
-    skill_set = set(installed_skills)
+    installed_capabilities = set(installed_skills)
     delivery_mode = _normalize_channel(channel)
     return tuple(
         definition
         for definition in definitions
         if _is_definition_available(
             definition,
-            installed_skills=skill_set,
+            installed_capabilities=installed_capabilities,
             delivery_mode=delivery_mode,
             therapeutic_approach=therapeutic_approach,
         )
@@ -275,7 +277,7 @@ def available_exercise_definitions(
 def _is_definition_available(
     definition: ExerciseDefinition,
     *,
-    installed_skills: set[str],
+    installed_capabilities: set[str],
     delivery_mode: str,
     therapeutic_approach: str | None,
 ) -> bool:
@@ -283,7 +285,7 @@ def _is_definition_available(
 
     Args:
         definition: Exercise definition to evaluate.
-        installed_skills: Capability keys available to this user/session.
+        installed_capabilities: Capability keys available to this user/session.
         delivery_mode: Normalized exercise delivery mode.
         therapeutic_approach: Current therapeutic approach selected by routing.
 
@@ -292,8 +294,8 @@ def _is_definition_available(
     """
 
     if (
-        definition.required_skill is not None
-        and definition.required_skill not in installed_skills
+        definition.required_capability is not None
+        and definition.required_capability not in installed_capabilities
     ):
         return False
 

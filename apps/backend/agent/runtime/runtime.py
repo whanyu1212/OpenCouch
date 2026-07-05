@@ -1550,7 +1550,7 @@ class PersistentAgentRuntime:
             message: Current user message.
             channel: Channel metadata for the turn.
             user_id: Optional user identifier.
-            installed_skills: Optional installed skill names.
+            installed_skills: Optional installed capability keys.
             prior_turn_count: Persisted user-turn count before this turn.
 
         Returns:
@@ -1671,7 +1671,7 @@ class PersistentAgentRuntime:
             message: The user message to process.
             channel: The channel metadata for the turn.
             user_id: The optional user identifier.
-            installed_skills: Optional installed skill names.
+            installed_skills: Optional installed capability keys.
             llm_client: The control-plane LLM client.
             response_llm_client: Optional response-writer override.
             expected_liveness: Optional active-session liveness expectation.
@@ -1923,7 +1923,7 @@ class PersistentAgentRuntime:
             message: The user message to process.
             channel: The channel metadata for the turn.
             user_id: The optional user identifier.
-            installed_skills: Optional installed skill names.
+            installed_skills: Optional installed capability keys.
             llm_client: The control-plane LLM client.
             response_llm_client: Optional response-writer override.
             expected_liveness: Optional active-session liveness expectation.

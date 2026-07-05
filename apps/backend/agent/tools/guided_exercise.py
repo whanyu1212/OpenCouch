@@ -75,7 +75,7 @@ class GuidedExerciseSkillSummary(BaseModel):
     supported_channels: list[str] = Field(description="Supported delivery channels.")
     required_capability: str | None = Field(
         default=None,
-        description="Capability required before this skill can be offered.",
+        description="Capability required before this exercise can be offered.",
     )
 
 
@@ -210,7 +210,7 @@ async def execute_guided_exercise_discovery_tool(
             voice_fit=definition.voice_fit,
             interaction_pattern=definition.interaction_pattern,
             cognitive_load=definition.cognitive_load,
-            required_capability=definition.required_skill,
+            required_capability=definition.required_capability,
         )
         for definition in definitions
     ]

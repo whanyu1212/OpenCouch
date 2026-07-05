@@ -58,6 +58,10 @@ state itself is internal to the runtime.
 | `CrisisAssessment` | `level` (0–3), `confidence`, `reason`, `needs_crisis_response`, `needs_clarification` |
 | `Message` | `role`, `content`, `response_style` (optional — stamped onto assistant turns by turn finalization) |
 
+`installed_skills` is retained as the external field name for compatibility.
+The runtime treats these strings as capability keys for capability-aware
+routing and guided-exercise catalog filtering.
+
 ## Runtime context
 
 Runtime dependencies live on `WorkflowContext`, **not** on the

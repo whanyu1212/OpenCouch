@@ -600,10 +600,10 @@ class TestRegistryCompleteness:
         gated = ExerciseDefinition(
             id="gated",
             display_name="Gated",
-            selection_use_case="skill-gated support",
+            selection_use_case="capability-gated support",
             steps=(step,),
             selection_aliases=("gated",),
-            required_skill="advanced_exercises",
+            required_capability="advanced_exercises",
         )
         voice_only = ExerciseDefinition(
             id="voice_only",

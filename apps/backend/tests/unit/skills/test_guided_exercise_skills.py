@@ -17,10 +17,12 @@ from agent.skills.guided_exercises.catalog.registry import (
     get_exercise_definition,
     iter_exercise_definitions,
 )
+from agent.skills.guided_exercises.catalog.types import ExerciseDefinition, ExerciseStep
 from agent.skills.guided_exercises.rendering.skill_context import (
     build_exercise_skill,
     render_exercise_skill_context,
 )
+from agent.tools import guided_exercise as guided_exercise_tools
 from agent.tools.guided_exercise import execute_guided_exercise_discovery_tool
 
 
@@ -36,7 +38,10 @@ def test_all_registered_exercises_build_prompt_ready_skills() -> None:
         assert skill.steps[0].step_id == definition.steps[0].id
 
 
-def _run_context() -> OpenAITextRunContext:
+def _run_context(
+    *,
+    installed_skills: list[str] | None = None,
+) -> OpenAITextRunContext:
     return OpenAITextRunContext(
         thread_id="thread-1",
         user_id="user-1",
@@ -48,6 +53,28 @@ def _run_context() -> OpenAITextRunContext:
             crisis_log_backend=InMemoryCrisisLogBackend(),
             memory_mode=MemoryMode.LOCAL,
         ),
+        installed_skills=list(installed_skills or []),
+    )
+
+
+def _definition(
+    exercise_id: str,
+    *,
+    required_capability: str | None = None,
+) -> ExerciseDefinition:
+    return ExerciseDefinition(
+        id=exercise_id,
+        display_name=exercise_id.replace("_", " ").title(),
+        selection_use_case=f"{exercise_id} support",
+        steps=(
+            ExerciseStep(
+                instruction="Try one small step.",
+                id="step",
+                completion_mode="confirmation",
+            ),
+        ),
+        selection_aliases=(exercise_id.replace("_", " "),),
+        required_capability=required_capability,
     )
 
 
@@ -66,6 +93,13 @@ def test_all_registered_exercises_have_delivery_suitability_metadata() -> None:
         assert definition.cognitive_load in {"low", "medium", "high"}
 
 
+def test_no_production_exercises_require_installed_capabilities() -> None:
+    assert all(
+        definition.required_capability is None
+        for definition in iter_exercise_definitions()
+    )
+
+
 @pytest.mark.asyncio
 async def test_discovery_tool_exposes_delivery_suitability_metadata() -> None:
     result = await execute_guided_exercise_discovery_tool(
@@ -82,6 +116,46 @@ async def test_discovery_tool_exposes_delivery_suitability_metadata() -> None:
     assert skill.interaction_pattern == "paced_confirmation"
     assert skill.cognitive_load == "low"
     assert "voice" in skill.supported_channels
+
+
+@pytest.mark.asyncio
+async def test_discovery_tool_filters_gated_exercises_by_installed_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    basic = _definition("basic")
+    gated = _definition(
+        "gated",
+        required_capability="advanced_exercises",
+    )
+    definitions = (basic, gated)
+
+    def fake_available_exercise_definitions(
+        **kwargs: object,
+    ) -> tuple[ExerciseDefinition, ...]:
+        return available_exercise_definitions(
+            definitions=definitions,
+            installed_skills=kwargs.get("installed_skills", ()),
+            channel=kwargs.get("channel", "text"),
+            therapeutic_approach=kwargs.get("therapeutic_approach"),
+        )
+
+    monkeypatch.setattr(
+        guided_exercise_tools,
+        "available_exercise_definitions",
+        fake_available_exercise_definitions,
+    )
+
+    without_capability = await execute_guided_exercise_discovery_tool(_run_context())
+    assert [skill.skill_id for skill in without_capability.skills] == ["basic"]
+
+    with_capability = await execute_guided_exercise_discovery_tool(
+        _run_context(installed_skills=["advanced_exercises"])
+    )
+    assert [skill.skill_id for skill in with_capability.skills] == [
+        "basic",
+        "gated",
+    ]
+    assert with_capability.skills[1].required_capability == "advanced_exercises"
 
 
 def test_exercise_skill_context_lazy_loads_current_step_detail() -> None:
