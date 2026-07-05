@@ -343,14 +343,17 @@ async def test_openai_runtime_injects_therapeutic_style_guidance() -> None:
     workflow = _StatefulWorkflow()
     runner = FakeOpenAISDKRunner("reflective reply")
     runtime = _runtime(workflow, runner)
-    initial_state = _initial_state("I keep getting stuck in the same loop.")
-    initial_state["response_style"] = "reflective"
-    initial_state["therapeutic_approach"] = "cbt"
 
     state = await runtime.run_turn(
-        cast(Any, initial_state),
+        cast(Any, _initial_state("I keep getting stuck in the same loop.")),
         config={"configurable": {"thread_id": "thread-1"}},
-        context=_context(),
+        context=_context(
+            _RouteLLM(
+                route="therapeutic",
+                therapeutic_response_style="reflective",
+                therapeutic_approach="cbt",
+            )
+        ),
     )
 
     assert state["response_text"] == "reflective reply"
@@ -365,7 +368,32 @@ async def test_openai_runtime_injects_therapeutic_style_guidance() -> None:
         == "reflective"
     )
     assert state["diagnostics"]["openai_therapeutic_style_guidance_approach"] == "cbt"
+    assert state["diagnostics"]["openai_triage_therapeutic_response_style"] == (
+        "reflective"
+    )
+    assert state["diagnostics"]["openai_triage_therapeutic_approach"] == "cbt"
     assert "openai_therapeutic_skill_tool_calls" not in state["diagnostics"]
+
+
+def test_triage_decision_sets_therapeutic_style_guidance_state() -> None:
+    state = cast(Any, _initial_state("Can you give me a concrete skill?"))
+    decision = TurnDispatchDecision(
+        route="therapeutic",
+        therapeutic_response_style="technique",
+        therapeutic_approach="dbt_skills",
+        reasoning="user asked for a concrete coping skill",
+        confidence="high",
+    )
+
+    result = apply_triage_decision_to_state(state, decision)
+
+    assert result["route"] == "therapeutic"
+    assert result["response_style"] == "technique"
+    assert result["therapeutic_approach"] == "dbt_skills"
+    assert result["diagnostics"]["openai_triage_therapeutic_response_style"] == (
+        "technique"
+    )
+    assert result["diagnostics"]["openai_triage_therapeutic_approach"] == "dbt_skills"
 
 
 @pytest.mark.asyncio

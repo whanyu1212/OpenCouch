@@ -328,7 +328,10 @@ class ScriptedOpenAITextRouteLLM(FakeCrossRestartLLM):
                 "clarification_question": self.clarification_question,
                 "no_clarification_reason": self.no_clarification_reason,
                 "memory_reference_mode": self.memory_reference_mode,
+                "therapeutic_approach": self.therapeutic_approach,
             }
+            if self.therapeutic_response_style != "guided_exercise":
+                kwargs["therapeutic_response_style"] = self.therapeutic_response_style
             if self.route == "grounded_lookup":
                 kwargs["query"] = "grounded query"
             return response_schema(**kwargs)
