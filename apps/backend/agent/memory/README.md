@@ -138,6 +138,8 @@ retention, multi-user storage, incognito behavior, or structured retrieval.
   protocol and provider factory.
 - [`entries.py`](./entries.py): working-memory entry models and rendering
   helpers.
+- [`notebook.py`](./notebook.py): read-only Claude-style inspection view over
+  existing typed memory records.
 - [`text_tokens.py`](./text_tokens.py): shared tokenization helpers used by
   retrieval and dedup.
 
@@ -221,7 +223,8 @@ retention, multi-user storage, incognito behavior, or structured retrieval.
   [`runtime/session/commit.py`](../runtime/session/commit.py), then
   [`commit/service.py`](./commit/service.py).
 - "How does the user inspect, save, or forget memory?" Start with
-  [`control/service.py`](./control/service.py).
+  [`control/service.py`](./control/service.py). For a grouped read-only notebook
+  view, see [`notebook.py`](./notebook.py).
 - "Where are prompt-facing memory entries formatted?" Start with
   [`entries.py`](./entries.py) and the specialist prompt builders under
   [`agent/specialists`](../specialists).
