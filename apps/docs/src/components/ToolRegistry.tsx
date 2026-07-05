@@ -218,10 +218,10 @@ const TOOLS: Tool[] = [
     name: 'guided exercise tools',
     status: 'active',
     triggerPath: 'GuidedExerciseAgent SDK tools · Realtime voice tools',
-    triggerCondition: 'user explicitly asks for a structured practice or an active exercise needs progress handling',
+    triggerCondition: 'user explicitly asks for a structured practice or an active exercise needs lifecycle handling',
     providers: ['app'],
     description:
-      'Discovers channel-appropriate exercises, loads the selected exercise skill context, and records progress through the local guided-exercise state machine.',
+      'Discovers channel-appropriate exercises and loads runtime-selected exercise skill context. Text progress is handled by the app-owned guided-exercise lifecycle; voice records progress through a server-validated Realtime tool because it does not run the text lifecycle before speaking.',
     pipeline: [
       {
         id: 'discover',
@@ -244,9 +244,10 @@ const TOOLS: Tool[] = [
         produces: 'GuidedExerciseSkillToolResult',
       },
       {
-        id: 'record_progress',
-        label: 'Record progress',
-        systemPrompt: '(local state-machine update)',
+        id: 'record_voice_progress',
+        label: 'Record voice progress',
+        systemPrompt:
+          'Validate expected skill/step and compute the next runtime-owned exercise_state delta for Realtime voice.',
         temperature: 0,
         useSearch: false,
         onFailure: 'state mismatch surfaces; active exercise is not advanced',
@@ -261,7 +262,7 @@ const TOOLS: Tool[] = [
     gracefulDegradation:
       'The catalog is validated at import time. Voice can only receive exercises marked as voice-suitable or available for the voice channel.',
     file: 'agent/tools/guided_exercise.py',
-    fn: 'execute_guided_exercise_skill_tool',
+    fn: 'execute_guided_exercise_skill_tool / execute_guided_exercise_progress_tool',
   },
 ];
 

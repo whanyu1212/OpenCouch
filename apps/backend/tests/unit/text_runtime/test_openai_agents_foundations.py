@@ -34,7 +34,6 @@ from agent.tools import (
     CrisisResourceLookupToolResult,
     CrisisSupportTemplateToolResult,
     GroundedLookupToolResult,
-    GuidedExerciseProgressToolResult,
     GuidedExerciseSkillDiscoveryToolResult,
     GuidedExerciseSkillToolResult,
     MemoryReadToolResult,
@@ -45,14 +44,12 @@ from agent.tools import (
     execute_crisis_resource_lookup_tool,
     execute_crisis_support_template_tool,
     execute_guided_exercise_discovery_tool,
-    execute_guided_exercise_progress_tool,
     execute_guided_exercise_skill_tool,
     execute_grounded_lookup_tool,
     execute_read_only_memory_action,
     execute_therapeutic_response_skill_tool,
     list_guided_exercise_skills,
     load_guided_exercise_skill,
-    record_guided_exercise_progress,
     get_crisis_support_template,
     load_therapeutic_response_skill,
     lookup_crisis_resources,
@@ -194,7 +191,6 @@ def test_agent_roster_builds_dormant_specialists() -> None:
     ]
     assert [tool.name for tool in roster.guided_exercise_agent.tools] == [
         "load_guided_exercise_skill",
-        "record_guided_exercise_progress",
     ]
     assert roster.therapeutic_agent.handoffs == []
 
@@ -730,128 +726,3 @@ async def test_guided_exercise_skill_function_tool_invokes_with_context() -> Non
     assert result.side_effect == "none"
     assert result.retry_safe is True
     assert result.skill_context.startswith("Exercise skill:")
-
-
-@pytest.mark.asyncio
-async def test_guided_exercise_progress_tool_advances_valid_step() -> None:
-    """Progress tool should validate active state and compute next step."""
-
-    context = _run_context()
-    context.agent_state = {
-        "exercise_state": {
-            "exercise_type": "grounding_box_breathing",
-            "exercise_step": 0,
-            "exercise_step_id": "inhale",
-            "exercise_version": 1,
-            "exercise_therapeutic_approach": "dbt_skills",
-        }
-    }
-
-    result = await execute_guided_exercise_progress_tool(
-        context,
-        expected_skill_id="grounding_box_breathing",
-        expected_step_id="inhale",
-        outcome="complete",
-        user_response_summary="User completed the inhale step.",
-    )
-
-    assert isinstance(result, GuidedExerciseProgressToolResult)
-    assert result.status == "active"
-    assert result.runtime_action == "advance"
-    assert result.current_step_id == "hold_full"
-    assert result.exercise_state_delta["exercise_state"]["exercise_step"] == 1
-    assert (
-        result.exercise_state_delta["exercise_state"]["exercise_step_id"] == "hold_full"
-    )
-    assert result.side_effect == "active_skill_state_update"
-    assert result.retry_safe is False
-    assert context.guided_exercise_progress_tool_calls[-1].tool_name == (
-        "record_guided_exercise_progress"
-    )
-
-
-@pytest.mark.asyncio
-async def test_guided_exercise_progress_tool_conflict_is_safe() -> None:
-    """Progress tool should not mutate when expected state is stale."""
-
-    context = _run_context()
-    context.agent_state = {
-        "exercise_state": {
-            "exercise_type": "grounding_box_breathing",
-            "exercise_step": 1,
-            "exercise_step_id": "hold_full",
-        }
-    }
-
-    result = await execute_guided_exercise_progress_tool(
-        context,
-        expected_skill_id="grounding_box_breathing",
-        expected_step_id="inhale",
-        outcome="complete",
-        user_response_summary="Stale update for prior step.",
-    )
-
-    assert result.status == "conflict"
-    assert result.runtime_action == "conflict"
-    assert result.side_effect == "none"
-    assert result.retry_safe is True
-    assert result.exercise_state_delta == {}
-
-
-@pytest.mark.asyncio
-async def test_guided_exercise_progress_tool_exit_clears_state() -> None:
-    """Exit outcome should produce a runtime delta that clears active exercise."""
-
-    context = _run_context()
-    context.agent_state = {
-        "exercise_state": {
-            "exercise_type": "grounding_box_breathing",
-            "exercise_step": 1,
-            "exercise_step_id": "hold_full",
-            "exercise_version": 1,
-        }
-    }
-
-    result = await execute_guided_exercise_progress_tool(
-        context,
-        expected_skill_id="grounding_box_breathing",
-        expected_step_id="hold_full",
-        outcome="exit",
-        user_response_summary="User wants to stop the exercise.",
-    )
-
-    assert result.status == "cancelled"
-    assert result.runtime_action == "cancel"
-    assert result.exercise_state_delta["exercise_state"]["exercise_type"] is None
-    assert result.exercise_state_delta["exercise_state"]["exercise_step"] is None
-
-
-@pytest.mark.asyncio
-async def test_guided_exercise_progress_function_tool_invokes_with_context() -> None:
-    """The SDK progress wrapper should pass validated state args."""
-
-    context = _run_context()
-    context.agent_state = {
-        "exercise_state": {
-            "exercise_type": "grounding_box_breathing",
-            "exercise_step": 0,
-            "exercise_step_id": "inhale",
-            "exercise_version": 1,
-        }
-    }
-
-    result = await _invoke_tool(
-        record_guided_exercise_progress,
-        context,
-        {
-            "expected_skill_id": "grounding_box_breathing",
-            "expected_step_id": "inhale",
-            "outcome": "hold",
-            "user_response_summary": "User needs a moment.",
-        },
-    )
-
-    assert isinstance(result, GuidedExerciseProgressToolResult)
-    assert result.status == "active"
-    assert result.runtime_action == "hold"
-    assert result.side_effect == "none"

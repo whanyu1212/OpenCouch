@@ -104,6 +104,58 @@ def test_build_voice_turn_state_emits_privacy_safe_trace_event() -> None:
     assert "transcript" not in event.attributes
 
 
+def test_build_voice_turn_state_ignores_client_reported_progress_delta() -> None:
+    prior_state: AgentState = {
+        "exercise_state": {
+            "exercise_type": "grounding_box_breathing",
+            "exercise_step": 1,
+            "exercise_step_id": "hold_full",
+            "exercise_version": 1,
+            "exercise_therapeutic_approach": "dbt_skills",
+        },
+        "transcript": [],
+    }
+    result = build_voice_turn_state(
+        VoiceTurnStateInputs(
+            thread_id="voice-thread",
+            user_id="user-1",
+            user_text="I breathed in.",
+            assistant_text="Good. Now hold gently.",
+            route=None,
+            response_style=None,
+            tool_calls=[
+                {
+                    "tool_name": "record_guided_exercise_progress",
+                    "output": {
+                        "exercise_state_delta": {
+                            "exercise_state": {
+                                "exercise_type": None,
+                                "exercise_step": None,
+                                "exercise_step_id": None,
+                                "exercise_version": None,
+                                "exercise_therapeutic_approach": None,
+                            }
+                        }
+                    },
+                }
+            ],
+            prior_state=prior_state,
+            initial_state=_initial_state(),
+            prior_turn_count=0,
+        )
+    )
+
+    assert result.metadata.route == "guided_exercise"
+    assert result.metadata.response_style == "guided_exercise"
+    assert result.state["exercise_state"] == {
+        "exercise_type": "grounding_box_breathing",
+        "exercise_step": 1,
+        "exercise_step_id": "hold_full",
+        "exercise_version": 1,
+        "exercise_therapeutic_approach": "dbt_skills",
+    }
+
+
 def test_build_voice_turn_state_resets_stale_crisis_lookup_fields() -> None:
     prior_state: AgentState = {
         "resource_lookup_status": "found",

@@ -23,7 +23,7 @@ guided exercises.
 | `get_crisis_support_template` | Incognito + persistent | Load a deterministic crisis-response safety scaffold to shape the crisis reply. |
 | `list_guided_exercise_skills` | Incognito + persistent | List metadata-only guided exercises available for the current channel and approach. |
 | `load_guided_exercise_skill` | Incognito + persistent | Load the runtime-selected guided-exercise skill block for a step/action. |
-| `record_guided_exercise_progress` | Incognito + persistent | Update active guided-exercise state from the user's latest response. |
+| `record_guided_exercise_progress` | Incognito + persistent | Validate a voice exercise progress update and persist the runtime-owned `exercise_state` delta. |
 | `show_saved_memory` | Persistent only | Show concise saved facts, session summaries, and procedural rules. |
 | `recall_saved_memory` | Persistent only | Query the user's saved memory for facts and session arcs relevant to the current turn. |
 | `save_response_preference` | Persistent only | Save an explicit response-style or memory-use preference. |
@@ -109,7 +109,11 @@ that are suitable for spoken delivery. There are 13 total exercises and
 
 The voice prompt explicitly tells the model not to default to
 5-4-3-2-1 grounding unless that exact runtime-selected skill has been
-provided.
+provided. Unlike the text runtime, voice Realtime does not run the full text
+`GuidedExerciseSkillService` lifecycle before speaking, so it retains a
+voice-specific `record_guided_exercise_progress` tool. That tool validates the
+expected skill/step server-side and persists only the runtime-computed
+`exercise_state` delta.
 
 ## Key files
 

@@ -964,7 +964,6 @@ async def test_openai_runtime_starts_guided_exercise_with_guided_agent() -> None
     )
     assert [tool.name for tool in sdk_call["agent"].tools] == [
         "load_guided_exercise_skill",
-        "record_guided_exercise_progress",
     ]
     assert "Required tool: load_guided_exercise_skill" in sdk_call["input_text"]
     assert "grounding_box_breathing" in sdk_call["input_text"]

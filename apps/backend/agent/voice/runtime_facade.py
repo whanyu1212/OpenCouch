@@ -201,13 +201,18 @@ class VoiceRuntimeFacade:
         )
         state = cast(AgentState, {**dict(prior_state or {}), **dict(initial_state)})
         if prior_state is not None:
-            memory_delta: dict[str, Any] = {}
-            for key in ("memory_control", "procedural_profile", "session_memory"):
+            persisted_delta: dict[str, Any] = {}
+            for key in (
+                "memory_control",
+                "procedural_profile",
+                "session_memory",
+                "exercise_state",
+            ):
                 value = prior_state.get(key)
                 if isinstance(value, Mapping):
-                    memory_delta[key] = dict(value)
-            if memory_delta:
-                apply_state_delta(state, memory_delta)
+                    persisted_delta[key] = dict(value)
+            if persisted_delta:
+                apply_state_delta(state, persisted_delta)
         if transcript:
             state["transcript"] = cast(Any, [dict(turn) for turn in transcript])
         elif prior_state is not None:
@@ -352,6 +357,74 @@ class VoiceRuntimeFacade:
             else:
                 state = cast(AgentState, dict(prior_state))
             apply_state_delta(state, delta)
+            await self._state_store.save_state(thread_id, state)
+
+    # ── prepare_voice_guided_exercise_progress ────────────────────
+
+    async def prepare_voice_guided_exercise_progress(
+        self,
+        *,
+        thread_id: str,
+        llm_client: BaseLLMClient | None,
+    ) -> None:
+        """Ensure voice progress validation sees current session continuity.
+
+        Realtime tool calls arrive before final turn persistence. Preparing the
+        session before progress validation lets expired or absent sessions clear
+        stale exercise state before the model-reported outcome is validated.
+        """
+
+        async with self._lock_for(thread_id):
+            prior_state = await self._runtime.get_state(thread_id)
+            await self._runtime._prepare_session_for_turn(
+                thread_id=thread_id,
+                prior_state=prior_state,
+                llm_client=llm_client,
+            )
+
+    # ── persist_voice_guided_exercise_progress ────────────────────
+
+    async def persist_voice_guided_exercise_progress(
+        self,
+        *,
+        thread_id: str,
+        user_id: str | None,
+        current_user_message: str,
+        transcript: list[dict[str, object]],
+        result: Mapping[str, Any],
+    ) -> None:
+        """Persist voice guided-exercise progress between Realtime tool calls."""
+
+        delta = result.get("exercise_state_delta")
+        if not isinstance(delta, Mapping) or not delta:
+            return
+
+        effective_user_message = current_user_message.strip() or _latest_user_text(
+            transcript
+        )
+        if not effective_user_message:
+            effective_user_message = "voice guided exercise progress tool call"
+
+        async with self._lock_for(thread_id):
+            prior_state = await self._state_store.load_state(thread_id)
+            if prior_state is None:
+                state = cast(
+                    AgentState,
+                    dict(
+                        self._runtime._build_turn_initial_state(
+                            thread_id=thread_id,
+                            message=effective_user_message,
+                            channel=Channel.VOICE,
+                            user_id=user_id,
+                            installed_skills=None,
+                            prior_turn_count=-1,
+                        )
+                    ),
+                )
+                state["transcript"] = []
+            else:
+                state = cast(AgentState, dict(prior_state))
+            apply_state_delta(state, dict(delta))
             await self._state_store.save_state(thread_id, state)
 
     # ── persist_voice_crisis_resource_lookup ──────────────────────

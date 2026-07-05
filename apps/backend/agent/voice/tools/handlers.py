@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.memory.retrieval.service import load_memory_for_turn
@@ -13,6 +13,7 @@ from agent.tools.crisis import (
 )
 from agent.tools.grounded import execute_grounded_lookup_tool
 from agent.tools.guided_exercise import (
+    GuidedExerciseProgressOutcome,
     execute_guided_exercise_discovery_tool,
     execute_guided_exercise_progress_tool,
     execute_guided_exercise_skill_tool,
@@ -236,7 +237,10 @@ async def _handle_record_guided_exercise_progress(
         dispatch_context.tool_context,
         expected_skill_id=str(arguments.get("expected_skill_id") or ""),
         expected_step_id=str(arguments.get("expected_step_id") or ""),
-        outcome=str(arguments.get("outcome") or "hold"),  # type: ignore[arg-type]
+        outcome=cast(
+            GuidedExerciseProgressOutcome,
+            str(arguments.get("outcome") or "hold"),
+        ),
         user_response_summary=str(arguments.get("user_response_summary") or ""),
     )
 

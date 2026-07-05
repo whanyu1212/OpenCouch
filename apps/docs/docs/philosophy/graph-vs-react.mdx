@@ -117,14 +117,16 @@ chooses between:
 The classification was app-owned; the response shape is the agent's.
 
 **Guided-exercise agent** (`agent/specialists/guided_exercise.py`).
-Given runtime-provided exercise state, the agent chooses when to call:
+In text, given runtime-provided exercise state, the agent calls
+`load_guided_exercise_skill` for the current step's guidance when the runtime
+prompt requires it.
 
-- `load_guided_exercise_skill` for the next step's guidance
-- `record_guided_exercise_progress` when the user's reply changes
-  state (complete, partial, hold, stuck, exit, unsafe)
-
-The agent never picks the exercise or invents steps; the runtime
-validates progress and computes the next step.
+The text agent never picks the exercise, records progress, or invents steps;
+the runtime validates progress and computes the next step before the agent
+drafts wording. Voice Realtime is different because it does not run that text
+lifecycle before speaking, so voice keeps a narrow
+`record_guided_exercise_progress` tool that validates and persists only the
+runtime-owned `exercise_state` delta.
 
 **Triage agent** (`agent/specialists/triage.py`). The clearest example
 of the hybrid: triage is itself an LLM-judgment step (returning a

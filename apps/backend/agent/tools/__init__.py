@@ -16,18 +16,15 @@ from agent.tools.grounded import (
     execute_grounded_lookup_tool,
 )
 from agent.tools.guided_exercise import (
-    GuidedExerciseProgressToolResult,
     GuidedExerciseSkillDiscoveryToolResult,
     GuidedExerciseSkillSummary,
     GuidedExerciseSkillToolResult,
     build_guided_exercise_discovery_tools,
     build_guided_exercise_tools,
     execute_guided_exercise_discovery_tool,
-    execute_guided_exercise_progress_tool,
     execute_guided_exercise_skill_tool,
     list_guided_exercise_skills,
     load_guided_exercise_skill,
-    record_guided_exercise_progress,
 )
 from agent.tools.memory import (
     MemoryReadToolResult,
@@ -56,7 +53,6 @@ __all__ = [
     "CrisisResourceLookupToolResult",
     "CrisisSupportTemplateToolResult",
     "GroundedLookupToolResult",
-    "GuidedExerciseProgressToolResult",
     "GuidedExerciseSkillDiscoveryToolResult",
     "GuidedExerciseSkillSummary",
     "GuidedExerciseSkillToolResult",
@@ -76,7 +72,6 @@ __all__ = [
     "execute_crisis_support_template_tool",
     "execute_grounded_lookup_tool",
     "execute_guided_exercise_discovery_tool",
-    "execute_guided_exercise_progress_tool",
     "execute_guided_exercise_skill_tool",
     "execute_memory_tool_action",
     "execute_read_only_memory_action",
@@ -84,7 +79,6 @@ __all__ = [
     "get_crisis_support_template",
     "list_guided_exercise_skills",
     "load_guided_exercise_skill",
-    "record_guided_exercise_progress",
     "load_therapeutic_response_skill",
     "lookup_crisis_resources",
     "memory_control_request_from_context",

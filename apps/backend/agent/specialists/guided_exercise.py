@@ -40,11 +40,9 @@ Guided-exercise tools:
 - Call load_guided_exercise_skill when the runtime prompt requires it.
 - Use only the returned skill_context plus the runtime task for the current
   exercise reply.
-- Call record_guided_exercise_progress only when the user's latest response
-  changes active exercise state: complete, partial, hold, stuck, exit, or unsafe.
-- When both progress recording and skill loading are needed for a continuation
-  turn, record progress first so the runtime can validate state before the next
-  exercise reply is drafted.
+- Do not record or infer exercise progress yourself. The application runtime
+  classifies the user's latest response, validates state, and computes the next
+  step before this agent drafts wording.
 - Do not browse, offer a menu, change exercise, skip steps, or add steps. The
   runtime validates progress and computes the next step.
 """

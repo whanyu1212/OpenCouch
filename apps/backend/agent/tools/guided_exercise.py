@@ -2,17 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, Mapping
+from collections.abc import Mapping
+from typing import Any, Literal, cast
 
 from agents import RunContextWrapper, function_tool
 from pydantic import BaseModel, Field
 
-from agent.runtime.context import (
-    GuidedExerciseProgressOutcome,
-    GuidedExerciseProgressStatus,
-    GuidedExerciseRuntimeAction,
-    OpenAITextRunContext,
-)
+from agent.runtime.context import OpenAITextRunContext
 from agent.skills.guided_exercises.registry import (
     available_exercise_definitions,
     get_exercise_definition,
@@ -20,6 +16,41 @@ from agent.skills.guided_exercises.registry import (
 from agent.skills.guided_exercises.rendering.skill_context import (
     render_exercise_skill_context,
 )
+
+
+GuidedExerciseProgressOutcome = Literal[
+    "complete",
+    "partial",
+    "hold",
+    "stuck",
+    "exit",
+    "unsafe",
+]
+GuidedExerciseProgressStatus = Literal[
+    "active",
+    "completed",
+    "cancelled",
+    "conflict",
+    "unsafe",
+]
+GuidedExerciseRuntimeAction = Literal[
+    "advance",
+    "hold",
+    "simplify",
+    "complete",
+    "cancel",
+    "crisis",
+    "conflict",
+]
+
+_VALID_GUIDED_EXERCISE_PROGRESS_OUTCOMES = {
+    "complete",
+    "partial",
+    "hold",
+    "stuck",
+    "exit",
+    "unsafe",
+}
 
 
 class GuidedExerciseSkillSummary(BaseModel):
@@ -198,15 +229,24 @@ async def execute_guided_exercise_progress_tool(
     outcome: GuidedExerciseProgressOutcome,
     user_response_summary: str,
 ) -> GuidedExerciseProgressToolResult:
-    """Record and validate progress for the active guided exercise step."""
+    """Validate and compute progress for the active guided exercise step.
+
+    This helper is intentionally not exposed as an OpenAI Agents SDK text tool.
+    Text guided-exercise progress is app-owned runtime lifecycle state; Realtime
+    voice uses this helper because voice turns do not run that text lifecycle.
+    """
 
     skill_id = expected_skill_id.strip()
     step_id = expected_step_id.strip()
+    normalized_outcome = str(outcome).strip()
+    progress_outcome = cast(GuidedExerciseProgressOutcome, normalized_outcome)
     summary = user_response_summary.strip()
     if not skill_id:
         raise ValueError("record_guided_exercise_progress requires expected_skill_id.")
     if not step_id:
         raise ValueError("record_guided_exercise_progress requires expected_step_id.")
+    if normalized_outcome not in _VALID_GUIDED_EXERCISE_PROGRESS_OUTCOMES:
+        raise ValueError("record_guided_exercise_progress received invalid outcome.")
     if not summary:
         raise ValueError(
             "record_guided_exercise_progress requires user_response_summary."
@@ -225,7 +265,7 @@ async def execute_guided_exercise_progress_tool(
         or active_step_id != step_id
         or not isinstance(active_step_index, int)
     ):
-        result = GuidedExerciseProgressToolResult(
+        return GuidedExerciseProgressToolResult(
             status="conflict",
             runtime_action="conflict",
             skill_id=active_skill_id if isinstance(active_skill_id, str) else None,
@@ -238,31 +278,15 @@ async def execute_guided_exercise_progress_tool(
             side_effect="none",
             retry_safe=True,
         )
-        _record_progress_result(
-            context,
-            expected_skill_id=skill_id,
-            expected_step_id=step_id,
-            outcome=outcome,
-            result=result,
-        )
-        return result
 
-    result = _progress_result_for_outcome(
+    return _progress_result_for_outcome(
         definition_steps=tuple(definition.steps),
         skill_id=skill_id,
         step_id=step_id,
         step_index=active_step_index,
-        outcome=outcome,
+        outcome=progress_outcome,
         exercise_state=exercise_state,
     )
-    _record_progress_result(
-        context,
-        expected_skill_id=skill_id,
-        expected_step_id=step_id,
-        outcome=outcome,
-        result=result,
-    )
-    return result
 
 
 async def execute_guided_exercise_skill_tool(
@@ -336,35 +360,6 @@ async def list_guided_exercise_skills(
 
 
 @function_tool(
-    name_override="record_guided_exercise_progress",
-    description_override=(
-        "Record what happened on the current guided-exercise step. Use only "
-        "when the user's latest response changes exercise state: complete, "
-        "partial, hold, stuck, exit, or unsafe. Requires expected_skill_id and "
-        "expected_step_id from the loaded skill context; the runtime validates "
-        "them and computes the next step. Side effects: active skill state "
-        "update when validation succeeds. Retry safety: not guaranteed."
-    ),
-)
-async def record_guided_exercise_progress(
-    wrapper: RunContextWrapper[OpenAITextRunContext],
-    expected_skill_id: str,
-    expected_step_id: str,
-    outcome: GuidedExerciseProgressOutcome,
-    user_response_summary: str,
-) -> GuidedExerciseProgressToolResult:
-    """Record progress for the active guided exercise step."""
-
-    return await execute_guided_exercise_progress_tool(
-        wrapper.context,
-        expected_skill_id=expected_skill_id,
-        expected_step_id=expected_step_id,
-        outcome=outcome,
-        user_response_summary=user_response_summary,
-    )
-
-
-@function_tool(
     name_override="load_guided_exercise_skill",
     description_override=(
         "Load the runtime-selected guided-exercise skill block for the current "
@@ -397,7 +392,7 @@ def build_guided_exercise_discovery_tools() -> list[Any]:
 def build_guided_exercise_tools() -> list[Any]:
     """Return guided-exercise tools for the OpenAI specialist."""
 
-    return [load_guided_exercise_skill, record_guided_exercise_progress]
+    return [load_guided_exercise_skill]
 
 
 def _progress_result_for_outcome(
@@ -520,29 +515,11 @@ def _cleared_exercise_state() -> dict[str, None]:
     }
 
 
-def _record_progress_result(
-    context: OpenAITextRunContext,
-    *,
-    expected_skill_id: str,
-    expected_step_id: str,
-    outcome: GuidedExerciseProgressOutcome,
-    result: GuidedExerciseProgressToolResult,
-) -> None:
-    context.record_guided_exercise_progress_tool_result(
-        expected_skill_id=expected_skill_id,
-        expected_step_id=expected_step_id,
-        outcome=outcome,
-        status=result.status,
-        runtime_action=result.runtime_action,
-        exercise_state_delta=result.exercise_state_delta,
-        response_instruction=result.response_instruction,
-        side_effect=result.side_effect,
-        retry_safe=result.retry_safe,
-    )
-
-
 __all__ = [
+    "GuidedExerciseProgressOutcome",
+    "GuidedExerciseProgressStatus",
     "GuidedExerciseProgressToolResult",
+    "GuidedExerciseRuntimeAction",
     "GuidedExerciseSkillDiscoveryToolResult",
     "GuidedExerciseSkillSummary",
     "GuidedExerciseSkillToolResult",
@@ -553,5 +530,4 @@ __all__ = [
     "execute_guided_exercise_skill_tool",
     "list_guided_exercise_skills",
     "load_guided_exercise_skill",
-    "record_guided_exercise_progress",
 ]
