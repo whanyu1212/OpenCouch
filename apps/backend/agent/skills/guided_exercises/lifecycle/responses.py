@@ -54,41 +54,45 @@ def therapeutic_response_delta(
     }
 
 
-async def generate_streamed_therapeutic_text(
+async def generate_guided_exercise_response_text(
     *,
     state: AgentState,
     llm_client: Any,
-    response_style: str,
+    directive: GuidedExerciseDirective,
     system_prompt_builder: Callable[[AgentState], str],
-    step_directive: str | None = None,
     stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> str:
-    """Generate therapeutic response text with streaming."""
+    """Generate guided-exercise response text from a structured directive."""
 
     if llm_client is None:
         raise RuntimeError(
-            f"No LLM client available for {response_style} response generation."
+            "No LLM client available for guided_exercise response generation."
+        )
+
+    system_instruction = system_prompt_builder(state)
+    guided_stream = getattr(llm_client, "generate_guided_exercise_text_stream", None)
+    if callable(guided_stream):
+        stream = guided_stream(
+            state=state,
+            directive=directive,
+            system_instruction=system_instruction,
+        )
+    else:
+        stream = llm_client.generate_text_stream(
+            prompt=build_therapeutic_response_prompt(
+                state,
+                response_style="guided_exercise",
+                step_directive=render_full_guided_exercise_directive(directive),
+            ),
+            system_instruction=system_instruction,
         )
 
     writer = stream_writer_factory()
     chunks: list[str] = []
-    async for chunk in llm_client.generate_text_stream(
-        prompt=build_therapeutic_response_prompt(
-            state,
-            response_style=response_style,
-            step_directive=step_directive,
-        ),
-        system_instruction=system_prompt_builder(state),
-    ):
+    async for chunk in stream:
         chunks.append(chunk)
         writer({"type": "chunk", "text": chunk})
     return "".join(chunks)
-
-
-def _render_response_directive(directive: GuidedExerciseDirective) -> str:
-    """Render a guided-exercise directive for response generation."""
-
-    return render_full_guided_exercise_directive(directive)
 
 
 async def _build_start_delta(
@@ -128,12 +132,11 @@ async def _build_start_delta(
         ),
     )
 
-    response_text = await generate_streamed_therapeutic_text(
+    response_text = await generate_guided_exercise_response_text(
         state=state,
         llm_client=llm_client,
-        response_style="guided_exercise",
+        directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -176,12 +179,11 @@ async def _build_exit_delta(
             "ask what would feel most helpful now."
         ),
     )
-    response_text = await generate_streamed_therapeutic_text(
+    response_text = await generate_guided_exercise_response_text(
         state=state,
         llm_client=llm_client,
-        response_style="guided_exercise",
+        directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -232,12 +234,11 @@ async def _build_resume_delta(
         ),
     )
 
-    response_text = await generate_streamed_therapeutic_text(
+    response_text = await generate_guided_exercise_response_text(
         state=state,
         llm_client=llm_client,
-        response_style="guided_exercise",
+        directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -283,12 +284,11 @@ async def _build_stuck_delta(
         ),
     )
 
-    response_text = await generate_streamed_therapeutic_text(
+    response_text = await generate_guided_exercise_response_text(
         state=state,
         llm_client=llm_client,
-        response_style="guided_exercise",
+        directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -335,12 +335,11 @@ async def _build_hold_delta(
         ),
     )
 
-    response_text = await generate_streamed_therapeutic_text(
+    response_text = await generate_guided_exercise_response_text(
         state=state,
         llm_client=llm_client,
-        response_style="guided_exercise",
+        directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -393,12 +392,11 @@ async def _build_advance_delta(
         ),
     )
 
-    response_text = await generate_streamed_therapeutic_text(
+    response_text = await generate_guided_exercise_response_text(
         state=state,
         llm_client=llm_client,
-        response_style="guided_exercise",
+        directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -458,12 +456,11 @@ async def _build_complete_delta(
         ),
     )
 
-    response_text = await generate_streamed_therapeutic_text(
+    response_text = await generate_guided_exercise_response_text(
         state=state,
         llm_client=llm_client,
-        response_style="guided_exercise",
+        directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
-        step_directive=_render_response_directive(directive),
         stream_writer_factory=stream_writer_factory,
     )
 
