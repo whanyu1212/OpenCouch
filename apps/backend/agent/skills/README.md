@@ -36,6 +36,12 @@ The runtime source of truth for exercise content and availability.
 
 Use `catalog/` when adding or changing exercises, channel support, selection aliases, capability gates, or step metadata.
 
+Capability gating is optional catalog metadata. The public request field is
+still named `installed_skills` for compatibility, but guided-exercise
+definitions express their gate as `required_capability`. The registry treats
+those strings as capability keys. No production exercise is gated today; tests
+use fake gated definitions to keep the contract covered.
+
 ### `lifecycle/`
 
 The app-owned guided-exercise state machine.

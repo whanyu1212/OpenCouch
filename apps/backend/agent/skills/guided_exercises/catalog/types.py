@@ -77,7 +77,7 @@ class ExerciseDefinition:
             to. Empty means the exercise is generally available.
         channels: Delivery channels supported by this exercise. Text covers web
             and test channels.
-        required_skill: Optional capability key required before this exercise
+        required_capability: Optional capability key required before this exercise
             can be offered.
         voice_supported: Whether the exercise is suitable for voice mode.
         text_fit: Suitability for text delivery.
@@ -98,7 +98,7 @@ class ExerciseDefinition:
     selection_aliases: tuple[str, ...] = ()
     approaches: tuple[str, ...] = ()
     channels: tuple[str, ...] = ("text",)
-    required_skill: str | None = None
+    required_capability: str | None = None
     voice_supported: bool = False
     text_fit: DeliveryFit = "good"
     voice_fit: DeliveryFit = "okay"
