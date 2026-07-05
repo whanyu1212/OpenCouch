@@ -11,7 +11,7 @@ from agent.runtime.session.state import current_turn_lifecycle
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.state import AgentState
-from agent.skills.guided_exercises.engine.responses import (
+from agent.skills.guided_exercises.lifecycle.responses import (
     StreamWriterFactory,
     _build_advance_delta,
     _build_complete_delta,
@@ -21,16 +21,16 @@ from agent.skills.guided_exercises.engine.responses import (
     _build_start_delta,
     _build_stuck_delta,
 )
-from agent.skills.guided_exercises.engine.selection import (
+from agent.skills.guided_exercises.lifecycle.selection import (
     _select_exercise_llm_primary,
 )
-from agent.skills.guided_exercises.engine.state import (
+from agent.skills.guided_exercises.lifecycle.state import (
     _get_current_step,
     _is_last_step,
     clear_exercise_delta,
 )
-from agent.skills.guided_exercises.engine.step_classifier import classify_step_state
-from agent.skills.guided_exercises.types import ExerciseStep
+from agent.skills.guided_exercises.lifecycle.step_classifier import classify_step_state
+from agent.skills.guided_exercises.catalog.types import ExerciseStep
 from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)

@@ -6,11 +6,11 @@ from collections.abc import Awaitable, Callable, Mapping
 
 from agent.runtime.state_ops import apply_state_delta
 from agent.runtime.workflow_context import WorkflowContext
-from agent.skills.guided_exercises.registry import (
+from agent.skills.guided_exercises.catalog.registry import (
     available_exercise_definitions,
     iter_exercise_selection_aliases,
 )
-from agent.skills.guided_exercises.engine.state import clear_exercise_delta
+from agent.skills.guided_exercises.lifecycle.state import clear_exercise_delta
 from agent.state import AgentState
 
 

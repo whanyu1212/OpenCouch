@@ -9,8 +9,8 @@ from pydantic import BaseModel, Field
 
 from agent.runtime.context import OpenAITextRunContext
 from agent.state import AgentState
-from agent.skills.therapeutic_response import (
-    THERAPEUTIC_RESPONSE_SKILL_STYLES,
+from agent.specialists.therapeutic_response.style_guidance import (
+    THERAPEUTIC_RESPONSE_STYLE_GUIDANCE_STYLES,
     render_therapeutic_response_skill_context,
 )
 
@@ -46,7 +46,7 @@ async def execute_therapeutic_response_skill_tool(
 
     state = cast(AgentState, context.agent_state or {})
     style = " ".join(str(response_style or "supportive").strip().lower().split())
-    if style not in THERAPEUTIC_RESPONSE_SKILL_STYLES:
+    if style not in THERAPEUTIC_RESPONSE_STYLE_GUIDANCE_STYLES:
         style = "supportive"
     approach = (
         str(therapeutic_approach).strip()

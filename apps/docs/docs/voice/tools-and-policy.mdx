@@ -8,7 +8,7 @@ sidebar_position: 3
 Voice exposes a narrow OpenAI Realtime function-tool surface. The
 schemas live in `agent/voice/tools.py`, but the implementation reuses
 the same app-owned services as the text runtime: memory control,
-grounded lookup, crisis resources, therapeutic response skills, and
+grounded lookup, crisis resources, therapeutic response style guidance, and
 guided exercises.
 
 ## Tool surface
@@ -123,4 +123,4 @@ expected skill/step server-side and persists only the runtime-computed
 | `agent/voice/turn_metadata.py` | Route and response-style metadata inference from recorded Realtime tool calls. |
 | `agent/voice/policy.py` | Compact Realtime instruction policy for one voice session. |
 | `agent/tools/` | Shared tool implementations used by both text and voice. |
-| `agent/skills/guided_exercises/registry.py` | Shared exercise catalog and voice filtering. |
+| `agent/skills/guided_exercises/catalog/registry.py` | Shared exercise catalog and voice filtering. |

@@ -7,8 +7,8 @@ from typing import Any, cast
 import pytest
 
 from agent.memory.modes import MemoryMode
-from agent.skills.guided_exercises.engine.lifecycle import GuidedExerciseSkillService
-from agent.skills.guided_exercises.registry import (
+from agent.skills.guided_exercises.lifecycle.service import GuidedExerciseSkillService
+from agent.skills.guided_exercises.catalog.registry import (
     EXERCISE_BOX_BREATHING,
     EXERCISE_SELF_COMPASSION,
 )

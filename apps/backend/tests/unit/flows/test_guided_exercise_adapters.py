@@ -18,7 +18,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.workflow_context import WorkflowContext
-from agent.skills.guided_exercises.registry import EXERCISE_BOX_BREATHING
+from agent.skills.guided_exercises.catalog.registry import EXERCISE_BOX_BREATHING
 from agent.skills.guided_exercises.rendering.directives import (
     GuidedExerciseDirective,
     render_full_guided_exercise_directive,

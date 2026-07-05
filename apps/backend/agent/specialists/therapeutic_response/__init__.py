@@ -1,1 +1,1 @@
-"""Therapeutic response prompt builders and source helpers."""
+"""Therapeutic response prompt builders, source helpers, and style guidance."""

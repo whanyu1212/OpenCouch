@@ -1,1 +1,1 @@
-"""Reusable agent skills used by the OpenAI text runtime."""
+"""Reusable skill runtime components used by the OpenAI text runtime."""

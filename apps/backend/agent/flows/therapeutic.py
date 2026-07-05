@@ -33,7 +33,7 @@ from agent.runtime.types import (
     TextRuntimeStreamEvent,
 )
 from agent.runtime.workflow_context import WorkflowContext
-from agent.skills.therapeutic_response import (
+from agent.specialists.therapeutic_response.style_guidance import (
     render_therapeutic_response_style_guidance,
 )
 from agent.state import AgentState

@@ -5,12 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from agent.state import AgentState, cleared_exercise_state
-from agent.skills.guided_exercises.registry import (
+from agent.skills.guided_exercises.catalog.registry import (
     EXERCISE_5_4_3_2_1,
     get_exercise_definition,
     get_exercise_steps,
 )
-from agent.skills.guided_exercises.types import ExerciseStep
+from agent.skills.guided_exercises.catalog.types import ExerciseStep
 
 
 # ── State delta helpers ────────────────────────────────────────────────

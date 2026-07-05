@@ -10,10 +10,9 @@ from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.workflow_context import WorkflowContext
 
-from agent.skills.guided_exercises.registry import (
+from agent.skills.guided_exercises.catalog.registry import (
     EXERCISE_5_4_3_2_1,
     EXERCISE_BOX_BREATHING,
-    EXERCISE_STOP_TECHNIQUE,
     available_exercise_definitions,
     get_exercise_definition,
     iter_exercise_definitions,
@@ -97,6 +96,8 @@ def test_exercise_skill_context_lazy_loads_current_step_detail() -> None:
     assert "- runtime_action: advance" in rendered
     assert "Current runtime step:" in rendered
     assert "- step_id: hear" in rendered
+    assert "Good. Now four things you can hear" in rendered
+    assert "Operating boundaries:" in rendered
     assert "Step map:" in rendered
 
 
@@ -111,36 +112,6 @@ def test_exercise_skill_context_can_render_l1_l2_without_current_step() -> None:
     assert "- name: a box breathing cycle" in rendered
     assert "- supported_channels: text, voice" in rendered
     assert "Current runtime step:" not in rendered
-    assert "Step map:" in rendered
-
-
-def test_exercise_skill_context_includes_selected_skill_doc_guidance() -> None:
-    rendered = render_exercise_skill_context(
-        EXERCISE_5_4_3_2_1,
-        current_step_index=1,
-        runtime_action="advance",
-    )
-
-    assert "Skill document guidance:" in rendered
-    assert "# 5-4-3-2-1 Grounding" in rendered
-    assert "## Operating boundaries" in rendered
-    assert "Operating boundaries:" in rendered
-    assert "Current runtime step:" in rendered
-    assert "- step_id: hear" in rendered
-    assert "Step map:" in rendered
-
-
-def test_exercise_skill_context_omits_doc_guidance_for_undocumented_exercise() -> None:
-    rendered = render_exercise_skill_context(
-        EXERCISE_STOP_TECHNIQUE,
-        current_step_index=0,
-        runtime_action="start",
-    )
-
-    assert "Skill document guidance:" not in rendered
-    assert f"- skill_id: {EXERCISE_STOP_TECHNIQUE}" in rendered
-    assert "Operating boundaries:" in rendered
-    assert "Current runtime step:" in rendered
     assert "Step map:" in rendered
 
 

@@ -18,7 +18,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
-from agent.skills.guided_exercises.registry import (
+from agent.skills.guided_exercises.catalog.registry import (
     EXERCISE_5_4_3_2_1,
     EXERCISE_BEHAVIORAL_EXPERIMENT,
     EXERCISE_BOX_BREATHING,
@@ -33,9 +33,9 @@ from agent.skills.guided_exercises.registry import (
     EXERCISE_TINY_ACTION,
     EXERCISE_VALUES_COMPASS,
 )
-from agent.skills.guided_exercises.engine.lifecycle import GuidedExerciseSkillService
-from agent.skills.guided_exercises.types import ExerciseDefinition, ExerciseStep
-from agent.skills.guided_exercises.engine.memory import (
+from agent.skills.guided_exercises.lifecycle.service import GuidedExerciseSkillService
+from agent.skills.guided_exercises.catalog.types import ExerciseDefinition, ExerciseStep
+from agent.skills.guided_exercises.lifecycle.memory import (
     ExerciseCompletionMemoryRequest,
     write_exercise_completion_fact,
 )
@@ -478,7 +478,7 @@ class TestRegistryCompleteness:
     """Verify the registry and display names cover all exercises."""
 
     def test_catalog_contains_current_core_exercises(self) -> None:
-        from agent.skills.guided_exercises.registry import (
+        from agent.skills.guided_exercises.catalog.registry import (
             EXERCISE_5_4_3_2_1,
             EXERCISE_BOX_BREATHING,
             EXERCISE_LEAVES_ON_STREAM,
@@ -507,7 +507,7 @@ class TestRegistryCompleteness:
         assert expected.issubset(registered)
 
     def test_all_exercises_have_display_names(self) -> None:
-        from agent.skills.guided_exercises.registry import (
+        from agent.skills.guided_exercises.catalog.registry import (
             get_exercise_display_name,
             iter_exercise_definitions,
         )
@@ -516,7 +516,9 @@ class TestRegistryCompleteness:
             assert get_exercise_display_name(definition.id) == definition.display_name
 
     def test_all_steps_have_instructions(self) -> None:
-        from agent.skills.guided_exercises.registry import iter_exercise_definitions
+        from agent.skills.guided_exercises.catalog.registry import (
+            iter_exercise_definitions,
+        )
 
         for definition in iter_exercise_definitions():
             for i, step in enumerate(definition.steps):
@@ -525,7 +527,7 @@ class TestRegistryCompleteness:
                 )
 
     def test_catalog_public_helpers_match_definitions(self) -> None:
-        from agent.skills.guided_exercises.registry import (
+        from agent.skills.guided_exercises.catalog.registry import (
             get_exercise_definition,
             get_exercise_display_name,
             get_exercise_steps,
@@ -577,7 +579,7 @@ class TestRegistryCompleteness:
         assert voice_ids == expected_voice_ids
 
     def test_availability_helpers_filter_by_capability_metadata(self) -> None:
-        from agent.skills.guided_exercises.registry import (
+        from agent.skills.guided_exercises.catalog.registry import (
             available_exercise_definitions,
         )
 

@@ -85,7 +85,7 @@ export default function VoiceArchitecture(): React.JSX.Element {
               <ul className={s.agentList}>
                 <li>memory control and recall status</li>
                 <li>grounded factual lookup and crisis resources</li>
-                <li>therapeutic response skills and guided exercises</li>
+                <li>therapeutic response style guidance and guided exercises</li>
               </ul>
             </article>
           </div>

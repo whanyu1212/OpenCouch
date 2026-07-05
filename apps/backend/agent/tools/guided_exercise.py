@@ -9,7 +9,7 @@ from agents import RunContextWrapper, function_tool
 from pydantic import BaseModel, Field
 
 from agent.runtime.context import OpenAITextRunContext
-from agent.skills.guided_exercises.registry import (
+from agent.skills.guided_exercises.catalog.registry import (
     available_exercise_definitions,
     get_exercise_definition,
 )

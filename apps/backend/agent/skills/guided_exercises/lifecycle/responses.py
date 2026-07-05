@@ -12,10 +12,10 @@ from agent.specialists.therapeutic_response.prompts import (
     build_therapeutic_response_prompt,
 )
 from agent.state import AgentState
-from agent.skills.guided_exercises.engine.memory import (
+from agent.skills.guided_exercises.lifecycle.memory import (
     _write_exercise_completion_fact,
 )
-from agent.skills.guided_exercises.registry import (
+from agent.skills.guided_exercises.catalog.registry import (
     EXERCISE_5_4_3_2_1,
     get_exercise_display_name,
     get_exercise_steps,
@@ -24,7 +24,7 @@ from agent.skills.guided_exercises.rendering.directives import (
     GuidedExerciseDirective,
     render_full_guided_exercise_directive,
 )
-from agent.skills.guided_exercises.engine.state import (
+from agent.skills.guided_exercises.lifecycle.state import (
     _advance_step_delta,
     _get_current_step,
     _start_exercise_delta,
@@ -46,7 +46,7 @@ def therapeutic_response_delta(
     response_style: str,
     response_text: str,
 ) -> dict[str, Any]:
-    """Build the fixed response delta emitted by therapeutic response skills."""
+    """Build the fixed response delta emitted by response-generation flows."""
 
     return {
         "response_text": response_text,

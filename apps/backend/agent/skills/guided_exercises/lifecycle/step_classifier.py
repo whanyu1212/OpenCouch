@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from agent.state import AgentState
-from agent.skills.guided_exercises.registry import get_exercise_display_name
-from agent.skills.guided_exercises.types import (
+from agent.skills.guided_exercises.catalog.registry import get_exercise_display_name
+from agent.skills.guided_exercises.catalog.types import (
     ExerciseStep,
     ExerciseStepDecision,
     StepState,

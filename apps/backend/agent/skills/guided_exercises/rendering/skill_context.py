@@ -11,11 +11,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from agent.skills.guided_exercises.rendering.skill_docs import (
-    get_guided_exercise_skill_doc,
+from agent.skills.guided_exercises.catalog.registry import get_exercise_definition
+from agent.skills.guided_exercises.catalog.types import (
+    CompletionMode,
+    ExerciseDefinition,
 )
-from agent.skills.guided_exercises.registry import get_exercise_definition
-from agent.skills.guided_exercises.types import CompletionMode, ExerciseDefinition
 
 
 @dataclass(frozen=True)
@@ -102,7 +102,6 @@ def render_exercise_skill_context(
         f"- supported_channels: {_format_tuple(skill.supported_channels)}",
         f"- required_capability: {skill.required_capability or 'none'}",
     ]
-    lines.extend(_skill_doc_guidance(exercise_type))
     lines.extend(
         [
             "Operating boundaries:",
@@ -148,16 +147,6 @@ def _supported_channels_for_definition(
     if definition.voice_supported and "voice" not in channels:
         channels.append("voice")
     return tuple(channels)
-
-
-def _skill_doc_guidance(exercise_type: str) -> list[str]:
-    skill_doc = get_guided_exercise_skill_doc(exercise_type)
-    if skill_doc is None:
-        return []
-    return [
-        "Skill document guidance:",
-        skill_doc.body,
-    ]
 
 
 def _skill_from_definition(definition: ExerciseDefinition) -> ExerciseSkill:
