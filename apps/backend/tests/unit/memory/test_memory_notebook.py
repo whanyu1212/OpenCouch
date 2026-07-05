@@ -272,6 +272,58 @@ async def test_memory_notebook_includes_procedural_rules_and_session_arcs() -> N
 
 
 @pytest.mark.asyncio
+async def test_notebook_includes_archived_procedural_rules_with_hidden() -> None:
+    store = OpenCouchMemoryStore()
+    owner_id = "user-1"
+    await aput_procedural_profile(
+        store,
+        user_id=owner_id,
+        profile=ProceduralProfile(
+            rules=[
+                ProceduralRule(
+                    id="rule-active",
+                    rule="Use active rule.",
+                    evidence=["active evidence"],
+                    confidence="high",
+                    added_at="2026-07-01T00:00:00Z",
+                    source="explicit_user",
+                    write_reason="active rule",
+                )
+            ],
+            archived_rules=[
+                ProceduralRule(
+                    id="rule-archived",
+                    rule="Use archived rule.",
+                    evidence=["archived evidence"],
+                    confidence="medium",
+                    added_at="2026-07-02T00:00:00Z",
+                    source="consolidation",
+                    dormant_at="2026-07-03T00:00:00Z",
+                    superseded_by="rule-active",
+                    user_visible=False,
+                    write_reason="archived rule",
+                )
+            ],
+        ),
+    )
+
+    visible_notebook = await build_memory_notebook(store, owner_id=owner_id)
+    hidden_notebook = await build_memory_notebook(
+        store,
+        owner_id=owner_id,
+        include_hidden=True,
+    )
+
+    assert visible_notebook.counts.procedural_rules == 1
+    assert [entry.id for entry in visible_notebook.topics[0].entries] == ["rule-active"]
+    assert hidden_notebook.counts.procedural_rules == 2
+    assert [entry.id for entry in hidden_notebook.topics[0].entries] == [
+        "rule-active",
+        "rule-archived",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_memory_notebook_returns_empty_view_for_unknown_owner() -> None:
     store = OpenCouchMemoryStore()
 

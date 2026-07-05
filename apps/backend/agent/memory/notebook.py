@@ -155,7 +155,10 @@ async def build_memory_notebook(
         topic_entries[topic_id].append(_semantic_entry(record, fact))
         counts.semantic += 1
 
-    for rule in procedural_profile.rules:
+    procedural_rules = list(procedural_profile.rules)
+    if include_hidden:
+        procedural_rules.extend(procedural_profile.archived_rules)
+    for rule in procedural_rules:
         if not include_hidden and not _is_visible_memory(rule):
             continue
         topic_entries["procedural_rules"].append(_procedural_entry(rule))
