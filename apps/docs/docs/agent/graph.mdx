@@ -146,11 +146,13 @@ for the full breakdown.
 | `agent/runtime/workflow_context.py` | `WorkflowContext` frozen dataclass |
 | `agent/runtime/openai_text_runtime.py` | OpenAI Agents SDK text runtime orchestration |
 | `agent/specialists/` | Triage, therapeutic, crisis, and guided-exercise specialist agent definitions |
-| `agent/tools/` | Agent-owned memory, grounded lookup, crisis lookup, therapeutic response skill, and guided-exercise tools |
-| `agent/skills/therapeutic_response.py` | Response-style guidance rendered as prompt-local SDK skill context |
+| `agent/tools/` | Agent-owned memory, grounded lookup, crisis lookup, therapeutic response style-loader, and guided-exercise tools |
+| `agent/specialists/therapeutic_response/style_guidance.py` | Response-style guidance rendered directly for text and as prompt-local skill context for voice/tool paths |
 | `agent/specialists/therapeutic_response/prompts.py` | Therapeutic response prompt composition owned by the therapeutic agent |
 | `agent/specialists/guided_exercise.py` | Guided-exercise agent instructions and system prompt ownership |
-| `agent/skills/guided_exercises/` | Guided-exercise definitions, selection, state transitions, memory helpers, and skill rendering |
+| `agent/skills/guided_exercises/catalog/` | Guided-exercise definition source of truth, registry indexes, and availability filtering |
+| `agent/skills/guided_exercises/lifecycle/` | Guided-exercise selection, state transitions, step classification, and memory helpers |
+| `agent/skills/guided_exercises/rendering/` | Prompt-local guided-exercise skill/directive rendering from catalog definitions |
 | `agent/runtime/memory_context.py` | Runtime-owned turn-memory loading backed by `agent/memory/retrieval/service.py` |
 | `agent/guardrails/` | Crisis input guardrail, classifier service, prompts, and safety delta construction |
 | `agent/tools/crisis.py` | Crisis resource lookup tool and response delta |
@@ -171,8 +173,8 @@ for the full breakdown.
    response style's knowledge content
 2. Add prompt-source wiring in `agent/specialists/therapeutic_response/prompt_sources.py`
    and instructions in `agent/specialists/therapeutic_response/prompt_instructions.py`
-3. Update `agent/skills/therapeutic_response.py` if the style needs different
-   prompt-local skill metadata
+3. Update `agent/specialists/therapeutic_response/style_guidance.py` if the style needs different
+   prompt-local style metadata or voice skill context
 4. Update `load_therapeutic_response_skill` guidance if the therapeutic
    response agent needs clearer selection criteria for the new style
 5. Add or update backend tests for the route and state contract

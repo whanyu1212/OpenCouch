@@ -1,11 +1,10 @@
-"""Tests for therapeutic response style skills."""
+"""Tests for therapeutic response style guidance rendering."""
 
 from __future__ import annotations
 
 import pytest
 
-from agent.skills.therapeutic_response import (
-    THERAPEUTIC_RESPONSE_SKILL_STYLES,
+from agent.specialists.therapeutic_response.style_guidance import (
     THERAPEUTIC_RESPONSE_STYLE_GUIDANCE_STYLES,
     render_therapeutic_response_skill_context,
     render_therapeutic_response_style_guidance,
@@ -27,8 +26,8 @@ def _state() -> dict:
     }
 
 
-@pytest.mark.parametrize("style", THERAPEUTIC_RESPONSE_SKILL_STYLES)
-def test_response_style_skill_renders_bounded_context(style: str) -> None:
+@pytest.mark.parametrize("style", THERAPEUTIC_RESPONSE_STYLE_GUIDANCE_STYLES)
+def test_response_style_skill_context_renders_bounded_context(style: str) -> None:
     rendered = render_therapeutic_response_skill_context(
         _state(),
         response_style=style,

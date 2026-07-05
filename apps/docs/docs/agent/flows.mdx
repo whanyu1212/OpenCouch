@@ -109,20 +109,20 @@ is treated as a hard error.
 ## Guided-exercise flow
 
 The `guided_exercise/` subpackage splits its work across four files. The
-actual exercise step selection and progression live in
-`agent/skills/guided_exercises/engine/`, not here — these modules are the
-runtime adapter around that engine:
+actual exercise step selection and progression live in the
+`agent/skills/guided_exercises/lifecycle/` service, not here — these modules
+are the runtime adapter around that lifecycle layer:
 
 | Module | Responsibility |
 |---|---|
 | `routing.py` | **Whether/when** to run an exercise. A pre-dispatch gate that loads memory, inspects exercise lifecycle (`start` / `continue` / `resume` / `preserve`), and decides via keyword heuristics whether the turn should enter the guided-exercise route. |
-| `executor.py` | **Run the turn.** `run_guided_exercise_turn` delegates to the skill engine's `run_turn`, applies the resulting delta, stamps diagnostics, and finalizes (streaming drains skill-engine chunks through an `asyncio.Queue`). |
-| `adapters.py` | **How prose is generated.** Bridges the engine (which expects a `BaseLLMClient`) to the SDK runner, so exercise prose still flows through the SDK and its tools. Falls back to re-running the original prompt if the forced skill tool is skipped. |
-| `tool_instruction.py` | **Force the skill tool.** Rewrites the engine's prompt into a forced `load_guided_exercise_skill` tool instruction and detects whether the tool was actually called. |
+| `executor.py` | **Run the turn.** `run_guided_exercise_turn` delegates to the lifecycle service's `run_turn`, applies the resulting delta, stamps diagnostics, and finalizes (streaming drains lifecycle chunks through an `asyncio.Queue`). |
+| `adapters.py` | **How prose is generated.** Bridges the lifecycle service (which expects a `BaseLLMClient`) to the SDK runner, so exercise prose still flows through the SDK and its tools. Falls back to re-running the original prompt if the forced skill tool is skipped. |
+| `tool_instruction.py` | **Force the skill tool.** Rewrites the lifecycle prompt into a forced `load_guided_exercise_skill` tool instruction and detects whether the tool was actually called. |
 
 Routing decisions here are heuristic keyword/phrase matching, not
-LLM-based — they only gate *entry* into the exercise route; the engine owns
-what happens inside it.
+LLM-based — they only gate *entry* into the exercise route; the lifecycle
+service owns what happens inside it.
 
 ## SDK fallback (cross-cutting resilience)
 

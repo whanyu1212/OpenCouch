@@ -23,10 +23,6 @@ THERAPEUTIC_RESPONSE_STYLE_GUIDANCE_STYLES = (
     "technique",
 )
 
-# Backwards-compatible name for the voice tool path while text runtime moves to
-# direct style-guidance injection.
-THERAPEUTIC_RESPONSE_SKILL_STYLES = THERAPEUTIC_RESPONSE_STYLE_GUIDANCE_STYLES
-
 _SYSTEM_PROMPT_BUILDERS = {
     "supportive": build_supportive_system_prompt,
     "reflective": build_reflective_system_prompt,
@@ -136,7 +132,6 @@ def _normalize_therapeutic_approach(value: object) -> str:
 
 
 __all__ = [
-    "THERAPEUTIC_RESPONSE_SKILL_STYLES",
     "THERAPEUTIC_RESPONSE_STYLE_GUIDANCE_STYLES",
     "render_therapeutic_response_skill_context",
     "render_therapeutic_response_style_guidance",

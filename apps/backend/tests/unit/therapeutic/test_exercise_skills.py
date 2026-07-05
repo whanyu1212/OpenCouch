@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent.skills.guided_exercises.registry import (
+from agent.skills.guided_exercises.catalog.registry import (
     EXERCISE_5_4_3_2_1,
     EXERCISE_BOX_BREATHING,
 )

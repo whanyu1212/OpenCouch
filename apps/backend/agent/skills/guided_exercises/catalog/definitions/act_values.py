@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.skills.guided_exercises.types import (
+from agent.skills.guided_exercises.catalog.types import (
     ExerciseDefinition,
     ExerciseStep,
 )

@@ -6,11 +6,11 @@ from typing import Any
 
 from agent.runtime.session.state import format_recent_history
 from agent.state import AgentState
-from agent.skills.guided_exercises.registry import (
+from agent.skills.guided_exercises.catalog.registry import (
     available_exercise_definitions,
     iter_exercise_selection_aliases,
 )
-from agent.skills.guided_exercises.types import (
+from agent.skills.guided_exercises.catalog.types import (
     ExerciseDefinition,
     ExerciseSelectionDecision,
 )

@@ -6,12 +6,12 @@ from typing import Any, cast
 
 import pytest
 
-from agent.skills.guided_exercises.engine.responses import (
+from agent.skills.guided_exercises.lifecycle.responses import (
     _build_advance_delta,
     _build_exit_delta,
     _build_start_delta,
 )
-from agent.skills.guided_exercises.registry import (
+from agent.skills.guided_exercises.catalog.registry import (
     EXERCISE_BOX_BREATHING,
     get_exercise_display_name,
     get_exercise_steps,

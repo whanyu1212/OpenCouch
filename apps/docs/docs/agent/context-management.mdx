@@ -69,12 +69,13 @@ keep that approach when guided exercise instructions resume. The
 `exercise_therapeutic_approach` field on `exercise_state` stores the
 pinned approach at exercise start. The guided-exercise runtime reuses it when
 an active exercise routes back to `guided_exercise`. A side-turn preserves the
-active exercise state while the therapeutic response skill may choose a fresh
+active exercise state while therapeutic response style guidance may use a fresh
 top-level approach for the explanation. Only an explicit exit clears
 `exercise_therapeutic_approach` alongside `exercise_type` and
 `exercise_step`.
 
-This is enforced by `agent/skills/guided_exercises/` and the
+This is enforced by `agent/skills/guided_exercises/lifecycle/` using the
+source-of-truth catalog in `agent/skills/guided_exercises/catalog/`, plus the
 runtime-owned exercise state checks in `agent/runtime/openai_text_runtime.py`, not by a
 separate post-processing selector.
 

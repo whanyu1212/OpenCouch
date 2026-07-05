@@ -4,35 +4,35 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent.skills.guided_exercises.definitions.act_values import (
+from agent.skills.guided_exercises.catalog.definitions.act_values import (
     DEFINITIONS as ACT_VALUES_DEFINITIONS,
     EXERCISE_LEAVES_ON_STREAM,
     EXERCISE_VALUES_COMPASS,
 )
-from agent.skills.guided_exercises.definitions.activation import (
+from agent.skills.guided_exercises.catalog.definitions.activation import (
     DEFINITIONS as ACTIVATION_DEFINITIONS,
     EXERCISE_TINY_ACTION,
 )
-from agent.skills.guided_exercises.definitions.emotion_regulation import (
+from agent.skills.guided_exercises.catalog.definitions.emotion_regulation import (
     DEFINITIONS as EMOTION_REGULATION_DEFINITIONS,
     EXERCISE_GRATITUDE,
     EXERCISE_IMPROVE,
     EXERCISE_SELF_COMPASSION,
 )
-from agent.skills.guided_exercises.definitions.grounding import (
+from agent.skills.guided_exercises.catalog.definitions.grounding import (
     DEFINITIONS as GROUNDING_DEFINITIONS,
     EXERCISE_5_4_3_2_1,
     EXERCISE_BOX_BREATHING,
     EXERCISE_MUSCLE_RELAXATION,
     EXERCISE_STOP_TECHNIQUE,
 )
-from agent.skills.guided_exercises.definitions.thought_work import (
+from agent.skills.guided_exercises.catalog.definitions.thought_work import (
     DEFINITIONS as THOUGHT_WORK_DEFINITIONS,
     EXERCISE_BEHAVIORAL_EXPERIMENT,
     EXERCISE_CONTINUUM,
     EXERCISE_THOUGHT_RECORD,
 )
-from agent.skills.guided_exercises.types import ExerciseDefinition, ExerciseStep
+from agent.skills.guided_exercises.catalog.types import ExerciseDefinition, ExerciseStep
 
 __all__ = [
     "ALL_EXERCISE_DEFINITIONS",

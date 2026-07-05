@@ -21,7 +21,7 @@ validation.
 1. **Dispatcher routes to `guided_exercise`** when the user explicitly asks for a structured exercise or practice.
 2. **Exercise selector chooses one supported exercise.** Selection is LLM-owned and constrained to definitions available for the current channel, installed skills, and therapeutic approach.
 3. **Step-state classifier** evaluates each user response as `complete` / `hold` / `stuck` / `exit` using the current step's natural-language completion criteria.
-4. **`ExerciseRunner` advances, holds, adapts, exits, or completes** based on the classifier output and local state validation.
+4. **`GuidedExerciseSkillService` advances, holds, adapts, exits, or completes** based on the classifier output and local state validation.
 5. **Exercise clears** on natural completion or user-initiated exit.
 
 ### Approach continuity
@@ -102,5 +102,5 @@ Click any exercise to see its steps and trigger keywords. Use the filter tabs to
 
 
 :::tip Adding a new exercise
-Define an `ExerciseDefinition` under `agent/skills/guided_exercises/definitions/`, include its steps and selector groups, register it in the `ALL_EXERCISE_DEFINITIONS` tuple in `agent/skills/guided_exercises/registry.py`, and add LLM guidance to `agent/prompts/sources/response_styles/guided_exercise.md` when the new exercise needs behavior-specific prose. No dispatcher or router changes should be needed. See [Text Agent Runtime](/docs/agent/graph) for the full architecture.
+Define an `ExerciseDefinition` under `agent/skills/guided_exercises/catalog/definitions/`, include its steps and selector groups, register it in the `ALL_EXERCISE_DEFINITIONS` tuple in `agent/skills/guided_exercises/catalog/registry.py`, and add LLM guidance to `agent/prompts/sources/response_styles/guided_exercise.md` when the new exercise needs behavior-specific prose. No dispatcher or router changes should be needed. See [Text Agent Runtime](/docs/agent/graph) for the full architecture.
 :::
