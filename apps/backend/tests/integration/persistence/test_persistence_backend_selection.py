@@ -48,6 +48,7 @@ from agent.runtime import (
     DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
+    RuntimeBehaviorConfig,
     RuntimeDependencies,
     RuntimePersistenceConfig,
     RuntimeStoragePaths,
@@ -112,7 +113,9 @@ def test_incognito_mode_uses_in_memory_store_by_default() -> None:
     """In incognito mode without an explicit override, the runtime
     should construct an in-memory store — nothing hits disk."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.INCOGNITO)
+    runtime = PersistentAgentRuntime(
+        persistence_config=RuntimePersistenceConfig(memory_mode=MemoryMode.INCOGNITO)
+    )
     assert isinstance(runtime.memory_store, OpenCouchMemoryStore)
     assert not isinstance(runtime.memory_store, SqliteMemoryStore)
 
@@ -121,7 +124,9 @@ def test_incognito_mode_uses_in_memory_crisis_log_by_default() -> None:
     """Same as the memory store — incognito crisis log must not
     touch disk."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.INCOGNITO)
+    runtime = PersistentAgentRuntime(
+        persistence_config=RuntimePersistenceConfig(memory_mode=MemoryMode.INCOGNITO)
+    )
     assert isinstance(runtime.crisis_log_backend, InMemoryCrisisLogBackend)
     assert not isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
 
@@ -131,7 +136,9 @@ def test_incognito_mode_sqlite_path_forced_to_memory() -> None:
 
     runtime = PersistentAgentRuntime(
         storage_paths=RuntimeStoragePaths(sqlite_path="/tmp/should-be-ignored.sqlite3"),
-        memory_mode=MemoryMode.INCOGNITO,
+        persistence_config=RuntimePersistenceConfig(
+            memory_mode=MemoryMode.INCOGNITO,
+        ),
     )
     assert runtime.sqlite_path == Path(":memory:")
 
@@ -143,7 +150,9 @@ def test_local_mode_rejects_durable_sqlite_without_legacy_opt_in() -> None:
     """Durable constructor SQLite must be explicitly marked legacy."""
 
     with pytest.raises(ValueError, match="Durable SQLite persistence is legacy"):
-        PersistentAgentRuntime(memory_mode=MemoryMode.LOCAL)
+        PersistentAgentRuntime(
+            persistence_config=RuntimePersistenceConfig(memory_mode=MemoryMode.LOCAL)
+        )
 
 
 def test_empty_grouped_storage_paths_do_not_opt_into_sqlite() -> None:
@@ -151,7 +160,9 @@ def test_empty_grouped_storage_paths_do_not_opt_into_sqlite() -> None:
 
     with pytest.raises(ValueError, match="thread_persistence_backend"):
         PersistentAgentRuntime(
-            memory_mode=MemoryMode.LOCAL,
+            persistence_config=RuntimePersistenceConfig(
+                memory_mode=MemoryMode.LOCAL,
+            ),
             storage_paths=RuntimeStoragePaths(),
         )
 
@@ -161,7 +172,9 @@ def test_default_grouped_storage_path_does_not_opt_into_sqlite() -> None:
 
     with pytest.raises(ValueError, match="thread_persistence_backend"):
         PersistentAgentRuntime(
-            memory_mode=MemoryMode.LOCAL,
+            persistence_config=RuntimePersistenceConfig(
+                memory_mode=MemoryMode.LOCAL,
+            ),
             storage_paths=RuntimeStoragePaths(sqlite_path=DEFAULT_THREAD_DB_PATH),
         )
 
@@ -173,7 +186,9 @@ def test_partial_grouped_storage_paths_do_not_opt_into_default_sqlite(
 
     with pytest.raises(ValueError, match="memory_backend"):
         PersistentAgentRuntime(
-            memory_mode=MemoryMode.LOCAL,
+            persistence_config=RuntimePersistenceConfig(
+                memory_mode=MemoryMode.LOCAL,
+            ),
             storage_paths=RuntimeStoragePaths(sqlite_path=tmp_path / "threads.sqlite3"),
         )
 
@@ -182,10 +197,12 @@ def test_injected_backends_are_not_validated_as_sqlite_defaults() -> None:
     """Dependency overrides should bypass unused SQLite backend defaults."""
 
     runtime = PersistentAgentRuntime(
-        memory_mode=MemoryMode.LOCAL,
-        thread_persistence_backend="postgres",
-        thread_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
-        text_session_backend="disabled",
+        persistence_config=RuntimePersistenceConfig(
+            memory_mode=MemoryMode.LOCAL,
+            thread_persistence_backend="postgres",
+            thread_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
+            text_session_backend="disabled",
+        ),
         dependencies=RuntimeDependencies(
             memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
@@ -583,9 +600,13 @@ def test_explicit_overrides_work_with_incognito_too() -> None:
     custom_store = OpenCouchMemoryStore()
     custom_backend = NullCrisisLogBackend()
     runtime = PersistentAgentRuntime(
-        memory_mode=MemoryMode.INCOGNITO,
-        memory_store=custom_store,
-        crisis_log_backend=custom_backend,
+        persistence_config=RuntimePersistenceConfig(
+            memory_mode=MemoryMode.INCOGNITO,
+        ),
+        dependencies=RuntimeDependencies(
+            memory_store=custom_store,
+            crisis_log_backend=custom_backend,
+        ),
     )
     assert runtime.memory_store is custom_store
     assert runtime.crisis_log_backend is custom_backend
@@ -672,7 +693,9 @@ def test_incognito_mode_uses_in_memory_feedback_by_default() -> None:
     nothing hits disk. The feedback collector is always-on regardless
     of mode, but incognito keeps it ephemeral."""
 
-    runtime = PersistentAgentRuntime(memory_mode=MemoryMode.INCOGNITO)
+    runtime = PersistentAgentRuntime(
+        persistence_config=RuntimePersistenceConfig(memory_mode=MemoryMode.INCOGNITO)
+    )
     assert isinstance(runtime.session_feedback_backend, InMemorySessionFeedbackBackend)
     assert not isinstance(
         runtime.session_feedback_backend, SqliteSessionFeedbackBackend
@@ -782,7 +805,7 @@ async def test_aexit_closes_feedback_backend() -> None:
     backend = _CountingBackend()
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        session_feedback_backend=backend,
+        dependencies=RuntimeDependencies(session_feedback_backend=backend),
     )
     async with runtime:
         # Fine — nothing to assert here; we just want __aexit__ to fire.
@@ -807,8 +830,10 @@ async def test_aenter_prewarms_embedding_provider_and_text_runtime() -> None:
 
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        embedding_provider=embedding_provider,
-        finalize_active_sessions_on_close=False,
+        dependencies=RuntimeDependencies(embedding_provider=embedding_provider),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
     )
 
     async with runtime:

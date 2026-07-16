@@ -9,7 +9,11 @@ import pytest
 
 from agent.models import ChunkEvent, DoneEvent, ResponseReadyEvent
 import agent.runtime.openai_text_runtime as openai_runtime
-from agent.runtime import PersistentAgentRuntime
+from agent.runtime import (
+    PersistentAgentRuntime,
+    RuntimeBehaviorConfig,
+    RuntimePersistenceConfig,
+)
 from agent.specialists.crisis import CRISIS_AGENT_NAME
 from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
 from agent.runtime.session.history import messages_from_sdk_session_items
@@ -193,7 +197,10 @@ async def test_persistent_runtime_disabled_sdk_session_keeps_legacy_prompt_histo
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        text_session_backend="disabled",
+        persistence_config=RuntimePersistenceConfig(
+            text_session_backend="disabled",
+            allow_legacy_sqlite=True,
+        ),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-legacy-history",
@@ -476,7 +483,9 @@ async def test_crisis_capture_runs_before_sdk_history_failure(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        finalize_active_sessions_on_close=False,
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
     ) as runtime:
 
         async def fail_sdk_history(*args: Any, **kwargs: Any) -> None:
@@ -524,7 +533,9 @@ async def test_streaming_context_is_created_after_mutation_setup(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        finalize_active_sessions_on_close=False,
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
     ) as runtime:
         context_calls = 0
         original_context_for_turn = runtime._context_for_turn

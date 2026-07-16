@@ -11,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
 from agent.models import MessageRole
-from agent.runtime import PersistentAgentRuntime
+from agent.runtime import PersistentAgentRuntime, RuntimeBehaviorConfig
 from api.dependencies import get_llm_client
 from api.router import api_router
 from api.routes import voice as voice_routes
@@ -19,6 +19,7 @@ from tests.support.api_selection import runtime_selection
 from tests.support.persistence import (
     FakeCrossRestartLLM,
     in_memory_runtime_storage_paths,
+    runtime_persistence_config,
 )
 from tests.support.safety_capture import (
     CRISIS_VOICE_RESPONSE_TEXT,
@@ -72,7 +73,7 @@ class _VoiceCrisisAuditLLM(FakeCrossRestartLLM):
 async def test_record_voice_turn_persists_thread_history() -> None:
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.INCOGNITO,
+        persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
     )
 
     async with runtime:
@@ -101,7 +102,7 @@ async def test_voice_turn_endpoint_records_transcript(
 ) -> None:
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
 
     app = FastAPI()
@@ -157,7 +158,7 @@ async def test_voice_turn_endpoint_infers_route_and_tool_metadata(
 ) -> None:
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
 
     app = FastAPI()
@@ -225,7 +226,7 @@ async def test_voice_crisis_turn_writes_one_audit_record() -> None:
 
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
 
     async with runtime:
@@ -268,7 +269,7 @@ async def test_voice_non_crisis_followup_does_not_reaudit_prior_crisis() -> None
 
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
 
     async with runtime:
@@ -304,8 +305,10 @@ async def test_voice_crisis_capture_runs_before_sdk_history_failure(
 
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
-        finalize_active_sessions_on_close=False,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
     )
 
     async with runtime:
@@ -343,7 +346,7 @@ async def test_non_crisis_voice_turn_writes_no_audit_record() -> None:
 
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
 
     async with runtime:
@@ -375,7 +378,7 @@ async def test_post_turn_voice_classifier_writes_missed_crisis_audit_record() ->
 
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
     llm = _VoiceCrisisAuditLLM(
         level=2,
@@ -425,7 +428,7 @@ async def test_post_turn_voice_classifier_writes_no_record_for_safe_turn() -> No
 
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
     llm = FakeCrossRestartLLM()
 
@@ -452,7 +455,7 @@ async def test_post_turn_voice_classifier_skips_existing_crisis_route() -> None:
 
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
     llm = _VoiceCrisisAuditLLM(level=3)
 
@@ -494,7 +497,7 @@ async def test_post_turn_safety_drain_waits_for_background_classifier() -> None:
 
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
     llm = _VoiceCrisisAuditLLM(level=2, delay_seconds=0.05)
 
@@ -526,7 +529,7 @@ async def test_voice_crisis_turn_records_lookup_error_status() -> None:
 
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
 
     async with runtime:
@@ -564,7 +567,7 @@ async def test_voice_end_endpoint_uses_runtime_session_finalization(
 ) -> None:
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
 
     app = FastAPI()
@@ -616,7 +619,7 @@ async def test_voice_end_endpoint_summarizes_persistent_voice_session(
 ) -> None:
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
     fake_llm = FakeCrossRestartLLM()
 
@@ -682,7 +685,7 @@ async def test_voice_end_with_positive_feedback_writes_record(
 ) -> None:
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
 
     app = FastAPI()
@@ -733,7 +736,7 @@ async def test_incognito_voice_end_with_feedback_scrubs_user_identity(
 ) -> None:
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.INCOGNITO,
+        persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
     )
 
     app = FastAPI()
@@ -785,7 +788,7 @@ async def test_voice_end_rejects_invalid_feedback_label(
 ) -> None:
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
 
     app = FastAPI()

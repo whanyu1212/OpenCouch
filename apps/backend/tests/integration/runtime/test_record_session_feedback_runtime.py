@@ -31,10 +31,11 @@ import pytest
 from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
 from agent.feedback.session_feedback import SessionFeedbackBackend
-from agent.runtime import PersistentAgentRuntime
+from agent.runtime import PersistentAgentRuntime, RuntimeDependencies
 from tests.support.persistence import (
     FakeCrossRestartLLM,
     in_memory_runtime_storage_paths,
+    runtime_persistence_config,
 )
 
 
@@ -70,7 +71,7 @@ def _runtime(memory_mode: MemoryMode = MemoryMode.LOCAL) -> PersistentAgentRunti
     """Construct a runtime that keeps everything in memory."""
     return PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=memory_mode,
+        persistence_config=runtime_persistence_config(memory_mode),
     )
 
 
@@ -196,7 +197,9 @@ async def test_backend_failure_returns_none_and_does_not_raise(
 
     rt = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        session_feedback_backend=_FailingFeedbackBackend(),  # type: ignore[arg-type]
+        dependencies=RuntimeDependencies(
+            session_feedback_backend=_FailingFeedbackBackend(),  # type: ignore[arg-type]
+        ),
     )
     async with rt:
         import logging

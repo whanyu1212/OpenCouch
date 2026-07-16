@@ -38,7 +38,12 @@ from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.session import run_commit_session_memory
 from agent.runtime.session.history import session_conversation_from_transcript
-from agent.runtime import PersistentAgentRuntime, RuntimeStoragePaths
+from agent.runtime import (
+    PersistentAgentRuntime,
+    RuntimeDependencies,
+    RuntimePersistenceConfig,
+    RuntimeStoragePaths,
+)
 from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
@@ -1592,8 +1597,11 @@ async def test_runtime_end_session_commits_buffered_semantic_candidates(
             feedback_sqlite_path=tmp_path / "feedback.sqlite3",
             text_session_sqlite_path=tmp_path / "text_sessions.sqlite3",
         ),
-        memory_store=store,
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=RuntimePersistenceConfig(
+            memory_mode=MemoryMode.LOCAL,
+            allow_legacy_sqlite=True,
+        ),
+        dependencies=RuntimeDependencies(memory_store=store),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-test",
@@ -1665,8 +1673,11 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
             feedback_sqlite_path=tmp_path / "feedback.sqlite3",
             text_session_sqlite_path=tmp_path / "text_sessions.sqlite3",
         ),
-        memory_store=store,
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=RuntimePersistenceConfig(
+            memory_mode=MemoryMode.LOCAL,
+            allow_legacy_sqlite=True,
+        ),
+        dependencies=RuntimeDependencies(memory_store=store),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-test",

@@ -18,6 +18,8 @@ from agent.runtime import (
     DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
+    RuntimeBehaviorConfig,
+    RuntimeDependencies,
     RuntimePersistenceConfig,
     RuntimeStoragePaths,
     ThreadSummary,
@@ -178,8 +180,10 @@ class ConsoleRuntime:
                 text_session_database_url=settings.text_session_database_url,
                 allow_legacy_sqlite=settings.allow_legacy_sqlite,
             ),
-            default_llm_client=llm_client,
-            finalize_active_sessions_on_close=False,
+            dependencies=RuntimeDependencies(default_llm_client=llm_client),
+            behavior_config=RuntimeBehaviorConfig(
+                finalize_active_sessions_on_close=False,
+            ),
         )
         self._runtime = await runtime.__aenter__()
         history = await self._runtime.get_history(self.config.thread_id)
