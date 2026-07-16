@@ -324,6 +324,66 @@ def test_tui_memory_snapshot_renderer_falls_back_when_empty_notebook_hides_raw_m
     assert "No visible memory records." not in memory_text
 
 
+def test_tui_memory_snapshot_renderer_falls_back_when_notebook_is_partial() -> None:
+    """Raw legacy rows should remain visible alongside typed notebook entries."""
+
+    from opencouch_tui.app import OpenCouchTuiApp
+
+    app = OpenCouchTuiApp(runtime_factory=_fake_runtime_factory)
+    memory_text = str(
+        app._render_memory_snapshot(
+            {
+                "owner_id": "mixed-owner",
+                "semantic": [
+                    {
+                        "predicate": "USES",
+                        "object": {"identifier": "breathing exercises"},
+                    },
+                    {
+                        "predicate": "WANTS",
+                        "object": {"identifier": "short plans"},
+                    },
+                ],
+                "episodic": [],
+                "procedural": None,
+                "notebook": {
+                    "owner_id": "mixed-owner",
+                    "topics": [
+                        {
+                            "id": "goals",
+                            "label": "Goals",
+                            "entries": [
+                                {
+                                    "id": "typed-entry",
+                                    "kind": "semantic",
+                                    "title": "user wants short plans",
+                                    "summary": "The typed notebook entry.",
+                                    "category": "goal",
+                                    "provenance": {},
+                                    "metadata": {},
+                                }
+                            ],
+                        }
+                    ],
+                    "counts": {
+                        "semantic": 1,
+                        "episodic": 0,
+                        "procedural_rules": 0,
+                        "total_entries": 1,
+                    },
+                    "proactive_recall_enabled": False,
+                },
+            }
+        )
+    )
+
+    assert "Owner: mixed-owner" in memory_text
+    assert "Semantic" in memory_text
+    assert "USES: breathing exercises" in memory_text
+    assert "WANTS: short plans" in memory_text
+    assert "Goals" not in memory_text
+
+
 @pytest.mark.asyncio
 async def test_tui_defers_transcript_autoscroll_until_after_refresh(
     monkeypatch,

@@ -1188,40 +1188,42 @@ class OpenCouchTuiApp(App[None]):
     def _render_memory_snapshot(self, snapshot: dict[str, Any]) -> Text:
         notebook = snapshot.get("notebook")
         if not isinstance(notebook, dict) or (
-            not self._memory_notebook_has_entries(notebook)
-            and self._raw_memory_snapshot_has_entries(snapshot)
+            self._raw_memory_snapshot_entry_count(snapshot)
+            > self._memory_notebook_entry_count(notebook)
         ):
             return self._render_raw_memory_snapshot(snapshot)
         return self._render_memory_notebook(snapshot["owner_id"], notebook)
 
     @staticmethod
-    def _memory_notebook_has_entries(notebook: dict[str, Any]) -> bool:
+    def _memory_notebook_entry_count(notebook: dict[str, Any]) -> int:
         counts = notebook.get("counts")
-        if isinstance(counts, dict) and int(counts.get("total_entries") or 0) > 0:
-            return True
+        if isinstance(counts, dict):
+            return int(counts.get("total_entries") or 0)
         topics = notebook.get("topics")
         if not isinstance(topics, list):
-            return False
-        return any(
-            isinstance(topic, dict)
-            and isinstance(topic.get("entries"), list)
-            and bool(topic["entries"])
+            return 0
+        return sum(
+            len(entries)
             for topic in topics
+            if isinstance(topic, dict)
+            and isinstance((entries := topic.get("entries")), list)
         )
 
     @staticmethod
-    def _raw_memory_snapshot_has_entries(snapshot: dict[str, Any]) -> bool:
+    def _raw_memory_snapshot_entry_count(snapshot: dict[str, Any]) -> int:
+        count = 0
         semantic = snapshot.get("semantic")
-        if isinstance(semantic, list) and semantic:
-            return True
+        if isinstance(semantic, list):
+            count += len(semantic)
         episodic = snapshot.get("episodic")
-        if isinstance(episodic, list) and episodic:
-            return True
+        if isinstance(episodic, list):
+            count += len(episodic)
         procedural = snapshot.get("procedural")
-        if not isinstance(procedural, dict):
-            return False
-        rules = procedural.get("rules")
-        return isinstance(rules, list) and bool(rules)
+        if isinstance(procedural, dict):
+            rules = procedural.get("rules")
+            if isinstance(rules, list):
+                count += len(rules)
+        return count
 
     def _render_raw_memory_snapshot(self, snapshot: dict[str, Any]) -> Text:
         memory = Text()
