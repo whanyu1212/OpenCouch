@@ -311,6 +311,67 @@ async def test_console_runtime_memory_snapshot_preserves_raw_memory_when_noteboo
     assert snapshot["notebook"] is None
 
 
+@pytest.mark.asyncio
+async def test_console_runtime_memory_snapshot_can_skip_notebook_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Raw memory command snapshots should not pay notebook projection cost."""
+
+    from agent.memory.store import OpenCouchMemoryStore
+    from opencouch_tui.runtime import ConsoleConfig, ConsoleRuntime
+
+    class _NotebookPersistentRuntime:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.memory_store = OpenCouchMemoryStore()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def get_history(self, thread_id):
+            return []
+
+        async def get_state(self, thread_id):
+            return None
+
+    async def _fail_if_called(*args: object, **kwargs: object) -> object:
+        raise AssertionError("notebook projection should not be built")
+
+    monkeypatch.setattr(
+        "opencouch_tui.runtime.get_settings",
+        lambda: SimpleNamespace(
+            persistence_backend="sqlite",
+            memory_database_url=None,
+            allow_legacy_sqlite=True,
+            text_session_backend="disabled",
+            text_session_database_url=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.runtime.PersistentAgentRuntime",
+        _NotebookPersistentRuntime,
+    )
+    monkeypatch.setattr("opencouch_tui.runtime.build_memory_notebook", _fail_if_called)
+
+    async with ConsoleRuntime(
+        ConsoleConfig(
+            requested_mode="deterministic",
+            thread_id="tui-raw-memory",
+            user_id="alice",
+            memory_mode="persistent",
+        )
+    ) as runtime:
+        snapshot = await runtime.load_memory_snapshot(include_notebook=False)
+
+    assert snapshot["owner_id"] == "alice"
+    assert snapshot["semantic"] == []
+    assert snapshot["episodic"] == []
+    assert snapshot["procedural"] is None
+    assert snapshot["notebook"] is None
+
+
 def test_console_config_defaults_are_tui_safe() -> None:
     """The adapter defaults should be safe for credential-free TUI smoke runs."""
 

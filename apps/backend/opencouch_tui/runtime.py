@@ -229,7 +229,9 @@ class ConsoleRuntime:
         runtime = self._require_runtime()
         return await runtime.list_threads(limit=limit)
 
-    async def load_memory_snapshot(self) -> dict[str, Any]:
+    async def load_memory_snapshot(
+        self, *, include_notebook: bool = True
+    ) -> dict[str, Any]:
         """Return semantic, episodic, and procedural memory for the active owner."""
 
         runtime = self._require_runtime()
@@ -245,12 +247,14 @@ class ConsoleRuntime:
             (owner_id, "procedural"),
             "user_response_style",
         )
-        try:
-            notebook = (
-                await build_memory_notebook(runtime.memory_store, owner_id=owner_id)
-            ).model_dump(mode="json")
-        except Exception:
-            notebook = None
+        notebook = None
+        if include_notebook:
+            try:
+                notebook = (
+                    await build_memory_notebook(runtime.memory_store, owner_id=owner_id)
+                ).model_dump(mode="json")
+            except Exception:
+                notebook = None
         return {
             "owner_id": owner_id,
             "semantic": [record.value for record in semantic],

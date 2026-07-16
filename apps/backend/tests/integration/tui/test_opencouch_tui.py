@@ -283,6 +283,47 @@ def test_tui_memory_snapshot_renderer_falls_back_to_raw_memory() -> None:
     assert "No visible memory records." not in memory_text
 
 
+def test_tui_memory_snapshot_renderer_falls_back_when_empty_notebook_hides_raw_memory() -> (
+    None
+):
+    """Legacy raw rows should render when typed notebook validation skips them."""
+
+    from opencouch_tui.app import OpenCouchTuiApp
+
+    app = OpenCouchTuiApp(runtime_factory=_fake_runtime_factory)
+    memory_text = str(
+        app._render_memory_snapshot(
+            {
+                "owner_id": "legacy-owner",
+                "semantic": [
+                    {
+                        "predicate": "USES",
+                        "object": {"identifier": "breathing exercises"},
+                    }
+                ],
+                "episodic": [],
+                "procedural": None,
+                "notebook": {
+                    "owner_id": "legacy-owner",
+                    "topics": [],
+                    "counts": {
+                        "semantic": 0,
+                        "episodic": 0,
+                        "procedural_rules": 0,
+                        "total_entries": 0,
+                    },
+                    "proactive_recall_enabled": False,
+                },
+            }
+        )
+    )
+
+    assert "Owner: legacy-owner" in memory_text
+    assert "Semantic" in memory_text
+    assert "USES: breathing exercises" in memory_text
+    assert "No visible memory records." not in memory_text
+
+
 @pytest.mark.asyncio
 async def test_tui_defers_transcript_autoscroll_until_after_refresh(
     monkeypatch,
@@ -680,7 +721,9 @@ class _FakeConsoleRuntime:
         ]
         return summaries[:limit]
 
-    async def load_memory_snapshot(self) -> dict[str, Any]:
+    async def load_memory_snapshot(
+        self, *, include_notebook: bool = True
+    ) -> dict[str, Any]:
         return {
             "owner_id": self.session.owner_id,
             "semantic": [

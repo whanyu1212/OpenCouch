@@ -580,7 +580,7 @@ class OpenCouchTuiApp(App[None]):
                 history_results = search_history_messages(session.history, query=query)
 
             if mode in {"memory", "all"}:
-                snapshot = await runtime.load_memory_snapshot()
+                snapshot = await runtime.load_memory_snapshot(include_notebook=False)
                 memory_results = search_memory_snapshot(snapshot, query=query)
 
             results = (
@@ -682,7 +682,9 @@ class OpenCouchTuiApp(App[None]):
             return
 
         action, kind = overview
-        snapshot = await self._require_runtime().load_memory_snapshot()
+        snapshot = await self._require_runtime().load_memory_snapshot(
+            include_notebook=False
+        )
         if action == "status":
             self._show_command_output(
                 "memory status",
@@ -1185,9 +1187,41 @@ class OpenCouchTuiApp(App[None]):
 
     def _render_memory_snapshot(self, snapshot: dict[str, Any]) -> Text:
         notebook = snapshot.get("notebook")
-        if not isinstance(notebook, dict):
+        if not isinstance(notebook, dict) or (
+            not self._memory_notebook_has_entries(notebook)
+            and self._raw_memory_snapshot_has_entries(snapshot)
+        ):
             return self._render_raw_memory_snapshot(snapshot)
         return self._render_memory_notebook(snapshot["owner_id"], notebook)
+
+    @staticmethod
+    def _memory_notebook_has_entries(notebook: dict[str, Any]) -> bool:
+        counts = notebook.get("counts")
+        if isinstance(counts, dict) and int(counts.get("total_entries") or 0) > 0:
+            return True
+        topics = notebook.get("topics")
+        if not isinstance(topics, list):
+            return False
+        return any(
+            isinstance(topic, dict)
+            and isinstance(topic.get("entries"), list)
+            and bool(topic["entries"])
+            for topic in topics
+        )
+
+    @staticmethod
+    def _raw_memory_snapshot_has_entries(snapshot: dict[str, Any]) -> bool:
+        semantic = snapshot.get("semantic")
+        if isinstance(semantic, list) and semantic:
+            return True
+        episodic = snapshot.get("episodic")
+        if isinstance(episodic, list) and episodic:
+            return True
+        procedural = snapshot.get("procedural")
+        if not isinstance(procedural, dict):
+            return False
+        rules = procedural.get("rules")
+        return isinstance(rules, list) and bool(rules)
 
     def _render_raw_memory_snapshot(self, snapshot: dict[str, Any]) -> Text:
         memory = Text()
