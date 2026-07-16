@@ -242,6 +242,85 @@ async def test_console_runtime_memory_snapshot_includes_notebook_projection(
     assert snapshot["notebook"]["topics"] == []
 
 
+@pytest.mark.asyncio
+async def test_console_runtime_memory_snapshot_preserves_raw_memory_when_notebook_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Legacy procedural data should not block raw memory snapshot consumers."""
+
+    from agent.memory.operations.procedural_profile import PROCEDURAL_KEY
+    from agent.memory.store import OpenCouchMemoryStore
+    from opencouch_tui.runtime import ConsoleConfig, ConsoleRuntime
+
+    class _LegacyProceduralPersistentRuntime:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.memory_store = OpenCouchMemoryStore()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def get_history(self, thread_id):
+            return []
+
+        async def get_state(self, thread_id):
+            return None
+
+    monkeypatch.setattr(
+        "opencouch_tui.runtime.get_settings",
+        lambda: SimpleNamespace(
+            persistence_backend="sqlite",
+            memory_database_url=None,
+            allow_legacy_sqlite=True,
+            text_session_backend="disabled",
+            text_session_database_url=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.runtime.PersistentAgentRuntime",
+        _LegacyProceduralPersistentRuntime,
+    )
+
+    legacy_profile = {
+        "proactive_recall_enabled": True,
+        "rules": ["Use short plans."],
+    }
+    async with ConsoleRuntime(
+        ConsoleConfig(
+            requested_mode="deterministic",
+            thread_id="tui-legacy-notebook",
+            user_id="alice",
+            memory_mode="persistent",
+        )
+    ) as runtime:
+        persistent_runtime = runtime._require_runtime()
+        await persistent_runtime.memory_store.aput(
+            ("alice", "procedural"),
+            PROCEDURAL_KEY,
+            legacy_profile,
+        )
+
+        snapshot = await runtime.load_memory_snapshot()
+
+    assert snapshot["owner_id"] == "alice"
+    assert snapshot["semantic"] == []
+    assert snapshot["episodic"] == []
+    assert snapshot["procedural"] == legacy_profile
+    assert snapshot["notebook"] == {
+        "owner_id": "alice",
+        "topics": [],
+        "counts": {
+            "semantic": 0,
+            "episodic": 0,
+            "procedural_rules": 0,
+            "total_entries": 0,
+        },
+        "proactive_recall_enabled": False,
+    }
+
+
 def test_console_config_defaults_are_tui_safe() -> None:
     """The adapter defaults should be safe for credential-free TUI smoke runs."""
 

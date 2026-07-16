@@ -245,13 +245,28 @@ class ConsoleRuntime:
             (owner_id, "procedural"),
             "user_response_style",
         )
-        notebook = await build_memory_notebook(runtime.memory_store, owner_id=owner_id)
+        try:
+            notebook = (
+                await build_memory_notebook(runtime.memory_store, owner_id=owner_id)
+            ).model_dump(mode="json")
+        except Exception:
+            notebook = {
+                "owner_id": owner_id,
+                "topics": [],
+                "counts": {
+                    "semantic": 0,
+                    "episodic": 0,
+                    "procedural_rules": 0,
+                    "total_entries": 0,
+                },
+                "proactive_recall_enabled": False,
+            }
         return {
             "owner_id": owner_id,
             "semantic": [record.value for record in semantic],
             "episodic": [record.value for record in episodic],
             "procedural": procedural.value if procedural is not None else None,
-            "notebook": notebook.model_dump(mode="json"),
+            "notebook": notebook,
         }
 
     def _require_runtime(self) -> PersistentAgentRuntime:
