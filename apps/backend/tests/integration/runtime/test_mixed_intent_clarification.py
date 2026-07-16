@@ -5,9 +5,13 @@ from __future__ import annotations
 import pytest
 
 import agent.runtime.openai_text_runtime as openai_runtime
+from agent.memory.modes import MemoryMode
 from agent.runtime import PersistentAgentRuntime
 from tests.support.openai_text import FakeOpenAISDKRunner, ScriptedOpenAITextRouteLLM
-from tests.support.persistence import runtime_storage_paths
+from tests.support.persistence import (
+    runtime_persistence_config,
+    runtime_storage_paths,
+)
 
 
 @pytest.mark.asyncio
@@ -21,7 +25,8 @@ async def test_blocking_clarification_uses_therapeutic_clarifying_route(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        storage_paths=runtime_storage_paths(tmp_path)
+        storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-mixed-intent-blocking",
@@ -74,7 +79,8 @@ async def test_legacy_low_confidence_still_clarifies(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        storage_paths=runtime_storage_paths(tmp_path)
+        storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-mixed-intent-legacy-low",
@@ -106,7 +112,8 @@ async def test_soft_clarification_preserves_primary_route(
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
     async with PersistentAgentRuntime(
-        storage_paths=runtime_storage_paths(tmp_path)
+        storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-mixed-intent-soft",

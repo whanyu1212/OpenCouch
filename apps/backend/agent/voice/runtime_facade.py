@@ -468,7 +468,7 @@ class VoiceRuntimeFacade:
                             channel=Channel.VOICE,
                             user_id=user_id,
                             installed_skills=None,
-                            prior_turn_count=0,
+                            prior_turn_count=-1,
                         )
                     ),
                 )

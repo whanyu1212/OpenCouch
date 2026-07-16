@@ -20,6 +20,7 @@ import {
   type RealtimeTranscriptUpdate,
 } from "./realtime-voice-events";
 import { buildRealtimeVoiceTurnRecordInput } from "./realtime-voice-turn-record";
+import { finalizeAfterPendingRealtimeVoiceTurn } from "./realtime-voice-finalization";
 import {
   readRealtimeVoiceUserQuote,
   realtimeVoiceEvidenceMatchesUserQuote,
@@ -102,7 +103,7 @@ export async function connectRealtimeVoiceSession(
   let pendingUserText = "";
   let pendingAssistantText = "";
   let latestUserTranscriptDraft = "";
-  let recordingTurn = false;
+  let pendingTurnRecording: Promise<void> | null = null;
 
   const setStatus = (status: RealtimeVoiceConnectionStatus) => {
     options.onStatus?.(status);
@@ -130,9 +131,9 @@ export async function connectRealtimeVoiceSession(
     if (finalize && !finalized) {
       finalized = true;
       setStatus("finalizing");
-      const response = await endRealtimeVoiceSession(
-        options.threadId,
-        options.memoryMode
+      const response = await finalizeAfterPendingRealtimeVoiceTurn(
+        pendingTurnRecording,
+        () => endRealtimeVoiceSession(options.threadId, options.memoryMode)
       );
       options.onEnded?.(response);
     }
@@ -303,43 +304,49 @@ export async function connectRealtimeVoiceSession(
       pendingAssistantText = text;
     }
 
-    void maybeRecordTurn();
+    void maybeRecordTurn().catch(() => undefined);
   }
 
-  async function maybeRecordTurn(): Promise<void> {
-    if (recordingTurn) return;
-    if (!pendingUserText.trim() || !pendingAssistantText.trim()) return;
-
-    const userText = pendingUserText;
-    const assistantText = pendingAssistantText;
-    pendingUserText = "";
-    pendingAssistantText = "";
-    recordingTurn = true;
-
-    try {
-      const toolCalls = completedToolCalls.splice(0);
-      const response = await recordRealtimeVoiceTurn(
-        buildRealtimeVoiceTurnRecordInput({
-          threadId: options.threadId,
-          userId: options.userId,
-          userText,
-          assistantText,
-          memoryMode: options.memoryMode,
-          toolCalls,
-        })
-      );
-      options.onTurnRecorded?.(response);
-    } catch (error) {
-      pendingUserText = userText;
-      pendingAssistantText = assistantText;
-      options.onError?.(
-        error instanceof Error
-          ? error
-          : new Error("Could not record Realtime voice turn.")
-      );
-    } finally {
-      recordingTurn = false;
+  function maybeRecordTurn(): Promise<void> {
+    if (pendingTurnRecording) return pendingTurnRecording;
+    if (!pendingUserText.trim() || !pendingAssistantText.trim()) {
+      return Promise.resolve();
     }
+
+    pendingTurnRecording = (async () => {
+      while (pendingUserText.trim() && pendingAssistantText.trim()) {
+        const userText = pendingUserText;
+        const assistantText = pendingAssistantText;
+        pendingUserText = "";
+        pendingAssistantText = "";
+
+        try {
+          const toolCalls = completedToolCalls.splice(0);
+          const response = await recordRealtimeVoiceTurn(
+            buildRealtimeVoiceTurnRecordInput({
+              threadId: options.threadId,
+              userId: options.userId,
+              userText,
+              assistantText,
+              memoryMode: options.memoryMode,
+              toolCalls,
+            })
+          );
+          options.onTurnRecorded?.(response);
+        } catch (error) {
+          pendingUserText = userText;
+          pendingAssistantText = assistantText;
+          const normalized =
+            error instanceof Error
+              ? error
+              : new Error("Could not record Realtime voice turn.");
+          options.onError?.(normalized);
+          throw normalized;
+        }
+      }
+      pendingTurnRecording = null;
+    })();
+    return pendingTurnRecording;
   }
 
   async function executeToolCall(call: RealtimeFunctionCall): Promise<void> {

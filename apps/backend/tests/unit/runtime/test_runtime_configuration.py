@@ -178,6 +178,29 @@ def test_sqlite_validation_message_preserves_field_order() -> None:
     )
 
 
+def test_custom_durable_sqlite_paths_require_legacy_opt_in(tmp_path: Path) -> None:
+    with pytest.raises(ValueError) as exc_info:
+        _resolve_persistence(
+            persistence_config=RuntimePersistenceConfig(allow_legacy_sqlite=False),
+            sqlite_path=tmp_path / "threads.sqlite3",
+            sqlite_path_configured=True,
+            memory_sqlite_path=tmp_path / "memory.sqlite3",
+            memory_sqlite_path_configured=True,
+            crisis_log_sqlite_path=tmp_path / "crisis.sqlite3",
+            crisis_log_sqlite_path_configured=True,
+            feedback_sqlite_path=tmp_path / "feedback.sqlite3",
+            feedback_sqlite_path_configured=True,
+            text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
+            text_session_sqlite_path_configured=True,
+        )
+
+    assert str(exc_info.value).endswith(
+        "SQLite fields: thread_persistence_backend, memory_backend, "
+        "crisis_log_persistence_backend, session_feedback_persistence_backend, "
+        "text_session_backend."
+    )
+
+
 def test_incognito_and_in_memory_paths_bypass_durable_sqlite_guard() -> None:
     incognito = _resolve_persistence(
         persistence_config=None,

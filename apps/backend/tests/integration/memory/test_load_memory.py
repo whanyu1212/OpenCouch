@@ -542,6 +542,7 @@ class TestSpeculativeMemoryPrefetch:
         from agent.runtime import (
             PersistentAgentRuntime,
             RuntimeDependencies,
+            RuntimePersistenceConfig,
             RuntimeStoragePaths,
         )
         from agent.runtime.workflow_context import PrefetchedTurnMemory
@@ -552,6 +553,10 @@ class TestSpeculativeMemoryPrefetch:
                 crisis_log_sqlite_path=tmp_path / "crisis.sqlite3",
                 feedback_sqlite_path=tmp_path / "feedback.sqlite3",
                 text_session_sqlite_path=tmp_path / "text_sessions.sqlite3",
+            ),
+            persistence_config=RuntimePersistenceConfig(
+                memory_mode=MemoryMode.LOCAL,
+                allow_legacy_sqlite=True,
             ),
             dependencies=RuntimeDependencies(memory_store=OpenCouchMemoryStore()),
         )

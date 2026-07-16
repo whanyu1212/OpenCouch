@@ -272,23 +272,18 @@ def _validate_legacy_sqlite_durable_allowed(
     memory_mode: MemoryMode,
     memory_backend: Literal["sqlite", "postgres"],
     memory_sqlite_path: str | Path,
-    memory_sqlite_path_configured: bool,
     memory_store: MemoryStore | None,
     thread_persistence_backend: Literal["sqlite", "postgres"],
     sqlite_path: str | Path,
-    sqlite_path_configured: bool,
     crisis_log_persistence_backend: Literal["sqlite", "postgres"],
     crisis_log_sqlite_path: str | Path,
-    crisis_log_sqlite_path_configured: bool,
     crisis_log_backend: CrisisLogBackend | None,
     session_feedback_persistence_backend: Literal["sqlite", "postgres"],
     feedback_sqlite_path: str | Path,
-    feedback_sqlite_path_configured: bool,
     session_feedback_backend: SessionFeedbackBackend | None,
     text_session_backend: TextSessionBackend,
     text_session_database_url: str | None,
     text_session_sqlite_path: str | Path | None,
-    text_session_sqlite_path_configured: bool,
     allow_legacy_sqlite: bool,
 ) -> None:
     """Reject durable SQLite backends without opt-in."""
@@ -297,30 +292,25 @@ def _validate_legacy_sqlite_durable_allowed(
         return
 
     sqlite_backends: list[str] = []
-    if (
-        thread_persistence_backend == "sqlite"
-        and not sqlite_path_configured
-        and not _is_in_memory_sqlite_path(sqlite_path)
+    if thread_persistence_backend == "sqlite" and not _is_in_memory_sqlite_path(
+        sqlite_path
     ):
         sqlite_backends.append("thread_persistence_backend")
     if (
         memory_store is None
         and memory_backend == "sqlite"
-        and not memory_sqlite_path_configured
         and not _is_in_memory_sqlite_path(memory_sqlite_path)
     ):
         sqlite_backends.append("memory_backend")
     if (
         crisis_log_backend is None
         and crisis_log_persistence_backend == "sqlite"
-        and not crisis_log_sqlite_path_configured
         and not _is_in_memory_sqlite_path(crisis_log_sqlite_path)
     ):
         sqlite_backends.append("crisis_log_persistence_backend")
     if (
         session_feedback_backend is None
         and session_feedback_persistence_backend == "sqlite"
-        and not feedback_sqlite_path_configured
         and not _is_in_memory_sqlite_path(feedback_sqlite_path)
     ):
         sqlite_backends.append("session_feedback_persistence_backend")
@@ -332,11 +322,7 @@ def _validate_legacy_sqlite_durable_allowed(
         if text_session_sqlite_path is None
         else not _is_in_memory_sqlite_path(text_session_sqlite_path)
     )
-    if (
-        text_session_uses_sqlite
-        and text_session_uses_disk
-        and not text_session_sqlite_path_configured
-    ):
+    if text_session_uses_sqlite and text_session_uses_disk:
         sqlite_backends.append("text_session_backend")
 
     if sqlite_backends:
@@ -455,23 +441,18 @@ def _resolve_runtime_persistence_config(
         memory_mode=memory_mode,
         memory_backend=memory_backend,
         memory_sqlite_path=memory_sqlite_path,
-        memory_sqlite_path_configured=memory_sqlite_path_configured,
         memory_store=memory_store,
         thread_persistence_backend=thread_persistence_backend,
         sqlite_path=sqlite_path,
-        sqlite_path_configured=sqlite_path_configured,
         crisis_log_persistence_backend=crisis_log_persistence_backend,
         crisis_log_sqlite_path=crisis_log_sqlite_path,
-        crisis_log_sqlite_path_configured=crisis_log_sqlite_path_configured,
         crisis_log_backend=crisis_log_backend,
         session_feedback_persistence_backend=session_feedback_persistence_backend,
         feedback_sqlite_path=feedback_sqlite_path,
-        feedback_sqlite_path_configured=feedback_sqlite_path_configured,
         session_feedback_backend=session_feedback_backend,
         text_session_backend=text_session_backend,
         text_session_database_url=text_session_database_url,
         text_session_sqlite_path=text_session_sqlite_path,
-        text_session_sqlite_path_configured=text_session_sqlite_path_configured,
         allow_legacy_sqlite=allow_legacy_sqlite,
     )
 

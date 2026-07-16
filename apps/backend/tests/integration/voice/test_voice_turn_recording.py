@@ -213,6 +213,41 @@ async def test_voice_turn_endpoint_infers_route_and_tool_metadata(
 
 
 @pytest.mark.asyncio
+async def test_first_voice_crisis_lookup_does_not_advance_turn_count() -> None:
+    runtime = PersistentAgentRuntime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+    )
+
+    async with runtime:
+        await runtime.voice.persist_voice_crisis_resource_lookup(
+            thread_id="voice-first-crisis",
+            user_id="user-1",
+            inferred_location="Singapore",
+            found_resources=[],
+            resource_lookup_status="lookup_error",
+        )
+        placeholder = await runtime.get_state("voice-first-crisis")
+
+        await runtime.voice.record_voice_turn(
+            thread_id="voice-first-crisis",
+            user_id="user-1",
+            user_text=CRISIS_VOICE_USER_TEXT,
+            assistant_text=CRISIS_VOICE_RESPONSE_TEXT,
+            tool_calls=[
+                voice_crisis_lookup_tool_call(resource_lookup_status="lookup_error")
+            ],
+            llm_client=None,
+        )
+        recorded = await runtime.get_state("voice-first-crisis")
+
+    assert placeholder is not None
+    assert placeholder["session_progress"]["turn_count"] == 0
+    assert recorded is not None
+    assert recorded["session_progress"]["turn_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_voice_crisis_turn_writes_one_audit_record() -> None:
     """A voice turn that called lookup_crisis_resources is audited like text.
 
