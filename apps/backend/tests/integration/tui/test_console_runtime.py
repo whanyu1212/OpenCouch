@@ -308,17 +308,7 @@ async def test_console_runtime_memory_snapshot_preserves_raw_memory_when_noteboo
     assert snapshot["semantic"] == []
     assert snapshot["episodic"] == []
     assert snapshot["procedural"] == legacy_profile
-    assert snapshot["notebook"] == {
-        "owner_id": "alice",
-        "topics": [],
-        "counts": {
-            "semantic": 0,
-            "episodic": 0,
-            "procedural_rules": 0,
-            "total_entries": 0,
-        },
-        "proactive_recall_enabled": False,
-    }
+    assert snapshot["notebook"] is None
 
 
 def test_console_config_defaults_are_tui_safe() -> None:

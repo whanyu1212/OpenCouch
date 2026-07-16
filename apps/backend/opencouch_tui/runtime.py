@@ -250,17 +250,7 @@ class ConsoleRuntime:
                 await build_memory_notebook(runtime.memory_store, owner_id=owner_id)
             ).model_dump(mode="json")
         except Exception:
-            notebook = {
-                "owner_id": owner_id,
-                "topics": [],
-                "counts": {
-                    "semantic": 0,
-                    "episodic": 0,
-                    "procedural_rules": 0,
-                    "total_entries": 0,
-                },
-                "proactive_recall_enabled": False,
-            }
+            notebook = None
         return {
             "owner_id": owner_id,
             "semantic": [record.value for record in semantic],

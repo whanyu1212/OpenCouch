@@ -1186,17 +1186,68 @@ class OpenCouchTuiApp(App[None]):
     def _render_memory_snapshot(self, snapshot: dict[str, Any]) -> Text:
         notebook = snapshot.get("notebook")
         if not isinstance(notebook, dict):
-            notebook = {
-                "counts": {
-                    "semantic": 0,
-                    "episodic": 0,
-                    "procedural_rules": 0,
-                    "total_entries": 0,
-                },
-                "topics": [],
-                "proactive_recall_enabled": False,
-            }
+            return self._render_raw_memory_snapshot(snapshot)
         return self._render_memory_notebook(snapshot["owner_id"], notebook)
+
+    def _render_raw_memory_snapshot(self, snapshot: dict[str, Any]) -> Text:
+        memory = Text()
+        memory.append(
+            f"Owner: {snapshot['owner_id']}\n\n",
+            style=self._role_style("assistant"),
+        )
+        semantic = snapshot.get("semantic", [])
+        episodic = snapshot.get("episodic", [])
+        procedural = snapshot.get("procedural")
+
+        memory.append("Semantic\n", style=self._role_style("user"))
+        if semantic:
+            for record in semantic:
+                memory.append(
+                    f"- {record.get('predicate', '?')}: ", style=self._muted_style()
+                )
+                target = record.get("object", {})
+                if isinstance(target, dict):
+                    memory.append(
+                        f"{target.get('identifier', '?')}\n",
+                        style=self._message_style("user"),
+                    )
+                else:
+                    memory.append(f"{target}\n", style=self._message_style("user"))
+        else:
+            memory.append("- none\n", style=self._debug_style())
+
+        memory.append("\nEpisodic\n", style=self._role_style("assistant"))
+        if episodic:
+            for record in episodic:
+                memory.append(
+                    f"- {record.get('session_id', '?')}: {record.get('summary', '?')}\n",
+                    style=self._message_style("assistant"),
+                )
+        else:
+            memory.append("- none\n", style=self._debug_style())
+
+        memory.append("\nProcedural\n", style=self._role_style("assistant"))
+        if isinstance(procedural, dict):
+            memory.append(
+                f"- recall: {'on' if procedural.get('proactive_recall_enabled') else 'off'}\n",
+                style=self._message_style("assistant"),
+            )
+            rules = procedural.get("rules", [])
+            if rules:
+                for rule in rules:
+                    rule_text = (
+                        rule.get("rule", "?") if isinstance(rule, dict) else rule
+                    )
+                    memory.append(
+                        f"  • {rule_text}\n",
+                        style=self._message_style("assistant"),
+                    )
+            else:
+                memory.append("  • none\n", style=self._debug_style())
+        else:
+            memory.append("- none\n", style=self._debug_style())
+
+        return memory
 
     def _render_memory_notebook(
         self, owner_id: object, notebook: dict[str, Any]

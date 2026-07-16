@@ -241,6 +241,48 @@ def test_tui_memory_snapshot_renderer_shows_empty_notebook_state() -> None:
     assert "No visible memory records." in memory_text
 
 
+def test_tui_memory_snapshot_renderer_falls_back_to_raw_memory() -> None:
+    """A failed notebook projection should still render stored raw memory."""
+
+    from opencouch_tui.app import OpenCouchTuiApp
+
+    app = OpenCouchTuiApp(runtime_factory=_fake_runtime_factory)
+    memory_text = str(
+        app._render_memory_snapshot(
+            {
+                "owner_id": "legacy-owner",
+                "semantic": [
+                    {
+                        "predicate": "WANTS",
+                        "object": {"identifier": "short plans"},
+                    }
+                ],
+                "episodic": [
+                    {
+                        "session_id": "session-1",
+                        "summary": "Discussed presentation anxiety.",
+                    }
+                ],
+                "procedural": {
+                    "proactive_recall_enabled": True,
+                    "rules": ["Use short plans."],
+                },
+                "notebook": None,
+            }
+        )
+    )
+
+    assert "Owner: legacy-owner" in memory_text
+    assert "Semantic" in memory_text
+    assert "WANTS: short plans" in memory_text
+    assert "Episodic" in memory_text
+    assert "session-1: Discussed presentation anxiety." in memory_text
+    assert "Procedural" in memory_text
+    assert "recall: on" in memory_text
+    assert "Use short plans." in memory_text
+    assert "No visible memory records." not in memory_text
+
+
 @pytest.mark.asyncio
 async def test_tui_defers_transcript_autoscroll_until_after_refresh(
     monkeypatch,
