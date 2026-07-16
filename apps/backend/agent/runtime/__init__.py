@@ -10,6 +10,11 @@ from __future__ import annotations
 from typing import Any
 
 _RUNTIME_EXPORTS = {
+    "PersistentAgentRuntime",
+    "_iso_now",
+}
+
+_CONFIGURATION_EXPORTS = {
     "DEFAULT_CRISIS_LOG_DB_PATH",
     "DEFAULT_FEEDBACK_DB_PATH",
     "DEFAULT_MEMORY_DB_PATH",
@@ -20,8 +25,6 @@ _RUNTIME_EXPORTS = {
     "RuntimePersistenceConfig",
     "RuntimeStoragePaths",
     "SESSION_TIMEOUT",
-    "PersistentAgentRuntime",
-    "_iso_now",
 }
 
 _ACTIVE_SESSION_EXPORTS = {
@@ -70,6 +73,10 @@ def __getattr__(name: str) -> Any:
         from agent.runtime import runtime as _runtime
 
         return getattr(_runtime, name)
+    if name in _CONFIGURATION_EXPORTS:
+        from agent.runtime import configuration as _configuration
+
+        return getattr(_configuration, name)
     if name in _ACTIVE_SESSION_EXPORTS:
         from agent.runtime.session import active_session as _active_session
 
