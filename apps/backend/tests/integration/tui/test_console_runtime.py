@@ -240,6 +240,7 @@ async def test_console_runtime_memory_snapshot_includes_notebook_projection(
     assert snapshot["notebook"]["owner_id"] == "alice"
     assert snapshot["notebook"]["counts"]["total_entries"] == 0
     assert snapshot["notebook"]["topics"] == []
+    assert snapshot["has_unprojected_legacy_memory"] is False
 
 
 @pytest.mark.asyncio
@@ -309,6 +310,7 @@ async def test_console_runtime_memory_snapshot_preserves_raw_memory_when_noteboo
     assert snapshot["episodic"] == []
     assert snapshot["procedural"] == legacy_profile
     assert snapshot["notebook"] is None
+    assert snapshot["has_unprojected_legacy_memory"] is False
 
 
 @pytest.mark.asyncio
@@ -370,6 +372,31 @@ async def test_console_runtime_memory_snapshot_can_skip_notebook_projection(
     assert snapshot["episodic"] == []
     assert snapshot["procedural"] is None
     assert snapshot["notebook"] is None
+    assert snapshot["has_unprojected_legacy_memory"] is False
+
+
+def test_console_runtime_detects_only_visible_unprojected_records() -> None:
+    """Only visible invalid rows should request the legacy raw fallback."""
+
+    from agent.memory.types import SemanticFact
+    from opencouch_tui.runtime import _has_visible_unprojected_records
+
+    visible_legacy = SimpleNamespace(
+        value={
+            "predicate": "USES",
+            "object": {"identifier": "breathing exercises"},
+        }
+    )
+    hidden_legacy = SimpleNamespace(
+        value={
+            "predicate": "USES",
+            "object": {"identifier": "private strategy"},
+            "user_visible": False,
+        }
+    )
+
+    assert _has_visible_unprojected_records([visible_legacy], SemanticFact) is True
+    assert _has_visible_unprojected_records([hidden_legacy], SemanticFact) is False
 
 
 def test_console_config_defaults_are_tui_safe() -> None:

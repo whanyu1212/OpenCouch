@@ -6,8 +6,11 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from pydantic import ValidationError
+
 from agent.memory.modes import MemoryMode
 from agent.memory.notebook import build_memory_notebook
+from agent.memory.types import SemanticFact, StoredSessionArc
 from agent.models import Message, StreamEvent
 from agent.runtime import (
     DEFAULT_CRISIS_LOG_DB_PATH,
@@ -30,6 +33,24 @@ from config import (
 from llm.base import BaseLLMClient
 
 MemoryModeName = Literal["guest", "persistent"]
+
+
+def _has_visible_unprojected_records(
+    records: list[Any], model_type: type[SemanticFact] | type[StoredSessionArc]
+) -> bool:
+    for record in records:
+        value = record.value
+        if isinstance(value, dict) and (
+            not value.get("user_visible", True)
+            or value.get("dormant_at")
+            or value.get("superseded_by")
+        ):
+            continue
+        try:
+            model_type.model_validate(value)
+        except ValidationError:
+            return True
+    return False
 
 
 @dataclass(slots=True)
@@ -248,7 +269,11 @@ class ConsoleRuntime:
             "user_response_style",
         )
         notebook = None
+        has_unprojected_legacy_memory = False
         if include_notebook:
+            has_unprojected_legacy_memory = _has_visible_unprojected_records(
+                semantic, SemanticFact
+            ) or _has_visible_unprojected_records(episodic, StoredSessionArc)
             try:
                 notebook = (
                     await build_memory_notebook(runtime.memory_store, owner_id=owner_id)
@@ -261,6 +286,7 @@ class ConsoleRuntime:
             "episodic": [record.value for record in episodic],
             "procedural": procedural.value if procedural is not None else None,
             "notebook": notebook,
+            "has_unprojected_legacy_memory": has_unprojected_legacy_memory,
         }
 
     def _require_runtime(self) -> PersistentAgentRuntime:

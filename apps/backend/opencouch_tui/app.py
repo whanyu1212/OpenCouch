@@ -1187,39 +1187,11 @@ class OpenCouchTuiApp(App[None]):
 
     def _render_memory_snapshot(self, snapshot: dict[str, Any]) -> Text:
         notebook = snapshot.get("notebook")
-        if not isinstance(notebook, dict) or (
-            self._raw_memory_snapshot_entry_count(snapshot)
-            > self._memory_notebook_entry_count(notebook)
+        if not isinstance(notebook, dict) or snapshot.get(
+            "has_unprojected_legacy_memory", False
         ):
             return self._render_raw_memory_snapshot(snapshot)
         return self._render_memory_notebook(snapshot["owner_id"], notebook)
-
-    @staticmethod
-    def _memory_notebook_entry_count(notebook: dict[str, Any]) -> int:
-        counts = notebook.get("counts")
-        if isinstance(counts, dict):
-            return int(counts.get("total_entries") or 0)
-        topics = notebook.get("topics")
-        if not isinstance(topics, list):
-            return 0
-        return sum(
-            len(entries)
-            for topic in topics
-            if isinstance(topic, dict)
-            and isinstance((entries := topic.get("entries")), list)
-        )
-
-    @classmethod
-    def _raw_memory_snapshot_entry_count(cls, snapshot: dict[str, Any]) -> int:
-        semantic = cls._visible_raw_memory_records(snapshot.get("semantic"))
-        episodic = cls._visible_raw_memory_records(snapshot.get("episodic"))
-        procedural = snapshot.get("procedural")
-        rules = (
-            cls._visible_raw_memory_records(procedural.get("rules"))
-            if isinstance(procedural, dict)
-            else []
-        )
-        return len(semantic) + len(episodic) + len(rules)
 
     @staticmethod
     def _visible_raw_memory_records(records: object) -> list[Any]:

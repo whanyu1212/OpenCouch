@@ -314,6 +314,7 @@ def test_tui_memory_snapshot_renderer_falls_back_when_empty_notebook_hides_raw_m
                     },
                     "proactive_recall_enabled": False,
                 },
+                "has_unprojected_legacy_memory": True,
             }
         )
     )
@@ -373,6 +374,7 @@ def test_tui_memory_snapshot_renderer_falls_back_when_notebook_is_partial() -> N
                     },
                     "proactive_recall_enabled": False,
                 },
+                "has_unprojected_legacy_memory": True,
             }
         )
     )
@@ -448,6 +450,63 @@ def test_tui_memory_snapshot_renderer_keeps_hidden_raw_memory_out() -> None:
     assert "private topic" not in memory_text
     assert "old strategy" not in memory_text
     assert "Semantic" not in memory_text
+
+
+def test_tui_memory_snapshot_renderer_keeps_truncated_notebook_view() -> None:
+    """Notebook display limits should not force the legacy raw renderer."""
+
+    from opencouch_tui.app import OpenCouchTuiApp
+
+    app = OpenCouchTuiApp(runtime_factory=_fake_runtime_factory)
+    memory_text = str(
+        app._render_memory_snapshot(
+            {
+                "owner_id": "large-owner",
+                "semantic": [
+                    {
+                        "predicate": "WANTS",
+                        "object": {"identifier": f"goal-{index}"},
+                    }
+                    for index in range(101)
+                ],
+                "episodic": [],
+                "procedural": None,
+                "notebook": {
+                    "owner_id": "large-owner",
+                    "topics": [
+                        {
+                            "id": "goals",
+                            "label": "Goals",
+                            "entries": [
+                                {
+                                    "id": "goal-0",
+                                    "kind": "semantic",
+                                    "title": "user wants goal-0",
+                                    "summary": "Visible notebook entry.",
+                                    "category": "goal",
+                                    "provenance": {},
+                                    "metadata": {},
+                                }
+                            ],
+                        }
+                    ],
+                    "counts": {
+                        "semantic": 100,
+                        "episodic": 0,
+                        "procedural_rules": 0,
+                        "total_entries": 100,
+                    },
+                    "proactive_recall_enabled": False,
+                },
+                "has_unprojected_legacy_memory": False,
+            }
+        )
+    )
+
+    assert "Goals" in memory_text
+    assert "user wants goal-0" in memory_text
+    assert "Semantic" not in memory_text
+    assert "goal-100" not in memory_text
 
 
 @pytest.mark.asyncio
