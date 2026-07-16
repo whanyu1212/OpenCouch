@@ -384,6 +384,72 @@ def test_tui_memory_snapshot_renderer_falls_back_when_notebook_is_partial() -> N
     assert "Goals" not in memory_text
 
 
+def test_tui_memory_snapshot_renderer_keeps_hidden_raw_memory_out() -> None:
+    """Hidden typed rows should not trigger or appear in the raw fallback."""
+
+    from opencouch_tui.app import OpenCouchTuiApp
+
+    app = OpenCouchTuiApp(runtime_factory=_fake_runtime_factory)
+    memory_text = str(
+        app._render_memory_snapshot(
+            {
+                "owner_id": "hidden-owner",
+                "semantic": [
+                    {
+                        "predicate": "WANTS",
+                        "object": {"identifier": "short plans"},
+                    },
+                    {
+                        "predicate": "WORRIES_ABOUT",
+                        "object": {"identifier": "private topic"},
+                        "user_visible": False,
+                    },
+                    {
+                        "predicate": "USES",
+                        "object": {"identifier": "old strategy"},
+                        "superseded_by": "replacement",
+                    },
+                ],
+                "episodic": [],
+                "procedural": None,
+                "notebook": {
+                    "owner_id": "hidden-owner",
+                    "topics": [
+                        {
+                            "id": "goals",
+                            "label": "Goals",
+                            "entries": [
+                                {
+                                    "id": "visible-entry",
+                                    "kind": "semantic",
+                                    "title": "user wants short plans",
+                                    "summary": "Visible typed memory.",
+                                    "category": "goal",
+                                    "provenance": {},
+                                    "metadata": {},
+                                }
+                            ],
+                        }
+                    ],
+                    "counts": {
+                        "semantic": 1,
+                        "episodic": 0,
+                        "procedural_rules": 0,
+                        "total_entries": 1,
+                    },
+                    "proactive_recall_enabled": False,
+                },
+            }
+        )
+    )
+
+    assert "Goals" in memory_text
+    assert "user wants short plans" in memory_text
+    assert "private topic" not in memory_text
+    assert "old strategy" not in memory_text
+    assert "Semantic" not in memory_text
+
+
 @pytest.mark.asyncio
 async def test_tui_defers_transcript_autoscroll_until_after_refresh(
     monkeypatch,

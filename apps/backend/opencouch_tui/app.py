@@ -1209,21 +1209,32 @@ class OpenCouchTuiApp(App[None]):
             and isinstance((entries := topic.get("entries")), list)
         )
 
-    @staticmethod
-    def _raw_memory_snapshot_entry_count(snapshot: dict[str, Any]) -> int:
-        count = 0
-        semantic = snapshot.get("semantic")
-        if isinstance(semantic, list):
-            count += len(semantic)
-        episodic = snapshot.get("episodic")
-        if isinstance(episodic, list):
-            count += len(episodic)
+    @classmethod
+    def _raw_memory_snapshot_entry_count(cls, snapshot: dict[str, Any]) -> int:
+        semantic = cls._visible_raw_memory_records(snapshot.get("semantic"))
+        episodic = cls._visible_raw_memory_records(snapshot.get("episodic"))
         procedural = snapshot.get("procedural")
-        if isinstance(procedural, dict):
-            rules = procedural.get("rules")
-            if isinstance(rules, list):
-                count += len(rules)
-        return count
+        rules = (
+            cls._visible_raw_memory_records(procedural.get("rules"))
+            if isinstance(procedural, dict)
+            else []
+        )
+        return len(semantic) + len(episodic) + len(rules)
+
+    @staticmethod
+    def _visible_raw_memory_records(records: object) -> list[Any]:
+        if not isinstance(records, list):
+            return []
+        return [
+            record
+            for record in records
+            if not isinstance(record, dict)
+            or (
+                record.get("user_visible", True)
+                and not record.get("dormant_at")
+                and not record.get("superseded_by")
+            )
+        ]
 
     def _render_raw_memory_snapshot(self, snapshot: dict[str, Any]) -> Text:
         memory = Text()
@@ -1231,8 +1242,8 @@ class OpenCouchTuiApp(App[None]):
             f"Owner: {snapshot['owner_id']}\n\n",
             style=self._role_style("assistant"),
         )
-        semantic = snapshot.get("semantic", [])
-        episodic = snapshot.get("episodic", [])
+        semantic = self._visible_raw_memory_records(snapshot.get("semantic"))
+        episodic = self._visible_raw_memory_records(snapshot.get("episodic"))
         procedural = snapshot.get("procedural")
 
         memory.append("Semantic\n", style=self._role_style("user"))
@@ -1268,7 +1279,7 @@ class OpenCouchTuiApp(App[None]):
                 f"- recall: {'on' if procedural.get('proactive_recall_enabled') else 'off'}\n",
                 style=self._message_style("assistant"),
             )
-            rules = procedural.get("rules", [])
+            rules = self._visible_raw_memory_records(procedural.get("rules"))
             if rules:
                 for rule in rules:
                     rule_text = (
