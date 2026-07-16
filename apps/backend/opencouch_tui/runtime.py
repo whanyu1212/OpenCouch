@@ -6,7 +6,12 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from pydantic import ValidationError
+
 from agent.memory.modes import MemoryMode
+from agent.memory.notebook import build_memory_notebook
+from agent.memory.store import MemoryStore, Namespace, StoreRecord
+from agent.memory.types import SemanticFact, StoredSessionArc
 from agent.models import Message, StreamEvent
 from agent.runtime import (
     DEFAULT_CRISIS_LOG_DB_PATH,
@@ -29,6 +34,39 @@ from config import (
 from llm.base import BaseLLMClient
 
 MemoryModeName = Literal["guest", "persistent"]
+
+
+async def _load_memory_snapshot_records(
+    store: MemoryStore,
+    namespace: Namespace,
+    *,
+    complete: bool,
+) -> list[StoreRecord]:
+    if not complete:
+        return await store.asearch(namespace, query=None)
+    record_count = await store.arecord_count(namespace)
+    if record_count == 0:
+        return []
+    return await store.asearch(namespace, query=None, limit=record_count)
+
+
+def _has_visible_unprojected_records(
+    records: list[StoreRecord],
+    model_type: type[SemanticFact] | type[StoredSessionArc],
+) -> bool:
+    for record in records:
+        value = record.value
+        if isinstance(value, dict) and (
+            not value.get("user_visible", True)
+            or value.get("dormant_at")
+            or value.get("superseded_by")
+        ):
+            continue
+        try:
+            model_type.model_validate(value)
+        except ValidationError:
+            return True
+    return False
 
 
 @dataclass(slots=True)
@@ -228,27 +266,47 @@ class ConsoleRuntime:
         runtime = self._require_runtime()
         return await runtime.list_threads(limit=limit)
 
-    async def load_memory_snapshot(self) -> dict[str, Any]:
+    async def load_memory_snapshot(
+        self, *, include_notebook: bool = True
+    ) -> dict[str, Any]:
         """Return semantic, episodic, and procedural memory for the active owner."""
 
         runtime = self._require_runtime()
         session = self._require_session()
         owner_id = session.owner_id
-        semantic = await runtime.memory_store.asearch(
-            (owner_id, "semantic"), query=None
+        semantic = await _load_memory_snapshot_records(
+            runtime.memory_store,
+            (owner_id, "semantic"),
+            complete=include_notebook,
         )
-        episodic = await runtime.memory_store.asearch(
-            (owner_id, "episodic"), query=None
+        episodic = await _load_memory_snapshot_records(
+            runtime.memory_store,
+            (owner_id, "episodic"),
+            complete=include_notebook,
         )
         procedural = await runtime.memory_store.aget(
             (owner_id, "procedural"),
             "user_response_style",
         )
+        notebook = None
+        has_unprojected_legacy_memory = False
+        if include_notebook:
+            has_unprojected_legacy_memory = _has_visible_unprojected_records(
+                semantic, SemanticFact
+            ) or _has_visible_unprojected_records(episodic, StoredSessionArc)
+            try:
+                notebook = (
+                    await build_memory_notebook(runtime.memory_store, owner_id=owner_id)
+                ).model_dump(mode="json")
+            except Exception:
+                notebook = None
         return {
             "owner_id": owner_id,
             "semantic": [record.value for record in semantic],
             "episodic": [record.value for record in episodic],
             "procedural": procedural.value if procedural is not None else None,
+            "notebook": notebook,
+            "has_unprojected_legacy_memory": has_unprojected_legacy_memory,
         }
 
     def _require_runtime(self) -> PersistentAgentRuntime:

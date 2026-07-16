@@ -192,13 +192,321 @@ async def test_tui_memory_workspace_renders_snapshot() -> None:
         memory_text = str(app.query_one("#memory-transcript").renderable)
 
     assert "Owner: local-tui" in memory_text
+    assert (
+        "Notebook: 3 entries (1 facts, 1 sessions, 1 rules) · recall: on" in memory_text
+    )
+    assert "Triggers and sensitivities" in memory_text
+    assert "user worries about presentations" in memory_text
+    assert "Presentations make me anxious." in memory_text
+    assert "confidence: high" in memory_text
+    assert "Response preferences" in memory_text
+    assert "You prefer short step-by-step plans." in memory_text
+    assert "Session arcs" in memory_text
+    assert "User discussed presentation anxiety." in memory_text
+
+
+def test_tui_memory_snapshot_renderer_shows_empty_notebook_state() -> None:
+    """An empty generated notebook should render a compact empty state."""
+
+    from opencouch_tui.app import OpenCouchTuiApp
+
+    app = OpenCouchTuiApp(runtime_factory=_fake_runtime_factory)
+    memory_text = str(
+        app._render_memory_snapshot(
+            {
+                "owner_id": "empty-owner",
+                "semantic": [],
+                "episodic": [],
+                "procedural": None,
+                "notebook": {
+                    "owner_id": "empty-owner",
+                    "topics": [],
+                    "counts": {
+                        "semantic": 0,
+                        "episodic": 0,
+                        "procedural_rules": 0,
+                        "total_entries": 0,
+                    },
+                    "proactive_recall_enabled": False,
+                },
+            }
+        )
+    )
+
+    assert "Owner: empty-owner" in memory_text
+    assert (
+        "Notebook: 0 entries (0 facts, 0 sessions, 0 rules) · recall: off"
+        in memory_text
+    )
+    assert "No visible memory records." in memory_text
+
+
+def test_tui_memory_snapshot_renderer_falls_back_to_raw_memory() -> None:
+    """A failed notebook projection should still render stored raw memory."""
+
+    from opencouch_tui.app import OpenCouchTuiApp
+
+    app = OpenCouchTuiApp(runtime_factory=_fake_runtime_factory)
+    memory_text = str(
+        app._render_memory_snapshot(
+            {
+                "owner_id": "legacy-owner",
+                "semantic": [
+                    {
+                        "predicate": "WANTS",
+                        "object": {"identifier": "short plans"},
+                    }
+                ],
+                "episodic": [
+                    {
+                        "session_id": "session-1",
+                        "summary": "Discussed presentation anxiety.",
+                    }
+                ],
+                "procedural": {
+                    "proactive_recall_enabled": True,
+                    "rules": ["Use short plans."],
+                },
+                "notebook": None,
+            }
+        )
+    )
+
+    assert "Owner: legacy-owner" in memory_text
     assert "Semantic" in memory_text
-    assert "WORRIES_ABOUT: presentations" in memory_text
+    assert "WANTS: short plans" in memory_text
     assert "Episodic" in memory_text
-    assert "session-1: User discussed presentation anxiety." in memory_text
+    assert "session-1: Discussed presentation anxiety." in memory_text
     assert "Procedural" in memory_text
     assert "recall: on" in memory_text
-    assert "You prefer short step-by-step plans." in memory_text
+    assert "Use short plans." in memory_text
+    assert "No visible memory records." not in memory_text
+
+
+def test_tui_memory_snapshot_renderer_falls_back_when_empty_notebook_hides_raw_memory() -> (
+    None
+):
+    """Legacy raw rows should render when typed notebook validation skips them."""
+
+    from opencouch_tui.app import OpenCouchTuiApp
+
+    app = OpenCouchTuiApp(runtime_factory=_fake_runtime_factory)
+    memory_text = str(
+        app._render_memory_snapshot(
+            {
+                "owner_id": "legacy-owner",
+                "semantic": [
+                    {
+                        "predicate": "USES",
+                        "object": {"identifier": "breathing exercises"},
+                    }
+                ],
+                "episodic": [],
+                "procedural": None,
+                "notebook": {
+                    "owner_id": "legacy-owner",
+                    "topics": [],
+                    "counts": {
+                        "semantic": 0,
+                        "episodic": 0,
+                        "procedural_rules": 0,
+                        "total_entries": 0,
+                    },
+                    "proactive_recall_enabled": False,
+                },
+                "has_unprojected_legacy_memory": True,
+            }
+        )
+    )
+
+    assert "Owner: legacy-owner" in memory_text
+    assert "Semantic" in memory_text
+    assert "USES: breathing exercises" in memory_text
+    assert "No visible memory records." not in memory_text
+
+
+def test_tui_memory_snapshot_renderer_falls_back_when_notebook_is_partial() -> None:
+    """Raw legacy rows should remain visible alongside typed notebook entries."""
+
+    from opencouch_tui.app import OpenCouchTuiApp
+
+    app = OpenCouchTuiApp(runtime_factory=_fake_runtime_factory)
+    memory_text = str(
+        app._render_memory_snapshot(
+            {
+                "owner_id": "mixed-owner",
+                "semantic": [
+                    {
+                        "predicate": "USES",
+                        "object": {"identifier": "breathing exercises"},
+                    },
+                    {
+                        "predicate": "WANTS",
+                        "object": {"identifier": "short plans"},
+                    },
+                ],
+                "episodic": [],
+                "procedural": None,
+                "notebook": {
+                    "owner_id": "mixed-owner",
+                    "topics": [
+                        {
+                            "id": "goals",
+                            "label": "Goals",
+                            "entries": [
+                                {
+                                    "id": "typed-entry",
+                                    "kind": "semantic",
+                                    "title": "user wants short plans",
+                                    "summary": "The typed notebook entry.",
+                                    "category": "goal",
+                                    "provenance": {},
+                                    "metadata": {},
+                                }
+                            ],
+                        }
+                    ],
+                    "counts": {
+                        "semantic": 1,
+                        "episodic": 0,
+                        "procedural_rules": 0,
+                        "total_entries": 1,
+                    },
+                    "proactive_recall_enabled": False,
+                },
+                "has_unprojected_legacy_memory": True,
+            }
+        )
+    )
+
+    assert "Owner: mixed-owner" in memory_text
+    assert "Semantic" in memory_text
+    assert "USES: breathing exercises" in memory_text
+    assert "WANTS: short plans" in memory_text
+    assert "Goals" not in memory_text
+
+
+def test_tui_memory_snapshot_renderer_keeps_hidden_raw_memory_out() -> None:
+    """Hidden typed rows should not trigger or appear in the raw fallback."""
+
+    from opencouch_tui.app import OpenCouchTuiApp
+
+    app = OpenCouchTuiApp(runtime_factory=_fake_runtime_factory)
+    memory_text = str(
+        app._render_memory_snapshot(
+            {
+                "owner_id": "hidden-owner",
+                "semantic": [
+                    {
+                        "predicate": "WANTS",
+                        "object": {"identifier": "short plans"},
+                    },
+                    {
+                        "predicate": "WORRIES_ABOUT",
+                        "object": {"identifier": "private topic"},
+                        "user_visible": False,
+                    },
+                    {
+                        "predicate": "USES",
+                        "object": {"identifier": "old strategy"},
+                        "superseded_by": "replacement",
+                    },
+                ],
+                "episodic": [],
+                "procedural": None,
+                "notebook": {
+                    "owner_id": "hidden-owner",
+                    "topics": [
+                        {
+                            "id": "goals",
+                            "label": "Goals",
+                            "entries": [
+                                {
+                                    "id": "visible-entry",
+                                    "kind": "semantic",
+                                    "title": "user wants short plans",
+                                    "summary": "Visible typed memory.",
+                                    "category": "goal",
+                                    "provenance": {},
+                                    "metadata": {},
+                                }
+                            ],
+                        }
+                    ],
+                    "counts": {
+                        "semantic": 1,
+                        "episodic": 0,
+                        "procedural_rules": 0,
+                        "total_entries": 1,
+                    },
+                    "proactive_recall_enabled": False,
+                },
+            }
+        )
+    )
+
+    assert "Goals" in memory_text
+    assert "user wants short plans" in memory_text
+    assert "private topic" not in memory_text
+    assert "old strategy" not in memory_text
+    assert "Semantic" not in memory_text
+
+
+def test_tui_memory_snapshot_renderer_keeps_truncated_notebook_view() -> None:
+    """Notebook display limits should not force the legacy raw renderer."""
+
+    from opencouch_tui.app import OpenCouchTuiApp
+
+    app = OpenCouchTuiApp(runtime_factory=_fake_runtime_factory)
+    memory_text = str(
+        app._render_memory_snapshot(
+            {
+                "owner_id": "large-owner",
+                "semantic": [
+                    {
+                        "predicate": "WANTS",
+                        "object": {"identifier": f"goal-{index}"},
+                    }
+                    for index in range(101)
+                ],
+                "episodic": [],
+                "procedural": None,
+                "notebook": {
+                    "owner_id": "large-owner",
+                    "topics": [
+                        {
+                            "id": "goals",
+                            "label": "Goals",
+                            "entries": [
+                                {
+                                    "id": "goal-0",
+                                    "kind": "semantic",
+                                    "title": "user wants goal-0",
+                                    "summary": "Visible notebook entry.",
+                                    "category": "goal",
+                                    "provenance": {},
+                                    "metadata": {},
+                                }
+                            ],
+                        }
+                    ],
+                    "counts": {
+                        "semantic": 100,
+                        "episodic": 0,
+                        "procedural_rules": 0,
+                        "total_entries": 100,
+                    },
+                    "proactive_recall_enabled": False,
+                },
+                "has_unprojected_legacy_memory": False,
+            }
+        )
+    )
+
+    assert "Goals" in memory_text
+    assert "user wants goal-0" in memory_text
+    assert "Semantic" not in memory_text
+    assert "goal-100" not in memory_text
 
 
 @pytest.mark.asyncio
@@ -598,7 +906,9 @@ class _FakeConsoleRuntime:
         ]
         return summaries[:limit]
 
-    async def load_memory_snapshot(self) -> dict[str, Any]:
+    async def load_memory_snapshot(
+        self, *, include_notebook: bool = True
+    ) -> dict[str, Any]:
         return {
             "owner_id": self.session.owner_id,
             "semantic": [
@@ -617,6 +927,67 @@ class _FakeConsoleRuntime:
                 "proactive_recall_enabled": True,
                 "rules": [
                     {"rule": "You prefer short step-by-step plans."},
+                ],
+            },
+            "notebook": {
+                "owner_id": self.session.owner_id,
+                "counts": {
+                    "semantic": 1,
+                    "episodic": 1,
+                    "procedural_rules": 1,
+                    "total_entries": 3,
+                },
+                "proactive_recall_enabled": True,
+                "topics": [
+                    {
+                        "id": "triggers",
+                        "label": "Triggers and sensitivities",
+                        "entries": [
+                            {
+                                "id": "fact-1",
+                                "kind": "semantic",
+                                "title": "user worries about presentations",
+                                "summary": "Presentations make me anxious.",
+                                "category": "trigger",
+                                "provenance": {
+                                    "source_session_id": "session-1",
+                                    "source_turn_index": 2,
+                                    "confidence": "high",
+                                },
+                                "metadata": {},
+                            }
+                        ],
+                    },
+                    {
+                        "id": "procedural_rules",
+                        "label": "Response preferences",
+                        "entries": [
+                            {
+                                "id": "rule-1",
+                                "kind": "procedural",
+                                "title": "Response preference",
+                                "summary": "You prefer short step-by-step plans.",
+                                "category": "procedural_rule",
+                                "provenance": {"confidence": "medium"},
+                                "metadata": {},
+                            }
+                        ],
+                    },
+                    {
+                        "id": "session_arcs",
+                        "label": "Session arcs",
+                        "entries": [
+                            {
+                                "id": "arc-1",
+                                "kind": "episodic",
+                                "title": "presentation anxiety",
+                                "summary": "User discussed presentation anxiety.",
+                                "category": "session_arc",
+                                "provenance": {"source_session_id": "session-1"},
+                                "metadata": {},
+                            }
+                        ],
+                    },
                 ],
             },
         }

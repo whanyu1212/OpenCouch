@@ -580,7 +580,7 @@ class OpenCouchTuiApp(App[None]):
                 history_results = search_history_messages(session.history, query=query)
 
             if mode in {"memory", "all"}:
-                snapshot = await runtime.load_memory_snapshot()
+                snapshot = await runtime.load_memory_snapshot(include_notebook=False)
                 memory_results = search_memory_snapshot(snapshot, query=query)
 
             results = (
@@ -682,7 +682,9 @@ class OpenCouchTuiApp(App[None]):
             return
 
         action, kind = overview
-        snapshot = await self._require_runtime().load_memory_snapshot()
+        snapshot = await self._require_runtime().load_memory_snapshot(
+            include_notebook=False
+        )
         if action == "status":
             self._show_command_output(
                 "memory status",
@@ -1184,13 +1186,36 @@ class OpenCouchTuiApp(App[None]):
         return debug
 
     def _render_memory_snapshot(self, snapshot: dict[str, Any]) -> Text:
+        notebook = snapshot.get("notebook")
+        if not isinstance(notebook, dict) or snapshot.get(
+            "has_unprojected_legacy_memory", False
+        ):
+            return self._render_raw_memory_snapshot(snapshot)
+        return self._render_memory_notebook(snapshot["owner_id"], notebook)
+
+    @staticmethod
+    def _visible_raw_memory_records(records: object) -> list[Any]:
+        if not isinstance(records, list):
+            return []
+        return [
+            record
+            for record in records
+            if not isinstance(record, dict)
+            or (
+                record.get("user_visible", True)
+                and not record.get("dormant_at")
+                and not record.get("superseded_by")
+            )
+        ]
+
+    def _render_raw_memory_snapshot(self, snapshot: dict[str, Any]) -> Text:
         memory = Text()
         memory.append(
             f"Owner: {snapshot['owner_id']}\n\n",
             style=self._role_style("assistant"),
         )
-        semantic = snapshot.get("semantic", [])
-        episodic = snapshot.get("episodic", [])
+        semantic = self._visible_raw_memory_records(snapshot.get("semantic"))
+        episodic = self._visible_raw_memory_records(snapshot.get("episodic"))
         procedural = snapshot.get("procedural")
 
         memory.append("Semantic\n", style=self._role_style("user"))
@@ -1226,25 +1251,105 @@ class OpenCouchTuiApp(App[None]):
                 f"- recall: {'on' if procedural.get('proactive_recall_enabled') else 'off'}\n",
                 style=self._message_style("assistant"),
             )
-            rules = procedural.get("rules", [])
+            rules = self._visible_raw_memory_records(procedural.get("rules"))
             if rules:
                 for rule in rules:
-                    if isinstance(rule, dict):
-                        memory.append(
-                            f"  • {rule.get('rule', '?')}\n",
-                            style=self._message_style("assistant"),
-                        )
-                    else:
-                        memory.append(
-                            f"  • {rule}\n",
-                            style=self._message_style("assistant"),
-                        )
+                    rule_text = (
+                        rule.get("rule", "?") if isinstance(rule, dict) else rule
+                    )
+                    memory.append(
+                        f"  • {rule_text}\n",
+                        style=self._message_style("assistant"),
+                    )
             else:
                 memory.append("  • none\n", style=self._debug_style())
         else:
             memory.append("- none\n", style=self._debug_style())
 
         return memory
+
+    def _render_memory_notebook(
+        self, owner_id: object, notebook: dict[str, Any]
+    ) -> Text:
+        memory = Text()
+        memory.append(f"Owner: {owner_id}\n", style=self._role_style("assistant"))
+
+        counts = notebook.get("counts", {})
+        count_text = "0 entries"
+        if isinstance(counts, dict):
+            total = int(counts.get("total_entries") or 0)
+            semantic = int(counts.get("semantic") or 0)
+            episodic = int(counts.get("episodic") or 0)
+            procedural = int(counts.get("procedural_rules") or 0)
+            count_text = (
+                f"{total} entries ({semantic} facts, "
+                f"{episodic} sessions, {procedural} rules)"
+            )
+        recall = "on" if notebook.get("proactive_recall_enabled") else "off"
+        memory.append(
+            f"Notebook: {count_text} · recall: {recall}\n\n",
+            style=self._muted_style(),
+        )
+
+        topics = notebook.get("topics", [])
+        if not isinstance(topics, list) or not topics:
+            memory.append("No visible memory records.\n", style=self._debug_style())
+            return memory
+
+        rendered_topics = 0
+        for topic in topics:
+            if not isinstance(topic, dict):
+                continue
+            entries = topic.get("entries", [])
+            if not isinstance(entries, list):
+                entries = []
+            if rendered_topics:
+                memory.append("\n")
+            label = str(topic.get("label") or topic.get("id") or "Memory")
+            memory.append(f"{label}\n", style=self._role_style("user"))
+            if not entries:
+                memory.append("- none\n", style=self._debug_style())
+                rendered_topics += 1
+                continue
+
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                title = str(entry.get("title") or entry.get("category") or "Memory")
+                summary = str(entry.get("summary") or "").strip()
+                memory.append(f"- {title}\n", style=self._message_style("assistant"))
+                if summary:
+                    memory.append(f"  {summary}\n", style=self._muted_style())
+                provenance = self._memory_notebook_provenance_text(
+                    entry.get("provenance")
+                )
+                if provenance:
+                    memory.append(f"  · {provenance}\n", style=self._debug_style())
+            rendered_topics += 1
+
+        if rendered_topics == 0:
+            memory.append("No visible memory records.\n", style=self._debug_style())
+        return memory
+
+    @staticmethod
+    def _memory_notebook_provenance_text(provenance: object) -> str:
+        if not isinstance(provenance, dict):
+            return ""
+        parts: list[str] = []
+        confidence = provenance.get("confidence")
+        if confidence:
+            parts.append(f"confidence: {confidence}")
+        source_session = provenance.get("source_session_id")
+        if source_session:
+            source = f"source: {source_session}"
+            source_turn = provenance.get("source_turn_index")
+            if source_turn is not None:
+                source = f"{source} turn {source_turn}"
+            parts.append(source)
+        write_reason = provenance.get("write_reason")
+        if write_reason:
+            parts.append(f"reason: {write_reason}")
+        return " · ".join(parts)
 
     def _render_help_bar(self) -> None:
         help_text = Text()
