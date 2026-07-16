@@ -399,6 +399,72 @@ def test_console_runtime_detects_only_visible_unprojected_records() -> None:
     assert _has_visible_unprojected_records([hidden_legacy], SemanticFact) is False
 
 
+@pytest.mark.asyncio
+async def test_console_runtime_notebook_snapshot_fetches_complete_raw_namespaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A legacy fallback should include records beyond the store default page."""
+
+    from agent.memory.store import OpenCouchMemoryStore
+    from opencouch_tui.runtime import ConsoleConfig, ConsoleRuntime
+
+    class _LegacyRowsPersistentRuntime:
+        def __init__(self, *args: object, **kwargs: object) -> None:
+            self.memory_store = OpenCouchMemoryStore()
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def get_history(self, thread_id):
+            return []
+
+        async def get_state(self, thread_id):
+            return None
+
+    monkeypatch.setattr(
+        "opencouch_tui.runtime.get_settings",
+        lambda: SimpleNamespace(
+            persistence_backend="sqlite",
+            memory_database_url=None,
+            allow_legacy_sqlite=True,
+            text_session_backend="disabled",
+            text_session_database_url=None,
+        ),
+    )
+    monkeypatch.setattr(
+        "opencouch_tui.runtime.PersistentAgentRuntime",
+        _LegacyRowsPersistentRuntime,
+    )
+
+    async with ConsoleRuntime(
+        ConsoleConfig(
+            requested_mode="deterministic",
+            thread_id="tui-complete-fallback",
+            user_id="alice",
+            memory_mode="persistent",
+        )
+    ) as runtime:
+        persistent_runtime = runtime._require_runtime()
+        for index in range(12):
+            await persistent_runtime.memory_store.aput(
+                ("alice", "semantic"),
+                f"legacy-{index}",
+                {
+                    "predicate": "WANTS",
+                    "object": {"identifier": f"goal-{index}"},
+                },
+            )
+
+        snapshot = await runtime.load_memory_snapshot()
+
+    assert len(snapshot["semantic"]) == 12
+    assert snapshot["semantic"][-1]["object"]["identifier"] == "goal-11"
+    assert snapshot["has_unprojected_legacy_memory"] is True
+
+
 def test_console_config_defaults_are_tui_safe() -> None:
     """The adapter defaults should be safe for credential-free TUI smoke runs."""
 

@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from agent.memory.modes import MemoryMode
 from agent.memory.notebook import build_memory_notebook
+from agent.memory.store import MemoryStore, Namespace, StoreRecord
 from agent.memory.types import SemanticFact, StoredSessionArc
 from agent.models import Message, StreamEvent
 from agent.runtime import (
@@ -35,8 +36,23 @@ from llm.base import BaseLLMClient
 MemoryModeName = Literal["guest", "persistent"]
 
 
+async def _load_memory_snapshot_records(
+    store: MemoryStore,
+    namespace: Namespace,
+    *,
+    complete: bool,
+) -> list[StoreRecord]:
+    if not complete:
+        return await store.asearch(namespace, query=None)
+    record_count = await store.arecord_count(namespace)
+    if record_count == 0:
+        return []
+    return await store.asearch(namespace, query=None, limit=record_count)
+
+
 def _has_visible_unprojected_records(
-    records: list[Any], model_type: type[SemanticFact] | type[StoredSessionArc]
+    records: list[StoreRecord],
+    model_type: type[SemanticFact] | type[StoredSessionArc],
 ) -> bool:
     for record in records:
         value = record.value
@@ -258,11 +274,15 @@ class ConsoleRuntime:
         runtime = self._require_runtime()
         session = self._require_session()
         owner_id = session.owner_id
-        semantic = await runtime.memory_store.asearch(
-            (owner_id, "semantic"), query=None
+        semantic = await _load_memory_snapshot_records(
+            runtime.memory_store,
+            (owner_id, "semantic"),
+            complete=include_notebook,
         )
-        episodic = await runtime.memory_store.asearch(
-            (owner_id, "episodic"), query=None
+        episodic = await _load_memory_snapshot_records(
+            runtime.memory_store,
+            (owner_id, "episodic"),
+            complete=include_notebook,
         )
         procedural = await runtime.memory_store.aget(
             (owner_id, "procedural"),
