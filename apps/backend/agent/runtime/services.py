@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -109,4 +110,7 @@ class TextRuntimeServices:
     load_turn_memory: LoadTurnMemory
 
 
-__all__ = ["TextRuntimeServices"]
+TextRuntimeServicesFactory = Callable[[], TextRuntimeServices]
+
+
+__all__ = ["TextRuntimeServices", "TextRuntimeServicesFactory"]

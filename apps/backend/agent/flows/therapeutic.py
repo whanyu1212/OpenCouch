@@ -25,9 +25,12 @@ from agent.runtime.prompt_utils import (
 )
 from agent.runtime.session.history import include_prompt_history
 from agent.runtime.session.history import state_without_prompt_history
-from agent.runtime.services import TextRuntimeServices
+from agent.runtime.services import TextRuntimeServices, TextRuntimeServicesFactory
+from agent.runtime.text_turn_graph import TextRoutePlan
 from agent.runtime.types import (
+    RouteHandler,
     TextRuntimeChunkEvent,
+    TextRuntimeConfig,
     TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
     TextRuntimeStreamEvent,
@@ -564,6 +567,56 @@ def _find_matching_json_object_end(text: str, start_index: int) -> int:
             if depth == 0:
                 return index
     return -1
+
+
+def build_therapeutic_route_handler(
+    services_factory: TextRuntimeServicesFactory,
+) -> RouteHandler:
+    """Build the default therapeutic route handler."""
+
+    async def execute(
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AgentState:
+        services = services_factory()
+        result = await run_therapeutic_turn(
+            services,
+            plan.state,
+            config=config,
+            context=context,
+            session=session,
+        )
+        return await services.finalize_turn(
+            plan.state,
+            response_text=result.response_text,
+            config=config,
+            runtime_mode=result.runtime_mode,
+            response_style=result.response_style,
+            selected_agent=THERAPEUTIC_AGENT_NAME,
+            sdk_duration_ms=result.sdk_duration_ms,
+            streamed=False,
+        )
+
+    async def stream(
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AsyncIterator[TextRuntimeStreamEvent]:
+        async for event in run_therapeutic_turn_stream(
+            services_factory(),
+            plan.state,
+            config=config,
+            context=context,
+            session=session,
+        ):
+            yield event
+
+    return RouteHandler(execute=execute, stream=stream)
 
 
 def merge_therapeutic_tool_results(
