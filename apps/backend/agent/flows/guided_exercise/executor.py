@@ -11,10 +11,13 @@ from llm.base import BaseLLMClient
 
 from agent.flows.guided_exercise.adapters import guided_exercise_response_llm
 from agent.runtime.context import OpenAITextRunContext
-from agent.runtime.services import TextRuntimeServices
+from agent.runtime.services import TextRuntimeServices, TextRuntimeServicesFactory
 from agent.runtime.state_ops import apply_state_delta
+from agent.runtime.text_turn_graph import TextRoutePlan
 from agent.runtime.types import (
+    RouteHandler,
     TextRuntimeChunkEvent,
+    TextRuntimeConfig,
     TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
     TextRuntimeStreamEvent,
@@ -22,6 +25,7 @@ from agent.runtime.types import (
 from agent.runtime.workflow_context import WorkflowContext
 from agent.skills.guided_exercises.lifecycle.service import GuidedExerciseSkillService
 from agent.specialists.guided_exercise import GUIDED_EXERCISE_AGENT_NAME
+from agent.state import AgentState
 
 
 def guided_exercise_skill_service(
@@ -186,7 +190,48 @@ def _apply_guided_exercise_tool_diagnostics(
     apply_state_delta(state, {"diagnostics": diagnostics})
 
 
+def build_guided_exercise_route_handler(
+    services_factory: TextRuntimeServicesFactory,
+) -> RouteHandler:
+    """Build the guided-exercise route handler."""
+
+    async def execute(
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AgentState:
+        return await run_guided_exercise_turn(
+            services_factory(),
+            plan.state,
+            config=config,
+            context=context,
+            streamed=False,
+            session=session,
+        )
+
+    async def stream(
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AsyncIterator[TextRuntimeStreamEvent]:
+        async for event in run_guided_exercise_turn_stream(
+            services_factory(),
+            plan.state,
+            config=config,
+            context=context,
+            session=session,
+        ):
+            yield event
+
+    return RouteHandler(execute=execute, stream=stream)
+
+
 __all__ = [
+    "build_guided_exercise_route_handler",
     "guided_exercise_skill_service",
     "run_guided_exercise_turn",
     "run_guided_exercise_turn_stream",

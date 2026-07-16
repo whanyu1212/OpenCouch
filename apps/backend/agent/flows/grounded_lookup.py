@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from typing import Any
 
 from agent.flows.sdk_fallback import (
@@ -9,7 +10,15 @@ from agent.flows.sdk_fallback import (
     openai_sdk_fallback_reason,
 )
 from agent.flows.tool_forcing import force_tool_directive
-from agent.runtime.services import TextRuntimeServices
+from agent.runtime.services import TextRuntimeServices, TextRuntimeServicesFactory
+from agent.runtime.text_turn_graph import TextRoutePlan
+from agent.runtime.types import (
+    RouteHandler,
+    TextRuntimeConfig,
+    TextRuntimeStateEvent,
+    TextRuntimeStatusEvent,
+    TextRuntimeStreamEvent,
+)
 from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from agent.tools.grounded import build_grounded_lookup_delta
@@ -111,4 +120,55 @@ def grounded_lookup_input_text_for_state(
     )
 
 
-__all__ = ["grounded_lookup_input_text_for_state", "run_grounded_lookup_turn"]
+def build_grounded_lookup_route_handler(
+    services_factory: TextRuntimeServicesFactory,
+) -> RouteHandler:
+    """Build the grounded-lookup handler."""
+
+    async def execute(
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AgentState:
+        return await run_grounded_lookup_turn(
+            services_factory(),
+            plan.state,
+            query=plan.query,
+            config=config,
+            context=context,
+            streamed=False,
+            session=session,
+        )
+
+    async def stream(
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AsyncIterator[TextRuntimeStreamEvent]:
+        # Grounded lookup has no incremental path. Run it with streamed=True,
+        # then synthesize the finalize and final-state events expected by stream
+        # consumers. This intentionally differs from execute's streamed=False.
+        final_state = await run_grounded_lookup_turn(
+            services_factory(),
+            plan.state,
+            query=plan.query,
+            config=config,
+            context=context,
+            streamed=True,
+            session=session,
+        )
+        yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+        yield TextRuntimeStateEvent(state=final_state)
+
+    return RouteHandler(execute=execute, stream=stream)
+
+
+__all__ = [
+    "build_grounded_lookup_route_handler",
+    "grounded_lookup_input_text_for_state",
+    "run_grounded_lookup_turn",
+]

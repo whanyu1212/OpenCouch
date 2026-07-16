@@ -9,6 +9,7 @@ from agent.flows.guided_exercise.adapters import (
     guided_exercise_response_llm,
 )
 from agent.flows.guided_exercise.executor import (
+    build_guided_exercise_route_handler,
     guided_exercise_skill_service,
     run_guided_exercise_turn,
     run_guided_exercise_turn_stream,
@@ -25,6 +26,7 @@ from agent.flows.guided_exercise.routing import (
 
 __all__ = [
     "FallbackGuidedExerciseResponseLLM",
+    "build_guided_exercise_route_handler",
     "OpenAIGuidedExerciseResponseLLM",
     "_build_guided_exercise_agent",
     "available_exercise_aliases_for_state",

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol
+
+if TYPE_CHECKING:
+    from agent.runtime.text_turn_graph import TextRoutePlan
+    from agent.runtime.workflow_context import WorkflowContext
 
 from agent.models import AgentOutput, Message
 from agent.state import AgentState
@@ -118,3 +122,37 @@ class TextRuntimeStateEvent:
 TextRuntimeStreamEvent = (
     TextRuntimeStatusEvent | TextRuntimeChunkEvent | TextRuntimeStateEvent
 )
+
+
+class ExecuteTextRoute(Protocol):
+    """Execute one planned text route to a final state."""
+
+    async def __call__(
+        self,
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AgentState: ...
+
+
+class StreamTextRoute(Protocol):
+    """Stream events for one planned text route."""
+
+    def __call__(
+        self,
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AsyncIterator[TextRuntimeStreamEvent]: ...
+
+
+@dataclass(frozen=True)
+class RouteHandler:
+    """Paired execute and stream callables for one text route."""
+
+    execute: ExecuteTextRoute
+    stream: StreamTextRoute

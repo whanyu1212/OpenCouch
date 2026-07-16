@@ -10,7 +10,7 @@ from agent.flows.tool_forcing import force_tool_directive
 from agent.observability.timing import elapsed_ms
 from agent.runtime.prompt_utils import chunk_from_sdk_event, final_output_text
 from agent.runtime.session.state import format_recent_history
-from agent.runtime.services import TextRuntimeServices
+from agent.runtime.services import TextRuntimeServices, TextRuntimeServicesFactory
 from agent.specialists.crisis import CRISIS_AGENT_NAME, build_runtime_crisis_agent
 from agent.guardrails.prompts import build_crisis_response_system_prompt
 from agent.specialists.therapeutic_response.prompts import (
@@ -20,8 +20,11 @@ from agent.tools.crisis import (
     build_crisis_resource_lookup_delta,
     crisis_response_delta,
 )
+from agent.runtime.text_turn_graph import TextRoutePlan
 from agent.runtime.types import (
+    RouteHandler,
     TextRuntimeChunkEvent,
+    TextRuntimeConfig,
     TextRuntimeStateEvent,
     TextRuntimeStatusEvent,
     TextRuntimeStreamEvent,
@@ -409,7 +412,50 @@ def _response_style_for_crisis_mode(runtime_mode: str) -> str:
     raise ValueError(f"Unsupported OpenAI crisis runtime mode: {runtime_mode}")
 
 
+def build_crisis_route_handler(
+    services_factory: TextRuntimeServicesFactory,
+) -> RouteHandler:
+    """Build the shared crisis-response and crisis-clarification handler."""
+
+    async def execute(
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AgentState:
+        return await run_crisis_turn(
+            services_factory(),
+            plan.state,
+            config=config,
+            context=context,
+            runtime_mode=plan.runtime_mode,
+            streamed=False,
+            session=session,
+        )
+
+    async def stream(
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AsyncIterator[TextRuntimeStreamEvent]:
+        async for event in run_crisis_turn_stream(
+            services_factory(),
+            plan.state,
+            config=config,
+            context=context,
+            runtime_mode=plan.runtime_mode,
+            session=session,
+        ):
+            yield event
+
+    return RouteHandler(execute=execute, stream=stream)
+
+
 __all__ = [
+    "build_crisis_route_handler",
     "crisis_resource_tool_input_text_for_state",
     "run_crisis_response_llm_turn",
     "run_crisis_turn",
