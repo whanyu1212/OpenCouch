@@ -16,6 +16,13 @@ export function onRealtimeVoiceTurnRecordingSettled(
   );
 }
 
+export function shouldRetryRealtimeVoiceFinalization(
+  finalizationFailed: boolean,
+  hasRetryHandle: boolean
+): boolean {
+  return finalizationFailed && hasRetryHandle;
+}
+
 export async function clearHandleAfterSuccessfulDisconnect(
   disconnect: () => Promise<void>,
   clearHandle: () => void

@@ -39,6 +39,7 @@ type RealtimeVoiceSessionContextValue = {
   session: RealtimeVoiceSessionResponse | null;
   connected: boolean;
   busy: boolean;
+  hasRetryHandle: boolean;
   connect: () => Promise<void>;
   disconnect: (options?: RealtimeVoiceDisconnectOptions) => Promise<void>;
 };
@@ -218,6 +219,7 @@ export function RealtimeVoiceSessionProvider({
   const [status, setStatus] =
     useState<RealtimeVoiceConnectionStatus>("disconnected");
   const [session, setSession] = useState<RealtimeVoiceSessionResponse | null>(null);
+  const [hasRetryHandle, setHasRetryHandle] = useState(false);
 
   const markFinalizationFailed = useCallback(
     (detail: string) => {
@@ -275,6 +277,7 @@ export function RealtimeVoiceSessionProvider({
           () => handle.disconnect({ finalize }),
           () => {
             handleRef.current = null;
+            setHasRetryHandle(false);
             voiceSetRefs({ connection: null });
           }
         );
@@ -382,6 +385,7 @@ export function RealtimeVoiceSessionProvider({
       });
 
       handleRef.current = handle;
+      setHasRetryHandle(true);
       voiceSetRefs({ connection: handle });
     } catch (error) {
       const message =
@@ -421,6 +425,7 @@ export function RealtimeVoiceSessionProvider({
       const handle = handleRef.current;
       if (!handle) return;
       handleRef.current = null;
+      setHasRetryHandle(false);
       voiceSetRefs({ connection: null });
       void handle.disconnect({ finalize: false });
     };
@@ -436,10 +441,11 @@ export function RealtimeVoiceSessionProvider({
         status === "requesting_microphone" ||
         status === "connecting" ||
         status === "finalizing",
+      hasRetryHandle,
       connect,
       disconnect,
     }),
-    [connect, disconnect, session, status]
+    [connect, disconnect, hasRetryHandle, session, status]
   );
 
   return (

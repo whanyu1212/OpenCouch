@@ -13,6 +13,7 @@ import {
   finalizeAfterPendingRealtimeVoiceTurn,
   onRealtimeVoiceTurnRecordingSettled,
   RealtimeVoiceDisconnectCoordinator,
+  shouldRetryRealtimeVoiceFinalization,
 } from "../src/lib/realtime-voice-finalization.ts";
 import {
   buildRealtimeVoiceTurnRecordInput,
@@ -111,6 +112,12 @@ test("deduplicates concurrent disconnect attempts", async () => {
 
   releaseAttempt();
   await first;
+});
+
+test("retries failed finalization only while its handle is available", () => {
+  assert.equal(shouldRetryRealtimeVoiceFinalization(true, true), true);
+  assert.equal(shouldRetryRealtimeVoiceFinalization(true, false), false);
+  assert.equal(shouldRetryRealtimeVoiceFinalization(false, true), false);
 });
 
 test("keeps the disconnect handle when finalization fails", async () => {

@@ -10,6 +10,7 @@ import {
 import { useCommandActions } from "@/lib/command-actions";
 import { useSessionStore, type EndedSessionResult } from "@/lib/session";
 import { useRealtimeVoiceSession } from "@/components/realtime-voice-session-provider";
+import { shouldRetryRealtimeVoiceFinalization } from "@/lib/realtime-voice-finalization";
 import { CouchLogo } from "@/components/logo";
 import { SessionPill } from "@/components/conversation-shell";
 import { SessionFeedback } from "@/components/session-feedback";
@@ -422,6 +423,10 @@ export default function VoicePage() {
     !voiceConnected &&
     voiceFinalization.threadId === threadId &&
     voiceFinalization.status === "completed";
+  const canRetryFailedFinalization = shouldRetryRealtimeVoiceFinalization(
+    finalizationFailedForCurrentThread,
+    realtimeVoice.hasRetryHandle
+  );
   const connectDisabled =
     chatLoading || realtimeConnecting || realtimeFinalizing || isSavingDisconnectedSession;
   const latestTranscript = voiceTranscripts[voiceTranscripts.length - 1] ?? null;
@@ -673,7 +678,9 @@ export default function VoicePage() {
             {finalizationFailedForCurrentThread && (
               <p className="text-[12px] font-mono text-oc-red mb-3 -mt-3">
                 {voiceFinalization.detail ||
-                  "The previous voice session was not saved. Retry saving it before reconnecting."}
+                  (canRetryFailedFinalization
+                    ? "The previous voice session was not saved. Retry saving it before reconnecting."
+                    : "The previous voice session was not saved. You can start a new voice session.")}
               </p>
             )}
             {isSavingDisconnectedSession && (
@@ -691,14 +698,14 @@ export default function VoicePage() {
               type="button"
               className="oc-voice-cta"
               onClick={() =>
-                void (finalizationFailedForCurrentThread ? disconnect() : connect())
+                void (canRetryFailedFinalization ? disconnect() : connect())
               }
               disabled={connectDisabled}
             >
               <IconMic size={16} />
               {isSavingDisconnectedSession
                 ? "Saving memory…"
-                : finalizationFailedForCurrentThread
+                : canRetryFailedFinalization
                   ? "Retry saving session"
                   : chatLoading
                     ? "Replying…"
