@@ -5,8 +5,19 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-_BACKEND_ROOT = Path(__file__).resolve().parents[3]
-_SCAN_ROOTS = ("agent", "api", "opencouch_tui", "tests")
+
+def _find_repo_root() -> Path:
+    """Find the repository root from stable project directory markers."""
+
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "apps" / "backend").is_dir() and (parent / "eval").is_dir():
+            return parent
+    raise RuntimeError("Could not locate the OpenCouch repository root")
+
+
+_REPO_ROOT = _find_repo_root()
+_SCAN_ROOTS = (Path("apps/backend"), Path("eval"), Path("scripts"))
+_IGNORED_DIRECTORY_NAMES = {".git", ".venv", "__pycache__", "node_modules"}
 _LEGACY_KEYWORDS = {
     "auto_finalize_excluded",
     "crisis_log_backend",
@@ -57,11 +68,16 @@ def test_internal_runtime_callers_use_grouped_configuration() -> None:
 
     violations: list[str] = []
     allowed_call_seen = False
-    for root_name in _SCAN_ROOTS:
-        for path in (_BACKEND_ROOT / root_name).rglob("*.py"):
-            if path.name.startswith("._"):
+    for scan_root in _SCAN_ROOTS:
+        root = _REPO_ROOT / scan_root
+        assert root.is_dir(), f"Runtime caller scan root does not exist: {root}"
+        for path in root.rglob("*.py"):
+            relative_path = path.relative_to(_REPO_ROOT)
+            if path.name.startswith("._") or any(
+                part in _IGNORED_DIRECTORY_NAMES for part in relative_path.parts
+            ):
                 continue
-            relative_path = path.relative_to(_BACKEND_ROOT).as_posix()
+            relative_path_text = relative_path.as_posix()
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             for function in ast.walk(tree):
                 if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -79,7 +95,9 @@ def test_internal_runtime_callers_use_grouped_configuration() -> None:
                     if not call.args and not legacy:
                         continue
                     is_allowed = (
-                        relative_path.endswith("test_persistence_backend_selection.py")
+                        relative_path_text.endswith(
+                            "test_persistence_backend_selection.py"
+                        )
                         and function.name == _ALLOWED_FUNCTION
                         and not call.args
                         and legacy == _ALLOWED_KEYWORDS
@@ -88,7 +106,7 @@ def test_internal_runtime_callers_use_grouped_configuration() -> None:
                         allowed_call_seen = True
                     else:
                         violations.append(
-                            f"{relative_path}:{call.lineno} ({function.name}): "
+                            f"{relative_path_text}:{call.lineno} ({function.name}): "
                             f"positional={len(call.args)}, legacy={sorted(legacy)}"
                         )
     assert allowed_call_seen, "Remove the stale runtime migration allowlist"
