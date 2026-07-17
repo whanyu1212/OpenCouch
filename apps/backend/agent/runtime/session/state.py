@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any, cast
 
 from agent.models import CrisisAssessment
@@ -21,6 +22,34 @@ EXERCISE_STATE_FIELDS = (
 
 ACTIVE_FLOWS = {"none", "guided_exercise", "pending_memory_action"}
 ACTIVE_FLOW_ACTIONS = {"none", "start", "continue", "preserve", "resume", "clear"}
+
+
+def parse_iso_timestamp(value: str | None) -> datetime | None:
+    """Parse a stored ISO timestamp, returning ``None`` when invalid."""
+
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def session_has_expired(
+    last_active_at: str | None,
+    *,
+    session_timeout: timedelta,
+    now: datetime | None = None,
+) -> bool:
+    """Return whether an active session crossed its inactivity timeout."""
+
+    last_active = parse_iso_timestamp(last_active_at)
+    if last_active is None:
+        return True
+    if now is not None and (now.tzinfo is None) != (last_active.tzinfo is None):
+        raise ValueError("now timezone awareness must match last_active_at")
+    current_time = now if now is not None else datetime.now(tz=last_active.tzinfo)
+    return current_time - last_active >= session_timeout
 
 
 @dataclass(frozen=True)

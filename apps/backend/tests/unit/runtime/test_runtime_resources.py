@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ import pytest
 from agent.memory.modes import MemoryMode
 from agent.memory.providers.embeddings import NullEmbeddingProvider
 from agent.runtime.resources import RuntimeResources, build_runtime_resources
+from agent.runtime.session.active_session import ActiveSessionManager
 
 
 class _CountingStateStore:
@@ -37,6 +39,19 @@ class _CountingActiveSessionManager:
 
     async def ensure_schema(self) -> None:
         self.ensure_schema_calls += 1
+
+
+def test_active_session_manager_accepts_deprecated_timeout_without_owning_policy() -> (
+    None
+):
+    with pytest.warns(DeprecationWarning, match="deprecated and ignored"):
+        manager = ActiveSessionManager(
+            store=_CountingClosable(),  # type: ignore[arg-type]
+            memory_mode=MemoryMode.LOCAL,
+            session_timeout=timedelta(minutes=30),
+        )
+
+    assert not hasattr(manager, "_session_timeout")
 
 
 class _WarmableEmbeddingProvider(NullEmbeddingProvider):
@@ -166,5 +181,4 @@ def test_build_runtime_resources_requires_database_url_for_postgres_thread_backe
             session_feedback_database_url=None,
             feedback_sqlite_path=":memory:",
             embedding_provider=NullEmbeddingProvider(),
-            session_timeout=30,
         )

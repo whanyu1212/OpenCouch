@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Any, cast
 
 import pytest
@@ -25,7 +26,6 @@ class _FakeActiveSessionManager:
     def __init__(self) -> None:
         self.persisted_ids: list[str] = []
         self.persisted_sessions: dict[str, object] = {}
-        self.expired_threads: set[str] = set()
         self.saved_sessions: list[object] = []
         self.rotation_required: list[str] = []
         self.cleared_mutations: list[tuple[str, str]] = []
@@ -35,10 +35,6 @@ class _FakeActiveSessionManager:
 
     async def load_persisted_active_session(self, thread_id: str) -> object | None:
         return self.persisted_sessions.get(thread_id)
-
-    def session_has_expired(self, session: object) -> bool:
-        thread_id = getattr(session, "thread_id", None)
-        return isinstance(thread_id, str) and thread_id in self.expired_threads
 
     @asynccontextmanager
     async def active_session_mutation(
@@ -100,6 +96,7 @@ def _build_service(
         memory_store=_FakeMemoryStore(),
         embedding_provider=_FakeEmbeddingProvider(),
         thread_llm_clients={},
+        session_timeout=timedelta(minutes=30),
         session_sweep_interval_seconds=1.0,
         auto_finalize_excluded=auto_finalize_excluded,
     )
@@ -440,11 +437,16 @@ async def test_finalize_expired_sessions_once_counts_outcomes() -> None:
         "thread-excluded",
     ]
     manager.persisted_sessions = {
-        "thread-expired": type("Session", (), {"thread_id": "thread-expired"})(),
-        "thread-fresh": type("Session", (), {"thread_id": "thread-fresh"})(),
-        "thread-excluded": type("Session", (), {"thread_id": "thread-excluded"})(),
+        "thread-expired": _active_session(
+            "thread-expired",
+            last_active_at=_session_timestamp(age=timedelta(minutes=31)),
+        ),
+        "thread-fresh": _active_session("thread-fresh"),
+        "thread-excluded": _active_session(
+            "thread-excluded",
+            last_active_at=_session_timestamp(age=timedelta(minutes=31)),
+        ),
     }
-    manager.expired_threads = {"thread-expired", "thread-excluded"}
 
     service = _build_service(
         active_session_manager=manager,
@@ -498,10 +500,14 @@ async def test_finalize_expired_sessions_once_continues_after_thread_failure() -
     manager = _FakeActiveSessionManager()
     manager.persisted_ids = ["thread-fails", "thread-succeeds"]
     manager.persisted_sessions = {
-        "thread-fails": type("Session", (), {"thread_id": "thread-fails"})(),
-        "thread-succeeds": type("Session", (), {"thread_id": "thread-succeeds"})(),
+        "thread-fails": _active_session(
+            "thread-fails", last_active_at=_session_timestamp(age=timedelta(minutes=31))
+        ),
+        "thread-succeeds": _active_session(
+            "thread-succeeds",
+            last_active_at=_session_timestamp(age=timedelta(minutes=31)),
+        ),
     }
-    manager.expired_threads = {"thread-fails", "thread-succeeds"}
 
     service = _build_service(active_session_manager=manager)
     finalized: list[str] = []
@@ -527,11 +533,19 @@ async def test_finalize_expired_sessions_once_continues_after_thread_failure() -
     assert finalized == ["thread-succeeds"]
 
 
-def _active_session(thread_id: str) -> PersistedActiveSessionState:
+def _session_timestamp(*, age: timedelta) -> str:
+    return (datetime.now(timezone.utc) - age).isoformat()
+
+
+def _active_session(
+    thread_id: str,
+    *,
+    last_active_at: str | None = None,
+) -> PersistedActiveSessionState:
     return PersistedActiveSessionState(
         thread_id=thread_id,
         started_at="2026-06-19T00:00:00Z",
-        last_active_at="2026-06-19T00:01:00Z",
+        last_active_at=last_active_at or _session_timestamp(age=timedelta(minutes=29)),
         transcript_start_index=0,
         max_crisis_level=0,
         session_buffer=SessionMemoryBuffer(session_id=thread_id),
@@ -547,7 +561,6 @@ async def test_end_session_unlocked_skips_renewed_session_under_lock() -> None:
     # finalizing a session that is no longer expired.
     manager = _FakeActiveSessionManager()
     manager.persisted_sessions = {"thread-1": _active_session("thread-1")}
-    manager.expired_threads = set()  # session is NOT expired anymore (renewed)
     service = _build_service(active_session_manager=manager)
 
     get_state_calls: list[str] = []
@@ -576,7 +589,6 @@ async def test_end_session_unlocked_finalizes_unconditionally_by_default() -> No
     # does not block unconditional callers.
     manager = _FakeActiveSessionManager()
     manager.persisted_sessions = {"thread-1": _active_session("thread-1")}
-    manager.expired_threads = set()  # not expired, but default must still finalize
     service = _build_service(active_session_manager=manager)
 
     get_state_calls: list[str] = []
