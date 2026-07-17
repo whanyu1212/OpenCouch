@@ -7,12 +7,13 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from agent.memory.providers.embeddings import EmbeddingProvider
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.modes import MemoryMode
 from agent.memory.policy.candidates import SessionMemoryBuffer
+from agent.memory.policy.write import text_contains_memory_control_request
 from agent.memory.store import MemoryStore
 from agent.memory.types import StoredSessionArc
 from agent.runtime.session.active_session import (
@@ -22,6 +23,8 @@ from agent.runtime.session.active_session import (
 from agent.runtime.session.finalization import finalize_session_window
 from agent.runtime.session.lock import ThreadLockManager
 from agent.runtime.session.state import (
+    active_transcript_length,
+    crisis_level_from_state,
     session_continuity_clear_delta,
     slice_state_to_active_session,
     transcript_length,
@@ -35,8 +38,13 @@ from agent.runtime.types import (
     SessionLeaseExpired,
     SessionStatus,
 )
+from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from llm.base import BaseLLMClient
+
+if TYPE_CHECKING:
+    from agent.audit.capture import SafetyEventCaptureResult
+    from agent.runtime.finalization import EnsureSdkTurnRecorded
 
 logger = logging.getLogger(__name__)
 
@@ -226,6 +234,84 @@ class SessionLifecycleService:
         if session is None:
             return
         await self._active_session_manager.save_persisted_active_session(session)
+
+    async def _record_successful_turn(
+        self,
+        thread_id: str,
+        final_state: AgentState,
+        *,
+        session_transcript_soft_limit: int | None,
+    ) -> None:
+        """Persist lifecycle-owned tracking after a successful locked turn."""
+        turn_level = crisis_level_from_state(final_state)
+        self._session_tracker.record_crisis_level(thread_id, turn_level)
+
+        session_buffer = self._session_tracker.session_memory_buffer_for_thread(
+            thread_id
+        )
+        session_buffer.record_approach(final_state.get("therapeutic_approach"))
+
+        diagnostics = final_state.get("diagnostics", {}) or {}
+        transcript = final_state.get("transcript", []) or []
+        latest_user_text = next(
+            (
+                str(message.get("content") or "")
+                for message in reversed(transcript)
+                if isinstance(message, Mapping) and message.get("role") == "user"
+            ),
+            "",
+        )
+        if diagnostics.get("openai_triage_no_clarification_reason") == (
+            "explicit_privacy_control"
+        ) or text_contains_memory_control_request(latest_user_text):
+            session_buffer.held_semantic_candidates.clear()
+            session_buffer.held_procedural_candidates.clear()
+
+        await self.persist_runtime_session_tracking(thread_id)
+
+        if session_transcript_soft_limit is None:
+            return
+        transcript_start_index = self._session_tracker.transcript_start_index(thread_id)
+        active_transcript_len = active_transcript_length(
+            final_state,
+            transcript_start_index=transcript_start_index,
+        )
+        if active_transcript_len >= session_transcript_soft_limit:
+            await self._active_session_manager.set_active_session_rotation_required(
+                thread_id
+            )
+
+    async def complete_successful_turn(
+        self,
+        *,
+        thread_id: str,
+        user_message: str,
+        final_state: AgentState,
+        workflow_context: WorkflowContext,
+        mutation_token: str,
+        ensure_sdk_turn_recorded: EnsureSdkTurnRecorded,
+        session_transcript_soft_limit: int | None,
+        capture_safety_event: bool = True,
+    ) -> SafetyEventCaptureResult:
+        """Complete one successful turn under its thread lock and mutation scope."""
+        from agent.runtime.finalization import finalize_successful_turn
+
+        await self._record_successful_turn(
+            thread_id,
+            final_state,
+            session_transcript_soft_limit=session_transcript_soft_limit,
+        )
+        return await finalize_successful_turn(
+            thread_id=thread_id,
+            user_message=user_message,
+            final_state=final_state,
+            workflow_context=workflow_context,
+            state_store=self._state_store,
+            active_session_manager=self._active_session_manager,
+            mutation_token=mutation_token,
+            ensure_sdk_turn_recorded=ensure_sdk_turn_recorded,
+            capture_safety_event=capture_safety_event,
+        )
 
     async def finalize_expired_sessions_once(
         self,
