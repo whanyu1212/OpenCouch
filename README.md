@@ -235,8 +235,9 @@ Use this when you want each process in its own terminal. The fully manual stack 
 # Terminal 1, from the repo root: Postgres for durable persistence.
 docker compose -f compose.yml up -d postgres --wait
 
-# Terminal 2: API server.
-cd apps/backend && uv run uvicorn main:app --port 8000 --reload
+# Terminal 2: API server using the host-exposed Compose Postgres port.
+cd apps/backend
+OPENCOUCH_PERSISTENCE_BACKEND=postgres OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch uv run uvicorn main:app --port 8000 --reload
 
 # Terminal 3: frontend, from the repo root.
 pnpm install && pnpm --dir apps/web dev
