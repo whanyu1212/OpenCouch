@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -13,11 +13,9 @@ from typing import Any, Literal, cast
 
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend
-from agent.runtime.finalization import finalize_successful_turn
 from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.providers.embeddings import EmbeddingProvider
-from agent.memory.policy.write import text_contains_memory_control_request
 from agent.memory.retrieval.service import load_memory_for_turn
 from agent.feedback.models import (
     FeedbackLabel,
@@ -29,8 +27,6 @@ from agent.memory.types import StoredSessionArc
 from agent.runtime.session import (
     RuntimeSessionTracker,
     ThreadLockManager,
-    active_transcript_length,
-    crisis_level_from_state,
     finalize_session_window,
     transcript_length,
     turn_count_from_state,
@@ -442,6 +438,7 @@ class PersistentAgentRuntime:
             state_store=self._state_store,
             memory_store=self._memory_store,
             active_session_manager=self._active_session_manager,
+            session_lifecycle=self._session_lifecycle,
             lock_for=self._thread_lock_manager.get_lock,
             memory_mode=self.memory_mode,
         )
@@ -565,8 +562,11 @@ class PersistentAgentRuntime:
         *,
         last_active_at: str | None = None,
     ) -> None:
-        """Persist in-process session trackers for one thread."""
+        """Persist session tracking through the lifecycle owner.
 
+        Retained as a runtime compatibility shim for integration and recovery
+        callers; lifecycle policy remains in ``SessionLifecycleService``.
+        """
         await self._session_lifecycle.persist_runtime_session_tracking(
             thread_id,
             session_buffer,
@@ -610,61 +610,6 @@ class PersistentAgentRuntime:
             session_status_unlocked=self._session_status_unlocked,
             end_session_unlocked=self._end_session_unlocked,
         )
-
-    async def _record_successful_turn_tracking(
-        self,
-        thread_id: str,
-        final_state: AgentState,
-        *,
-        session_transcript_soft_limit: int | None,
-    ) -> None:
-        """Persist runtime-owned tracking after a successful turn.
-
-        Args:
-            thread_id: The thread identifier.
-            final_state: The post-turn state.
-            session_transcript_soft_limit: Optional active-session transcript
-                message limit that triggers channel rotation.
-
-        Returns:
-            None.
-        """
-
-        turn_level = crisis_level_from_state(final_state)
-        self._session_tracker.record_crisis_level(thread_id, turn_level)
-
-        turn_approach = final_state.get("therapeutic_approach")
-        session_buffer = self._session_memory_buffer_for_thread(thread_id)
-        session_buffer.record_approach(turn_approach)
-        diagnostics = final_state.get("diagnostics", {}) or {}
-        transcript = final_state.get("transcript", []) or []
-        latest_user_text = next(
-            (
-                str(message.get("content") or "")
-                for message in reversed(transcript)
-                if isinstance(message, Mapping) and message.get("role") == "user"
-            ),
-            "",
-        )
-        if diagnostics.get("openai_triage_no_clarification_reason") == (
-            "explicit_privacy_control"
-        ) or text_contains_memory_control_request(latest_user_text):
-            session_buffer.held_semantic_candidates.clear()
-            session_buffer.held_procedural_candidates.clear()
-
-        await self._persist_runtime_session_tracking(thread_id)
-
-        if session_transcript_soft_limit is None:
-            return
-        transcript_start_index = self._session_tracker.transcript_start_index(thread_id)
-        active_transcript_len = active_transcript_length(
-            final_state,
-            transcript_start_index=transcript_start_index,
-        )
-        if active_transcript_len >= session_transcript_soft_limit:
-            await self._active_session_manager.set_active_session_rotation_required(
-                thread_id
-            )
 
     @property
     def memory_store(self) -> MemoryStore:
@@ -1119,21 +1064,14 @@ class PersistentAgentRuntime:
 
                 stamp_turn_total_ms(final_state, started_at=turn_start)
 
-                await self._record_successful_turn_tracking(
-                    thread_id,
-                    final_state,
-                    session_transcript_soft_limit=session_transcript_soft_limit,
-                )
-
-                await finalize_successful_turn(
+                await self._session_lifecycle.complete_successful_turn(
                     thread_id=thread_id,
                     user_message=message,
                     final_state=final_state,
                     workflow_context=execution.workflow_context,
-                    state_store=self._state_store,
-                    active_session_manager=self._active_session_manager,
                     mutation_token=mutation_token,
                     ensure_sdk_turn_recorded=self._ensure_openai_sdk_turn_recorded,
+                    session_transcript_soft_limit=session_transcript_soft_limit,
                 )
 
                 from agent.runtime.turn import state_to_output
@@ -1388,21 +1326,14 @@ class PersistentAgentRuntime:
 
                 stamp_turn_total_ms(final_state, started_at=turn_start)
 
-                await self._record_successful_turn_tracking(
-                    thread_id,
-                    final_state,
-                    session_transcript_soft_limit=session_transcript_soft_limit,
-                )
-
-                await finalize_successful_turn(
+                await self._session_lifecycle.complete_successful_turn(
                     thread_id=thread_id,
                     user_message=message,
                     final_state=final_state,
                     workflow_context=execution.workflow_context,
-                    state_store=self._state_store,
-                    active_session_manager=self._active_session_manager,
                     mutation_token=mutation_token,
                     ensure_sdk_turn_recorded=self._ensure_openai_sdk_turn_recorded,
+                    session_transcript_soft_limit=session_transcript_soft_limit,
                 )
 
                 ready_output = response_ready_output(

@@ -5,15 +5,20 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from typing import Any, cast
 
 import pytest
 
+import agent.runtime.session.service as lifecycle_module
+from agent.audit.capture import SafetyEventCaptureResult
 from agent.memory.modes import MemoryMode
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.runtime.session import RuntimeSessionTracker, ThreadLockManager
 from agent.runtime.session.active_session import PersistedActiveSessionState
 from agent.runtime.session.service import SessionLifecycleService, SessionSweepResult
 from agent.runtime.types import SessionStatus
+from agent.runtime.workflow_context import WorkflowContext
+from agent.state import AgentState
 
 
 class _FakeActiveSessionManager:
@@ -21,6 +26,9 @@ class _FakeActiveSessionManager:
         self.persisted_ids: list[str] = []
         self.persisted_sessions: dict[str, object] = {}
         self.expired_threads: set[str] = set()
+        self.saved_sessions: list[object] = []
+        self.rotation_required: list[str] = []
+        self.cleared_mutations: list[tuple[str, str]] = []
 
     async def list_persisted_active_session_ids(self) -> list[str]:
         return list(self.persisted_ids)
@@ -41,15 +49,28 @@ class _FakeActiveSessionManager:
     async def delete_persisted_active_session(self, thread_id: str) -> None:
         self.persisted_sessions.pop(thread_id, None)
 
+    async def save_persisted_active_session(self, session: object) -> None:
+        self.saved_sessions.append(session)
+
+    async def set_active_session_rotation_required(self, thread_id: str) -> None:
+        self.rotation_required.append(thread_id)
+
+    async def clear_active_session_mutation(
+        self, thread_id: str, mutation_token: str
+    ) -> None:
+        self.cleared_mutations.append((thread_id, mutation_token))
+
 
 class _FakeStateStore:
     def __init__(self) -> None:
         self.saved: list[tuple[str, dict[str, object]]] = []
         self.should_fail = False
+        self.calls: list[str] = []
 
     async def save_state(self, thread_id: str, state: dict[str, object]) -> None:
         if self.should_fail:
             raise RuntimeError("forced save failure")
+        self.calls.append("save_state")
         self.saved.append((thread_id, state))
 
 
@@ -67,11 +88,12 @@ def _build_service(
     memory_mode: MemoryMode = MemoryMode.LOCAL,
     active_session_manager: _FakeActiveSessionManager | None = None,
     state_store: _FakeStateStore | None = None,
+    session_tracker: RuntimeSessionTracker | None = None,
     auto_finalize_excluded: Callable[[str], bool] | None = None,
 ) -> SessionLifecycleService:
     return SessionLifecycleService(
         memory_mode=memory_mode,
-        session_tracker=RuntimeSessionTracker(),
+        session_tracker=session_tracker or RuntimeSessionTracker(),
         thread_lock_manager=ThreadLockManager(),
         active_session_manager=active_session_manager or _FakeActiveSessionManager(),
         state_store=state_store or _FakeStateStore(),
@@ -160,6 +182,224 @@ def test_prune_delegates_runtime_tracking_state() -> None:
 
     assert service.prune_idle_thread_locks() == 0
     assert service.thread_lock("thread-tracked") is lock
+
+
+@pytest.mark.asyncio
+async def test_record_successful_turn_persists_tracking_and_marks_rotation() -> None:
+    tracker = RuntimeSessionTracker()
+    tracker.start_session(
+        "thread-1",
+        started_at="2026-07-17T00:00:00Z",
+        transcript_start_index=1,
+    )
+    manager = _FakeActiveSessionManager()
+    service = _build_service(
+        session_tracker=tracker,
+        active_session_manager=manager,
+    )
+    final_state = cast(
+        AgentState,
+        {
+            "therapeutic_approach": "cbt",
+            "crisis": {"level": 2},
+            "transcript": [
+                {"role": "assistant", "content": "prior"},
+                {"role": "user", "content": "hello"},
+                {"role": "assistant", "content": "response"},
+            ],
+        },
+    )
+
+    await service._record_successful_turn(
+        "thread-1",
+        final_state,
+        session_transcript_soft_limit=2,
+    )
+
+    persisted = manager.saved_sessions[-1]
+    assert getattr(persisted, "max_crisis_level") == 2
+    assert getattr(persisted, "session_buffer").approach_counts == {"cbt": 1}
+    assert manager.rotation_required == ["thread-1"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "final_state",
+    [
+        {
+            "diagnostics": {
+                "openai_triage_no_clarification_reason": "explicit_privacy_control"
+            },
+            "transcript": [],
+        },
+        {
+            "diagnostics": {},
+            "transcript": [{"role": "user", "content": "please forget that"}],
+        },
+    ],
+)
+async def test_record_successful_turn_clears_held_candidates_for_memory_control(
+    final_state: dict[str, Any],
+) -> None:
+    tracker = RuntimeSessionTracker()
+    tracker.start_session(
+        "thread-1",
+        started_at="2026-07-17T00:00:00Z",
+        transcript_start_index=0,
+    )
+    buffer = tracker.session_memory_buffer_for_thread("thread-1")
+    buffer.held_semantic_candidates.append(cast(Any, object()))
+    buffer.held_procedural_candidates.append(cast(Any, object()))
+    service = _build_service(session_tracker=tracker)
+
+    await service._record_successful_turn(
+        "thread-1",
+        cast(AgentState, final_state),
+        session_transcript_soft_limit=None,
+    )
+
+    assert buffer.held_semantic_candidates == []
+    assert buffer.held_procedural_candidates == []
+
+
+@pytest.mark.asyncio
+async def test_complete_successful_turn_tracks_before_shared_finalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = RuntimeSessionTracker()
+    tracker.start_session(
+        "thread-1",
+        started_at="2026-07-17T00:00:00Z",
+        transcript_start_index=0,
+    )
+    manager = _FakeActiveSessionManager()
+    service = _build_service(
+        session_tracker=tracker,
+        active_session_manager=manager,
+    )
+    state = cast(AgentState, {"transcript": []})
+    context = cast(WorkflowContext, object())
+    calls: list[str] = []
+
+    async def _finalize_successful_turn(**kwargs: Any) -> SafetyEventCaptureResult:
+        assert manager.saved_sessions
+        assert kwargs["thread_id"] == "thread-1"
+        assert kwargs["final_state"] is state
+        assert kwargs["workflow_context"] is context
+        assert kwargs["mutation_token"] == "mutation-token"
+        assert kwargs["capture_safety_event"] is False
+        calls.append("finalize")
+        return SafetyEventCaptureResult(
+            kind="crisis_response",
+            status="skipped",
+            reason="safety_capture_not_required",
+        )
+
+    async def _ensure_sdk_turn_recorded(
+        thread_id: str,
+        *,
+        user_message: str,
+        final_state: AgentState,
+    ) -> None:
+        del thread_id, user_message, final_state
+
+    monkeypatch.setattr(
+        lifecycle_module,
+        "finalize_successful_turn",
+        _finalize_successful_turn,
+    )
+
+    result = await service.complete_successful_turn(
+        thread_id="thread-1",
+        user_message="hello",
+        final_state=state,
+        workflow_context=context,
+        mutation_token="mutation-token",
+        ensure_sdk_turn_recorded=_ensure_sdk_turn_recorded,
+        session_transcript_soft_limit=None,
+        capture_safety_event=False,
+    )
+
+    assert result.status == "skipped"
+    assert calls == ["finalize"]
+
+
+@pytest.mark.asyncio
+async def test_complete_successful_turn_stops_when_tracking_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _build_service()
+    finalized = False
+
+    async def _fail_tracking(*args: Any, **kwargs: Any) -> None:
+        del args, kwargs
+        raise RuntimeError("tracking failed")
+
+    async def _finalize_successful_turn(**kwargs: Any) -> SafetyEventCaptureResult:
+        nonlocal finalized
+        del kwargs
+        finalized = True
+        return SafetyEventCaptureResult(kind="crisis_response", status="captured")
+
+    monkeypatch.setattr(service, "_record_successful_turn", _fail_tracking)
+    monkeypatch.setattr(
+        lifecycle_module,
+        "finalize_successful_turn",
+        _finalize_successful_turn,
+    )
+
+    with pytest.raises(RuntimeError, match="tracking failed"):
+        await service.complete_successful_turn(
+            thread_id="thread-1",
+            user_message="hello",
+            final_state=cast(AgentState, {}),
+            workflow_context=cast(WorkflowContext, object()),
+            mutation_token="mutation-token",
+            ensure_sdk_turn_recorded=cast(Any, object()),
+            session_transcript_soft_limit=None,
+        )
+
+    assert finalized is False
+
+
+@pytest.mark.asyncio
+async def test_complete_successful_turn_propagates_finalization_failure_after_tracking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracker = RuntimeSessionTracker()
+    tracker.start_session(
+        "thread-1",
+        started_at="2026-07-17T00:00:00Z",
+        transcript_start_index=0,
+    )
+    manager = _FakeActiveSessionManager()
+    service = _build_service(
+        session_tracker=tracker,
+        active_session_manager=manager,
+    )
+
+    async def _fail_finalization(**kwargs: Any) -> SafetyEventCaptureResult:
+        del kwargs
+        raise RuntimeError("finalization failed")
+
+    monkeypatch.setattr(
+        lifecycle_module,
+        "finalize_successful_turn",
+        _fail_finalization,
+    )
+
+    with pytest.raises(RuntimeError, match="finalization failed"):
+        await service.complete_successful_turn(
+            thread_id="thread-1",
+            user_message="hello",
+            final_state=cast(AgentState, {"transcript": []}),
+            workflow_context=cast(WorkflowContext, object()),
+            mutation_token="mutation-token",
+            ensure_sdk_turn_recorded=cast(Any, object()),
+            session_transcript_soft_limit=None,
+        )
+
+    assert manager.saved_sessions
 
 
 @pytest.mark.asyncio

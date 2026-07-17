@@ -40,3 +40,4 @@ async def test_voice_facade_shares_thread_lock_with_runtime() -> None:
     )
     async with runtime:
         assert runtime.voice._lock_for("t") is runtime._thread_lock("t")
+        assert runtime.voice._session_lifecycle is runtime._session_lifecycle

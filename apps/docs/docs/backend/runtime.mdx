@@ -94,6 +94,38 @@ $ opencouch --thread-id alice-s2 --user-id alice
 | **Resume after `/end`** | Same thread_id works. Transcript persists. Next turn starts a fresh session and a fresh candidate buffer. |
 | **Incognito** | Runtime-owned durable stores are in-memory. Nothing touches disk. Crisis log + feedback still record (ephemeral). The active-session table is skipped. |
 
+### Lifecycle ownership and lock order
+
+| Concern | Owner |
+|---|---|
+| Per-thread lock creation, identity, affinity, and idle pruning | `ThreadLockManager` |
+| Preparation, expiration, successful-turn tracking, sweeping, and finalization policy | `SessionLifecycleService` |
+| Mutation tokens and persisted active-session mechanics | `ActiveSessionManager` |
+| Durable active-session rows | Active-session store |
+| Public API composition and turn execution | `PersistentAgentRuntime` |
+| Voice state construction and voice-only post-turn diagnostics | `VoiceRuntimeFacade` |
+
+Lifecycle transitions are `absent -> active`, `active -> rotation required`,
+`active -> interrupted`, and `active/interrupted/rotation required -> finalized`.
+Expired sessions are finalized only after expiration is rechecked while holding
+the per-thread lock.
+
+The acquisition order is fixed:
+
+```text
+ThreadLockManager lock
+  -> ActiveSessionManager mutation scope
+    -> state and active-session persistence
+```
+
+Lifecycle service methods do not acquire the per-thread lock themselves. Text,
+streaming, and voice callers acquire it before preparation and successful-turn
+completion. The sweeper performs an unlocked candidate scan, then calls the
+public finalizer, which acquires the lock and rechecks expiration so a renewed
+session is not finalized. Failed completion retains the existing mutation marker
+for recovery, sweeper failures are isolated per thread, and cancellation releases
+the lock through `async with`.
+
 ---
 
 ## The `--user-id` flag

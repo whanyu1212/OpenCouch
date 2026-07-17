@@ -20,7 +20,6 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, cast
 
 from agent.audit.models import CrisisResourceLookupStatus
-from agent.runtime.finalization import finalize_successful_turn
 from agent.memory.modes import MemoryMode
 from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.memory.store import MemoryStore
@@ -34,6 +33,7 @@ from agent.observability.events import (
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.session import turn_count_from_state
 from agent.runtime.session.active_session import ActiveSessionManager
+from agent.runtime.session.service import SessionLifecycleService
 from agent.runtime.state_ops import apply_state_delta
 from agent.runtime.state_store import RuntimeStateStore
 from agent.state import AgentState, resolve_owner_id
@@ -141,6 +141,7 @@ class VoiceRuntimeFacade:
         state_store: RuntimeStateStore,
         memory_store: MemoryStore,
         active_session_manager: ActiveSessionManager,
+        session_lifecycle: SessionLifecycleService,
         lock_for: Callable[[str], asyncio.Lock],
         memory_mode: MemoryMode,
     ) -> None:
@@ -148,6 +149,7 @@ class VoiceRuntimeFacade:
         self._state_store = state_store
         self._memory_store = memory_store
         self._active_session_manager = active_session_manager
+        self._session_lifecycle = session_lifecycle
         self._lock_for = lock_for
         self._memory_mode = memory_mode
         self._post_turn_safety_auditor = VoicePostTurnSafetyAuditor()
@@ -580,11 +582,6 @@ class VoiceRuntimeFacade:
                 thread_id,
                 mutation_kind="voice_turn",
             ) as mutation_token:
-                await self._runtime._record_successful_turn_tracking(
-                    thread_id,
-                    state,
-                    session_transcript_soft_limit=None,
-                )
                 post_turn_context = self._runtime._context_for_turn(
                     thread_id=thread_id,
                     message=state.get("message", ""),
@@ -594,17 +591,16 @@ class VoiceRuntimeFacade:
                     response_llm_client=llm_client,
                     track_session=False,
                 )
-                await finalize_successful_turn(
+                await self._session_lifecycle.complete_successful_turn(
                     thread_id=thread_id,
                     user_message=user_text,
                     final_state=state,
                     workflow_context=post_turn_context,
-                    state_store=self._state_store,
-                    active_session_manager=self._active_session_manager,
                     mutation_token=mutation_token,
                     ensure_sdk_turn_recorded=(
                         self._runtime._ensure_openai_sdk_turn_recorded
                     ),
+                    session_transcript_soft_limit=None,
                     capture_safety_event=transition.metadata.route == "crisis",
                 )
                 trace_event(
