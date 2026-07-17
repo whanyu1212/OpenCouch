@@ -28,6 +28,7 @@ from agent.feedback.models import (
 from agent.memory.types import StoredSessionArc
 from agent.runtime.session import (
     RuntimeSessionTracker,
+    ThreadLockManager,
     active_transcript_length,
     crisis_level_from_state,
     finalize_session_window,
@@ -397,6 +398,7 @@ class PersistentAgentRuntime:
         self._speculative_memory_prefetch = speculative_memory_prefetch
         self._thread_llm_clients: dict[str, BaseLLMClient | None] = {}
         self._session_tracker = RuntimeSessionTracker()
+        self._thread_lock_manager = ThreadLockManager()
 
         self._resources: RuntimeResources = resources
         self.sqlite_path = resources.sqlite_path
@@ -423,6 +425,7 @@ class PersistentAgentRuntime:
         self._session_lifecycle = SessionLifecycleService(
             memory_mode=self.memory_mode,
             session_tracker=self._session_tracker,
+            thread_lock_manager=self._thread_lock_manager,
             active_session_manager=self._active_session_manager,
             state_store=self._state_store,
             memory_store=self._memory_store,
@@ -439,7 +442,7 @@ class PersistentAgentRuntime:
             state_store=self._state_store,
             memory_store=self._memory_store,
             active_session_manager=self._active_session_manager,
-            lock_for=self._session_lifecycle.thread_lock,
+            lock_for=self._thread_lock_manager.get_lock,
             memory_mode=self.memory_mode,
         )
 
@@ -500,7 +503,7 @@ class PersistentAgentRuntime:
             The per-thread asyncio lock.
         """
 
-        return self._session_lifecycle.thread_lock(thread_id)
+        return self._thread_lock_manager.get_lock(thread_id)
 
     async def _list_active_thread_ids(self) -> list[str]:
         """List thread ids with unresolved active sessions.

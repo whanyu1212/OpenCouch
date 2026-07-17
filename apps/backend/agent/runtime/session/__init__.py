@@ -33,6 +33,7 @@ from agent.runtime.session.history import (
     state_without_prompt_history,
     strip_recent_history_from_prompt,
 )
+from agent.runtime.session.lock import ThreadLockManager
 from agent.runtime.session.state import (
     EXERCISE_STATE_FIELDS,
     active_transcript_length,
@@ -52,6 +53,7 @@ __all__ = [
     "SessionLifecycleService",
     "SessionSweepResult",
     "SessionConversation",
+    "ThreadLockManager",
     "active_transcript_length",
     "content_to_text",
     "crisis_level_from_state",

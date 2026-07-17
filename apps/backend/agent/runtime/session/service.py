@@ -20,6 +20,7 @@ from agent.runtime.session.active_session import (
     PersistedActiveSessionState,
 )
 from agent.runtime.session.finalization import finalize_session_window
+from agent.runtime.session.lock import ThreadLockManager
 from agent.runtime.session.state import (
     session_continuity_clear_delta,
     slice_state_to_active_session,
@@ -70,6 +71,7 @@ class SessionLifecycleService:
         *,
         memory_mode: MemoryMode,
         session_tracker: RuntimeSessionTracker,
+        thread_lock_manager: ThreadLockManager,
         active_session_manager: ActiveSessionManager,
         state_store: RuntimeStateStore,
         memory_store: MemoryStore,
@@ -81,6 +83,7 @@ class SessionLifecycleService:
         """Initialize the session lifecycle service."""
         self._memory_mode = memory_mode
         self._session_tracker = session_tracker
+        self._thread_lock_manager = thread_lock_manager
         self._active_session_manager = active_session_manager
         self._state_store = state_store
         self._memory_store = memory_store
@@ -89,68 +92,16 @@ class SessionLifecycleService:
         self._session_sweep_interval_seconds = session_sweep_interval_seconds
         self._auto_finalize_excluded = auto_finalize_excluded
         self._session_sweeper_task: asyncio.Task[None] | None = None
-        self._thread_locks: dict[str, asyncio.Lock] = {}
 
     def thread_lock(self, thread_id: str) -> asyncio.Lock:
         """Return the in-process lock for one thread."""
-        lock = self._thread_locks.get(thread_id)
-        if lock is None:
-            lock = asyncio.Lock()
-            self._thread_locks[thread_id] = lock
-        return lock
-
-    @staticmethod
-    def _lock_has_live_waiters(lock: asyncio.Lock) -> bool:
-        """Return whether a lock still has a woken-or-pending waiter.
-
-        ``asyncio.Lock.release`` clears ``_locked`` and wakes the first waiter's
-        future, but it does NOT remove that waiter from ``_waiters`` — the waiter
-        removes itself in ``acquire``'s ``finally`` only when it RESUMES, on a
-        later loop turn (verified against CPython ``asyncio/locks.py``). So during
-        the release-handoff window ``lock.locked()`` is ``False`` while a live
-        waiter is still queued; pruning then would delete a lock the woken waiter
-        is about to re-acquire, splitting the per-thread mutex. We mirror
-        ``acquire``'s own liveness test and ignore cancelled futures (a cancelled
-        waiter lingers in ``_waiters`` until its ``finally`` runs; over-retaining
-        it for one sweep is safe, under-retaining is not).
-        """
-
-        waiters = lock._waiters  # noqa: SLF001 - CPython internal mirrored from acquire()/release()
-        if not waiters:
-            return False
-        return any(not waiter.cancelled() for waiter in waiters)
+        return self._thread_lock_manager.get_lock(thread_id)
 
     def prune_idle_thread_locks(self) -> int:
-        """Drop in-process locks for threads with no live or pending work.
-
-        ``thread_lock`` is insert-only, so the lock map otherwise grows one
-        ``asyncio.Lock`` per distinct thread id for the process lifetime. A lock
-        is kept while it is held (``locked()``), has any live waiter — including
-        the release-handoff window where ``locked()`` is ``False`` but a woken
-        waiter has not yet resumed (see :meth:`_lock_has_live_waiters`) — or the
-        thread still has in-process tracking. Only a lock that is none of those
-        is deleted; a later turn re-creates it and re-hydrates tracking via
-        ``prepare_session_for_turn``.
-
-        The per-entry check and delete run with no ``await`` between them, so a
-        concurrent ``thread_lock`` call cannot interleave and observe a
-        mid-prune state. Correctness is therefore local: it does not depend on
-        the sweep cadence and is safe to call from any context.
-
-        Returns:
-            int: Number of idle lock entries pruned.
-        """
-
-        pruned = 0
-        for thread_id, lock in list(self._thread_locks.items()):
-            if (
-                not lock.locked()
-                and not self._lock_has_live_waiters(lock)
-                and not self._session_tracker.has_tracking(thread_id)
-            ):
-                del self._thread_locks[thread_id]
-                pruned += 1
-        return pruned
+        """Drop in-process locks for threads with no live or tracked work."""
+        return self._thread_lock_manager.prune_idle_locks(
+            is_tracked=self._session_tracker.has_tracking
+        )
 
     def start_background_tasks(
         self,
