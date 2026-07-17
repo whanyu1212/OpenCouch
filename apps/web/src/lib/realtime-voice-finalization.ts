@@ -5,3 +5,13 @@ export async function finalizeAfterPendingRealtimeVoiceTurn<T>(
   await pendingRecording;
   return finalize();
 }
+
+export function onRealtimeVoiceTurnRecordingSettled(
+  pendingRecording: Promise<void>,
+  onSettled: (recording: Promise<void>) => void
+): void {
+  void pendingRecording.then(
+    () => onSettled(pendingRecording),
+    () => onSettled(pendingRecording)
+  );
+}

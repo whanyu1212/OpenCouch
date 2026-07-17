@@ -8,7 +8,10 @@ import {
   shouldRecordRealtimeVoiceToolCall,
   shouldWaitForRealtimeVoiceTranscriptEvidence,
 } from "../src/lib/realtime-voice-tool-flow.ts";
-import { finalizeAfterPendingRealtimeVoiceTurn } from "../src/lib/realtime-voice-finalization.ts";
+import {
+  finalizeAfterPendingRealtimeVoiceTurn,
+  onRealtimeVoiceTurnRecordingSettled,
+} from "../src/lib/realtime-voice-finalization.ts";
 import { buildRealtimeVoiceTurnRecordInput } from "../src/lib/realtime-voice-turn-record.ts";
 
 test("waits for pending turn recording before finalizing", async () => {
@@ -47,6 +50,19 @@ test("does not finalize when pending turn recording fails", async () => {
     recordingError
   );
   assert.equal(finalized, false);
+});
+
+test("clears rejected turn recordings so they can be retried", async () => {
+  const recording = Promise.reject(new Error("transient recording failure"));
+  let settledRecording = null;
+
+  onRealtimeVoiceTurnRecordingSettled(recording, (settled) => {
+    settledRecording = settled;
+  });
+  await assert.rejects(recording);
+  await Promise.resolve();
+
+  assert.equal(settledRecording, recording);
 });
 
 test("builds voice turn record input from completed tool calls only", () => {

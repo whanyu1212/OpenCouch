@@ -20,7 +20,10 @@ import {
   type RealtimeTranscriptUpdate,
 } from "./realtime-voice-events";
 import { buildRealtimeVoiceTurnRecordInput } from "./realtime-voice-turn-record";
-import { finalizeAfterPendingRealtimeVoiceTurn } from "./realtime-voice-finalization";
+import {
+  finalizeAfterPendingRealtimeVoiceTurn,
+  onRealtimeVoiceTurnRecordingSettled,
+} from "./realtime-voice-finalization";
 import {
   readRealtimeVoiceUserQuote,
   realtimeVoiceEvidenceMatchesUserQuote,
@@ -132,7 +135,7 @@ export async function connectRealtimeVoiceSession(
       finalized = true;
       setStatus("finalizing");
       const response = await finalizeAfterPendingRealtimeVoiceTurn(
-        pendingTurnRecording,
+        maybeRecordTurn(),
         () => endRealtimeVoiceSession(options.threadId, options.memoryMode)
       );
       options.onEnded?.(response);
@@ -313,7 +316,7 @@ export async function connectRealtimeVoiceSession(
       return Promise.resolve();
     }
 
-    pendingTurnRecording = (async () => {
+    const recording = (async () => {
       while (pendingUserText.trim() && pendingAssistantText.trim()) {
         const userText = pendingUserText;
         const assistantText = pendingAssistantText;
@@ -344,9 +347,14 @@ export async function connectRealtimeVoiceSession(
           throw normalized;
         }
       }
-      pendingTurnRecording = null;
     })();
-    return pendingTurnRecording;
+    pendingTurnRecording = recording;
+    onRealtimeVoiceTurnRecordingSettled(recording, (settledRecording) => {
+      if (pendingTurnRecording === settledRecording) {
+        pendingTurnRecording = null;
+      }
+    });
+    return recording;
   }
 
   async function executeToolCall(call: RealtimeFunctionCall): Promise<void> {
