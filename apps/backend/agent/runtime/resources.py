@@ -113,9 +113,8 @@ def build_runtime_resources(
     session_feedback_database_url: str | None,
     feedback_sqlite_path: str | Path,
     embedding_provider: EmbeddingProvider | None,
-    session_timeout,
 ) -> RuntimeResources:
-    """Build the runtime-owned stores, backends, and providers."""
+    """Build internal runtime-owned stores, backends, and providers."""
     is_incognito = memory_mode == MemoryMode.INCOGNITO
     resolved_sqlite = ":memory:" if is_incognito else sqlite_path
     resolved_runtime_sqlite_path = (
@@ -193,7 +192,6 @@ def build_runtime_resources(
     active_session_manager = ActiveSessionManager(
         store=active_session_store,
         memory_mode=memory_mode,
-        session_timeout=session_timeout,
     )
 
     return RuntimeResources(

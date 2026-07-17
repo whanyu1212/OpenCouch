@@ -356,7 +356,6 @@ class PersistentAgentRuntime:
             session_feedback_database_url=session_feedback_database_url,
             feedback_sqlite_path=feedback_sqlite_path,
             embedding_provider=embedding_provider,
-            session_timeout=session_timeout,
         )
         self._wire_runtime_resources(
             resources=runtime_resources,
@@ -414,6 +413,7 @@ class PersistentAgentRuntime:
             active_session_manager=self._active_session_manager,
             session_tracker=self._session_tracker,
             memory_mode=self.memory_mode,
+            session_timeout=self._session_timeout,
         )
         self._sdk_bridge = SdkSessionBridge(
             text_session_store=self._text_session_store,
@@ -427,6 +427,7 @@ class PersistentAgentRuntime:
             memory_store=self._memory_store,
             embedding_provider=self._embedding_provider,
             thread_llm_clients=self._thread_llm_clients,
+            session_timeout=self._session_timeout,
             session_sweep_interval_seconds=self._session_sweep_interval_seconds,
             auto_finalize_excluded=self._auto_finalize_excluded,
         )

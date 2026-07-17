@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from datetime import timedelta
 from typing import Any
 
 from agent.memory.modes import MemoryMode
@@ -21,6 +22,7 @@ from agent.models import Message, MessageRole
 from agent.runtime.session import RuntimeSessionTracker
 from agent.runtime.session.active_session import PersistedActiveSessionState
 from agent.runtime.session.history import messages_from_transcript
+from agent.runtime.session.state import session_has_expired
 from agent.runtime.session.manager import ActiveSessionManager
 from agent.runtime.session_store import TextSessionStore
 from agent.runtime.state_store import RuntimeStateStore
@@ -85,6 +87,7 @@ class ThreadStateReader:
         active_session_manager: ActiveSessionManager,
         session_tracker: RuntimeSessionTracker,
         memory_mode: MemoryMode,
+        session_timeout: timedelta,
     ) -> None:
         """Initialize the reader with the stores and trackers it reads.
 
@@ -94,6 +97,7 @@ class ThreadStateReader:
             active_session_manager: Active-session liveness manager.
             session_tracker: In-process per-thread session tracker.
             memory_mode: Persistence tier for the runtime.
+            session_timeout: Inactivity window before a session expires.
         """
 
         self._state_store = state_store
@@ -101,6 +105,7 @@ class ThreadStateReader:
         self._active_session_manager = active_session_manager
         self._session_tracker = session_tracker
         self._memory_mode = memory_mode
+        self._session_timeout = session_timeout
 
     async def get_state(self, thread_id: str) -> AgentState | None:
         """Load the latest persisted state snapshot for a thread.
@@ -192,7 +197,10 @@ class ThreadStateReader:
             )
             return SessionStatus.INTERRUPTED
 
-        if self._active_session_manager.session_has_expired(session):
+        if session_has_expired(
+            session.last_active_at,
+            session_timeout=self._session_timeout,
+        ):
             return SessionStatus.EXPIRED_UNFINALIZED
 
         return SessionStatus.ACTIVE

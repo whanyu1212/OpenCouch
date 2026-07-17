@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 from uuid import uuid4
 
 from agent.runtime.session.store import ActiveSessionStore
@@ -82,24 +83,6 @@ class PersistedActiveSessionRow:
     finalize_required_reason: str | None
 
 
-def parse_iso_timestamp(value: str | None) -> datetime | None:
-    """Parse a stored ISO timestamp.
-
-    Args:
-        value: The timestamp string to parse.
-
-    Returns:
-        A parsed ``datetime`` or ``None`` when parsing fails.
-    """
-
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
 class ActiveSessionManager:
     """Own persistent active-session row storage and mutation coordination."""
 
@@ -108,19 +91,25 @@ class ActiveSessionManager:
         *,
         store: ActiveSessionStore,
         memory_mode: MemoryMode,
-        session_timeout: timedelta,
+        session_timeout: timedelta | None = None,
     ) -> None:
         """Initialize the active-session manager.
 
         Args:
             store: Persistence store for active-session rows.
             memory_mode: Persistence tier for the runtime.
-            session_timeout: Inactivity window before an active session expires.
+            session_timeout: Deprecated compatibility argument; ignored.
         """
 
+        if session_timeout is not None:
+            warnings.warn(
+                "ActiveSessionManager session_timeout is deprecated and ignored; "
+                "expiration policy belongs to SessionLifecycleService",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         self._store = store
         self._memory_mode = memory_mode
-        self._session_timeout = session_timeout
         self._active_mutation_tokens: set[str] = set()
         self._runtime_instance_id = uuid4().hex
 
@@ -346,20 +335,3 @@ class ActiveSessionManager:
             return
 
         await self._store.delete_session(thread_id)
-
-    def session_has_expired(self, session: PersistedActiveSessionState) -> bool:
-        """Return whether an active session crossed the inactivity timeout.
-
-        Args:
-            session: The persisted active-session record.
-
-        Returns:
-            ``True`` when the session is expired.
-        """
-
-        last_active = parse_iso_timestamp(session.last_active_at)
-        if last_active is None:
-            return True
-        return (
-            datetime.now(tz=last_active.tzinfo) - last_active >= self._session_timeout
-        )

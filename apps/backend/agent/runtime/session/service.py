@@ -7,6 +7,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from agent.memory.providers.embeddings import EmbeddingProvider
@@ -26,6 +27,7 @@ from agent.runtime.session.state import (
     active_transcript_length,
     crisis_level_from_state,
     session_continuity_clear_delta,
+    session_has_expired,
     slice_state_to_active_session,
     transcript_length,
 )
@@ -85,6 +87,7 @@ class SessionLifecycleService:
         memory_store: MemoryStore,
         embedding_provider: EmbeddingProvider,
         thread_llm_clients: dict[str, BaseLLMClient | None],
+        session_timeout: timedelta,
         session_sweep_interval_seconds: float,
         auto_finalize_excluded: Callable[[str], bool] | None = None,
     ) -> None:
@@ -97,6 +100,7 @@ class SessionLifecycleService:
         self._memory_store = memory_store
         self._embedding_provider = embedding_provider
         self._thread_llm_clients = thread_llm_clients
+        self._session_timeout = session_timeout
         self._session_sweep_interval_seconds = session_sweep_interval_seconds
         self._auto_finalize_excluded = auto_finalize_excluded
         self._session_sweeper_task: asyncio.Task[None] | None = None
@@ -353,7 +357,10 @@ class SessionLifecycleService:
                 if persisted is None:
                     result.skipped_missing += 1
                     continue
-                if not self._active_session_manager.session_has_expired(persisted):
+                if not session_has_expired(
+                    persisted.last_active_at,
+                    session_timeout=self._session_timeout,
+                ):
                     result.skipped_not_expired += 1
                     continue
                 logger.info(
@@ -424,7 +431,10 @@ class SessionLifecycleService:
         )
         if persisted is not None:
             self._session_tracker.hydrate(persisted)
-            if self._active_session_manager.session_has_expired(persisted):
+            if session_has_expired(
+                persisted.last_active_at,
+                session_timeout=self._session_timeout,
+            ):
                 logger.info(
                     "session timeout reached for thread %s; ending prior session before new turn",
                     thread_id,
@@ -490,7 +500,10 @@ class SessionLifecycleService:
         if (
             finalize_only_if_expired
             and persisted is not None
-            and not self._active_session_manager.session_has_expired(persisted)
+            and not session_has_expired(
+                persisted.last_active_at,
+                session_timeout=self._session_timeout,
+            )
         ):
             logger.debug(
                 "session for thread %s was renewed since the sweep check; "
