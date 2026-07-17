@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 
-import agent.runtime.session.service as lifecycle_module
+import agent.runtime.finalization as finalization_module
 from agent.audit.capture import SafetyEventCaptureResult
 from agent.memory.modes import MemoryMode
 from agent.memory.policy.candidates import SessionMemoryBuffer
@@ -304,7 +304,7 @@ async def test_complete_successful_turn_tracks_before_shared_finalization(
         del thread_id, user_message, final_state
 
     monkeypatch.setattr(
-        lifecycle_module,
+        finalization_module,
         "finalize_successful_turn",
         _finalize_successful_turn,
     )
@@ -343,7 +343,7 @@ async def test_complete_successful_turn_stops_when_tracking_fails(
 
     monkeypatch.setattr(service, "_record_successful_turn", _fail_tracking)
     monkeypatch.setattr(
-        lifecycle_module,
+        finalization_module,
         "finalize_successful_turn",
         _finalize_successful_turn,
     )
@@ -383,7 +383,7 @@ async def test_complete_successful_turn_propagates_finalization_failure_after_tr
         raise RuntimeError("finalization failed")
 
     monkeypatch.setattr(
-        lifecycle_module,
+        finalization_module,
         "finalize_successful_turn",
         _fail_finalization,
     )

@@ -7,7 +7,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from agent.memory.providers.embeddings import EmbeddingProvider
 from agent.memory.hashing import iso_now as _iso_now
@@ -16,11 +16,6 @@ from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.policy.write import text_contains_memory_control_request
 from agent.memory.store import MemoryStore
 from agent.memory.types import StoredSessionArc
-from agent.runtime.finalization import (
-    EnsureSdkTurnRecorded,
-    SafetyEventCaptureResult,
-    finalize_successful_turn,
-)
 from agent.runtime.session.active_session import (
     ActiveSessionManager,
     PersistedActiveSessionState,
@@ -46,6 +41,10 @@ from agent.runtime.types import (
 from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from llm.base import BaseLLMClient
+
+if TYPE_CHECKING:
+    from agent.audit.capture import SafetyEventCaptureResult
+    from agent.runtime.finalization import EnsureSdkTurnRecorded
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +294,8 @@ class SessionLifecycleService:
         capture_safety_event: bool = True,
     ) -> SafetyEventCaptureResult:
         """Complete one successful turn under its thread lock and mutation scope."""
+        from agent.runtime.finalization import finalize_successful_turn
+
         await self._record_successful_turn(
             thread_id,
             final_state,
