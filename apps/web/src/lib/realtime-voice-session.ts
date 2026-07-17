@@ -23,6 +23,7 @@ import { buildRealtimeVoiceTurnRecordInput } from "./realtime-voice-turn-record"
 import {
   finalizeAfterPendingRealtimeVoiceTurn,
   onRealtimeVoiceTurnRecordingSettled,
+  RealtimeVoiceDisconnectCoordinator,
 } from "./realtime-voice-finalization";
 import {
   readRealtimeVoiceUserQuote,
@@ -95,8 +96,9 @@ export async function connectRealtimeVoiceSession(
   let peerConnection: RTCPeerConnection | null = null;
   let dataChannel: RTCDataChannel | null = null;
   let mediaStream: MediaStream | null = null;
-  let disconnected = false;
   let finalized = false;
+  let disconnecting = false;
+  const disconnectCoordinator = new RealtimeVoiceDisconnectCoordinator();
 
   const handledCallIds = new Set<string>();
   const transcriptLog: TranscriptLogEntry[] = [];
@@ -115,36 +117,39 @@ export async function connectRealtimeVoiceSession(
   const markTransportClosed = () => {
     options.onAgentSpeaking?.(false);
     options.onReadyToSpeak?.(false);
-    if (!disconnected) {
+    if (!disconnecting) {
       setStatus("disconnected");
     }
   };
 
-  const disconnect = async ({
+  const disconnect = ({
     finalize = true,
-  }: { finalize?: boolean } = {}): Promise<void> => {
-    if (disconnected) return;
-    disconnected = true;
+  }: { finalize?: boolean } = {}): Promise<void> =>
+    disconnectCoordinator.disconnect(async () => {
+      disconnecting = true;
+      try {
+        dataChannel?.close();
+        peerConnection?.close();
+        mediaStream?.getTracks().forEach((track) => track.stop());
+        options.audioElement.srcObject = null;
 
-    dataChannel?.close();
-    peerConnection?.close();
-    mediaStream?.getTracks().forEach((track) => track.stop());
-    options.audioElement.srcObject = null;
+        if (finalize && !finalized) {
+          setStatus("finalizing");
+          const response = await finalizeAfterPendingRealtimeVoiceTurn(
+            maybeRecordTurn(),
+            () => endRealtimeVoiceSession(options.threadId, options.memoryMode)
+          );
+          finalized = true;
+          options.onEnded?.(response);
+        }
 
-    if (finalize && !finalized) {
-      finalized = true;
-      setStatus("finalizing");
-      const response = await finalizeAfterPendingRealtimeVoiceTurn(
-        maybeRecordTurn(),
-        () => endRealtimeVoiceSession(options.threadId, options.memoryMode)
-      );
-      options.onEnded?.(response);
-    }
-
-    options.onAgentSpeaking?.(false);
-    options.onReadyToSpeak?.(false);
-    setStatus("disconnected");
-  };
+        options.onAgentSpeaking?.(false);
+        options.onReadyToSpeak?.(false);
+        setStatus("disconnected");
+      } finally {
+        disconnecting = false;
+      }
+    });
 
   try {
     setStatus("requesting_session");

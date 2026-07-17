@@ -15,3 +15,29 @@ export function onRealtimeVoiceTurnRecordingSettled(
     () => onSettled(pendingRecording)
   );
 }
+
+export class RealtimeVoiceDisconnectCoordinator {
+  private disconnected = false;
+  private pendingAttempt: Promise<void> | null = null;
+
+  disconnect(attempt: () => Promise<void>): Promise<void> {
+    if (this.disconnected) return Promise.resolve();
+    if (this.pendingAttempt) return this.pendingAttempt;
+
+    const pendingAttempt = attempt().then(() => {
+      this.disconnected = true;
+    });
+    this.pendingAttempt = pendingAttempt;
+    void pendingAttempt.then(
+      () => this.clearAttempt(pendingAttempt),
+      () => this.clearAttempt(pendingAttempt)
+    );
+    return pendingAttempt;
+  }
+
+  private clearAttempt(attempt: Promise<void>): void {
+    if (this.pendingAttempt === attempt) {
+      this.pendingAttempt = null;
+    }
+  }
+}

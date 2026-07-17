@@ -11,6 +11,7 @@ import {
 import {
   finalizeAfterPendingRealtimeVoiceTurn,
   onRealtimeVoiceTurnRecordingSettled,
+  RealtimeVoiceDisconnectCoordinator,
 } from "../src/lib/realtime-voice-finalization.ts";
 import { buildRealtimeVoiceTurnRecordInput } from "../src/lib/realtime-voice-turn-record.ts";
 
@@ -63,6 +64,49 @@ test("clears rejected turn recordings so they can be retried", async () => {
   await Promise.resolve();
 
   assert.equal(settledRecording, recording);
+});
+
+test("retries disconnect after a failed recording attempt", async () => {
+  const coordinator = new RealtimeVoiceDisconnectCoordinator();
+  let attempts = 0;
+
+  await assert.rejects(
+    coordinator.disconnect(async () => {
+      attempts += 1;
+      throw new Error("recording failed");
+    }),
+    /recording failed/
+  );
+  await Promise.resolve();
+
+  await coordinator.disconnect(async () => {
+    attempts += 1;
+  });
+  await coordinator.disconnect(async () => {
+    attempts += 1;
+  });
+
+  assert.equal(attempts, 2);
+});
+
+test("deduplicates concurrent disconnect attempts", async () => {
+  const coordinator = new RealtimeVoiceDisconnectCoordinator();
+  let releaseAttempt;
+  let attempts = 0;
+  const attempt = () => {
+    attempts += 1;
+    return new Promise((resolve) => {
+      releaseAttempt = resolve;
+    });
+  };
+
+  const first = coordinator.disconnect(attempt);
+  const second = coordinator.disconnect(attempt);
+  assert.equal(first, second);
+  assert.equal(attempts, 1);
+
+  releaseAttempt();
+  await first;
 });
 
 test("builds voice turn record input from completed tool calls only", () => {
