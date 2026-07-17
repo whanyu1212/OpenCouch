@@ -16,6 +16,14 @@ export function onRealtimeVoiceTurnRecordingSettled(
   );
 }
 
+export async function clearHandleAfterSuccessfulDisconnect(
+  disconnect: () => Promise<void>,
+  clearHandle: () => void
+): Promise<void> {
+  await disconnect();
+  clearHandle();
+}
+
 export class RealtimeVoiceDisconnectCoordinator {
   private disconnected = false;
   private pendingAttempt: Promise<void> | null = null;

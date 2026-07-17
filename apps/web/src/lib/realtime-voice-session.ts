@@ -19,7 +19,10 @@ import {
   type RealtimeFunctionCall,
   type RealtimeTranscriptUpdate,
 } from "./realtime-voice-events";
-import { buildRealtimeVoiceTurnRecordInput } from "./realtime-voice-turn-record";
+import {
+  buildRealtimeVoiceTurnRecordInput,
+  restoreRealtimeVoiceRecordedToolCalls,
+} from "./realtime-voice-turn-record";
 import {
   finalizeAfterPendingRealtimeVoiceTurn,
   onRealtimeVoiceTurnRecordingSettled,
@@ -328,8 +331,8 @@ export async function connectRealtimeVoiceSession(
         pendingUserText = "";
         pendingAssistantText = "";
 
+        const toolCalls = completedToolCalls.splice(0);
         try {
-          const toolCalls = completedToolCalls.splice(0);
           const response = await recordRealtimeVoiceTurn(
             buildRealtimeVoiceTurnRecordInput({
               threadId: options.threadId,
@@ -344,6 +347,11 @@ export async function connectRealtimeVoiceSession(
         } catch (error) {
           pendingUserText = userText;
           pendingAssistantText = assistantText;
+          completedToolCalls.splice(
+            0,
+            completedToolCalls.length,
+            ...restoreRealtimeVoiceRecordedToolCalls(toolCalls, completedToolCalls)
+          );
           const normalized =
             error instanceof Error
               ? error

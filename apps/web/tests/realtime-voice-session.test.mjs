@@ -9,11 +9,15 @@ import {
   shouldWaitForRealtimeVoiceTranscriptEvidence,
 } from "../src/lib/realtime-voice-tool-flow.ts";
 import {
+  clearHandleAfterSuccessfulDisconnect,
   finalizeAfterPendingRealtimeVoiceTurn,
   onRealtimeVoiceTurnRecordingSettled,
   RealtimeVoiceDisconnectCoordinator,
 } from "../src/lib/realtime-voice-finalization.ts";
-import { buildRealtimeVoiceTurnRecordInput } from "../src/lib/realtime-voice-turn-record.ts";
+import {
+  buildRealtimeVoiceTurnRecordInput,
+  restoreRealtimeVoiceRecordedToolCalls,
+} from "../src/lib/realtime-voice-turn-record.ts";
 
 test("waits for pending turn recording before finalizing", async () => {
   let releaseRecording;
@@ -107,6 +111,38 @@ test("deduplicates concurrent disconnect attempts", async () => {
 
   releaseAttempt();
   await first;
+});
+
+test("keeps the disconnect handle when finalization fails", async () => {
+  let cleared = false;
+
+  await assert.rejects(
+    clearHandleAfterSuccessfulDisconnect(
+      async () => {
+        throw new Error("finalization failed");
+      },
+      () => {
+        cleared = true;
+      }
+    ),
+    /finalization failed/
+  );
+  assert.equal(cleared, false);
+
+  await clearHandleAfterSuccessfulDisconnect(async () => undefined, () => {
+    cleared = true;
+  });
+  assert.equal(cleared, true);
+});
+
+test("restores failed turn tool calls ahead of newer queued calls", () => {
+  const failedTurn = [{ tool_name: "answer_grounded_lookup", status: "completed" }];
+  const queued = [{ tool_name: "lookup_crisis_resources", status: "completed" }];
+
+  assert.deepEqual(restoreRealtimeVoiceRecordedToolCalls(failedTurn, queued), [
+    ...failedTurn,
+    ...queued,
+  ]);
 });
 
 test("builds voice turn record input from completed tool calls only", () => {

@@ -10,6 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { clearHandleAfterSuccessfulDisconnect } from "@/lib/realtime-voice-finalization";
 import {
   connectRealtimeVoiceSession,
   type RealtimeVoiceConnectionStatus,
@@ -270,7 +271,13 @@ export function RealtimeVoiceSessionProvider({
       }
 
       try {
-        await handle.disconnect({ finalize });
+        await clearHandleAfterSuccessfulDisconnect(
+          () => handle.disconnect({ finalize }),
+          () => {
+            handleRef.current = null;
+            voiceSetRefs({ connection: null });
+          }
+        );
       } catch (error) {
         const message =
           error instanceof Error
@@ -281,8 +288,6 @@ export function RealtimeVoiceSessionProvider({
           markFinalizationFailed(message);
         }
       } finally {
-        handleRef.current = null;
-        voiceSetRefs({ connection: null });
         setVoiceConnected(false);
         setVoiceAgentSpeaking(false);
         setVoiceReadyToSpeak(false);

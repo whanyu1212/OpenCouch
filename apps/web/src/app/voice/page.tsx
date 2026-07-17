@@ -555,7 +555,7 @@ export default function VoicePage() {
       return "Memory consolidation finished. The saved summary and extracted memories are now available for future persistent sessions.";
     }
     if (finalizationFailedForCurrentThread) {
-      return "Memory consolidation did not finish cleanly. You can reconnect, but the latest voice session may not be saved yet.";
+      return "Memory consolidation did not finish cleanly. Retry saving the latest voice session before reconnecting.";
     }
     return null;
   })();
@@ -673,7 +673,7 @@ export default function VoicePage() {
             {finalizationFailedForCurrentThread && (
               <p className="text-[12px] font-mono text-oc-red mb-3 -mt-3">
                 {voiceFinalization.detail ||
-                  "The previous voice session may still be finishing its memory save. You can reconnect, but the latest memory may not be ready yet."}
+                  "The previous voice session was not saved. Retry saving it before reconnecting."}
               </p>
             )}
             {isSavingDisconnectedSession && (
@@ -690,17 +690,21 @@ export default function VoicePage() {
             <button
               type="button"
               className="oc-voice-cta"
-              onClick={() => void connect()}
+              onClick={() =>
+                void (finalizationFailedForCurrentThread ? disconnect() : connect())
+              }
               disabled={connectDisabled}
             >
               <IconMic size={16} />
               {isSavingDisconnectedSession
                 ? "Saving memory…"
-                : chatLoading
-                  ? "Replying…"
-                  : realtimeConnecting
-                  ? "Connecting…"
-                  : "Connect voice"}
+                : finalizationFailedForCurrentThread
+                  ? "Retry saving session"
+                  : chatLoading
+                    ? "Replying…"
+                    : realtimeConnecting
+                      ? "Connecting…"
+                      : "Connect voice"}
             </button>
             {isSavingDisconnectedSession && (
               <button
