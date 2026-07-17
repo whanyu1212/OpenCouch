@@ -10,7 +10,7 @@ import pytest
 
 from agent.memory.modes import MemoryMode
 from agent.memory.policy.candidates import SessionMemoryBuffer
-from agent.runtime.session import RuntimeSessionTracker
+from agent.runtime.session import RuntimeSessionTracker, ThreadLockManager
 from agent.runtime.session.active_session import PersistedActiveSessionState
 from agent.runtime.session.service import SessionLifecycleService, SessionSweepResult
 from agent.runtime.types import SessionStatus
@@ -72,6 +72,7 @@ def _build_service(
     return SessionLifecycleService(
         memory_mode=memory_mode,
         session_tracker=RuntimeSessionTracker(),
+        thread_lock_manager=ThreadLockManager(),
         active_session_manager=active_session_manager or _FakeActiveSessionManager(),
         state_store=state_store or _FakeStateStore(),
         memory_store=_FakeMemoryStore(),
@@ -148,39 +149,8 @@ async def test_clear_session_continuity_in_state_suppresses_errors_when_requeste
     )
 
 
-def test_thread_lock_returns_same_lock_for_same_thread() -> None:
+def test_prune_delegates_runtime_tracking_state() -> None:
     service = _build_service()
-
-    assert service.thread_lock("thread-a") is service.thread_lock("thread-a")
-    assert service.thread_lock("thread-a") is not service.thread_lock("thread-b")
-
-
-def test_prune_removes_idle_lock() -> None:
-    service = _build_service()
-
-    service.thread_lock("thread-idle")
-    assert "thread-idle" in service._thread_locks  # noqa: SLF001
-
-    assert service.prune_idle_thread_locks() == 1
-    assert "thread-idle" not in service._thread_locks  # noqa: SLF001
-
-
-@pytest.mark.asyncio
-async def test_prune_keeps_held_lock() -> None:
-    service = _build_service()
-
-    lock = service.thread_lock("thread-held")
-    await lock.acquire()
-    try:
-        assert service.prune_idle_thread_locks() == 0
-        assert service.thread_lock("thread-held") is lock
-    finally:
-        lock.release()
-
-
-def test_prune_keeps_tracked_thread() -> None:
-    service = _build_service()
-
     service._session_tracker.start_session(  # noqa: SLF001
         "thread-tracked",
         started_at="2026-05-25T00:00:00Z",
@@ -190,115 +160,6 @@ def test_prune_keeps_tracked_thread() -> None:
 
     assert service.prune_idle_thread_locks() == 0
     assert service.thread_lock("thread-tracked") is lock
-
-
-def test_prune_preserves_identity_for_live_work() -> None:
-    service = _build_service()
-
-    # A held lock must survive a prune as the SAME object so a concurrent
-    # acquirer never gets a different lock for the same thread.
-    held = service.thread_lock("thread-live")
-    tracked = service.thread_lock("thread-tracked")
-    service._session_tracker.start_session(  # noqa: SLF001
-        "thread-tracked",
-        started_at="2026-05-25T00:00:00Z",
-        transcript_start_index=0,
-    )
-
-    async def _hold_and_prune() -> None:
-        await held.acquire()
-        try:
-            service.prune_idle_thread_locks()
-        finally:
-            held.release()
-
-    asyncio.run(_hold_and_prune())
-
-    assert service.thread_lock("thread-live") is held
-    assert service.thread_lock("thread-tracked") is tracked
-
-
-@pytest.mark.asyncio
-async def test_prune_keeps_lock_with_pending_waiter() -> None:
-    service = _build_service()
-
-    lock = service.thread_lock("thread-waited")
-    await lock.acquire()
-
-    async def _waiter() -> None:
-        async with service.thread_lock("thread-waited"):
-            pass
-
-    task = asyncio.create_task(_waiter())
-    try:
-        await asyncio.sleep(0)  # let the waiter park at `await fut`
-        # Held with a queued waiter: must not be pruned, identity preserved.
-        assert service.prune_idle_thread_locks() == 0
-        assert service.thread_lock("thread-waited") is lock
-    finally:
-        lock.release()
-        await task
-
-
-@pytest.mark.asyncio
-async def test_prune_keeps_lock_in_release_handoff_window() -> None:
-    # The headline P1 case: release() wakes the next waiter but leaves
-    # locked()==False until the waiter resumes on a LATER loop turn. A prune in
-    # that window must NOT delete the lock the woken waiter is about to acquire.
-    service = _build_service()
-
-    lock = service.thread_lock("thread-handoff")
-    await lock.acquire()
-
-    async def _waiter() -> None:
-        async with service.thread_lock("thread-handoff"):
-            pass
-
-    task = asyncio.create_task(_waiter())
-    await asyncio.sleep(0)  # enqueue the waiter
-    assert lock.locked() is True
-
-    lock.release()  # wake the waiter; do NOT yield to the loop yet
-    # In the handoff window, synchronously (no await since release):
-    assert lock.locked() is False
-    assert service.prune_idle_thread_locks() == 0  # fix keeps it
-    assert service.thread_lock("thread-handoff") is lock  # same object
-
-    await asyncio.sleep(0)  # let the woken waiter resume + finish
-    await task
-
-
-@pytest.mark.asyncio
-async def test_prune_ignores_cancelled_waiter() -> None:
-    service = _build_service()
-
-    lock = service.thread_lock("thread-cancelled")
-    await lock.acquire()
-
-    async def _waiter() -> None:
-        async with service.thread_lock("thread-cancelled"):
-            pass
-
-    task = asyncio.create_task(_waiter())
-    await asyncio.sleep(0)  # enqueue the waiter
-    task.cancel()
-    with pytest.raises(asyncio.CancelledError):
-        await task
-    lock.release()
-    await asyncio.sleep(0)  # let the cancellation propagate / finally run
-
-    # A lock whose only waiter was cancelled is genuinely idle once unlocked.
-    assert service.prune_idle_thread_locks() == 1
-    assert "thread-cancelled" not in service._thread_locks  # noqa: SLF001
-
-
-def test_lock_has_live_waiters_matches_cpython_contract() -> None:
-    # Guard the CPython internal the prune relies on: a fresh lock has no live
-    # waiters. If a future runtime changes the _waiters contract, fail here
-    # rather than silently in production.
-    lock = asyncio.Lock()
-    assert hasattr(lock, "_waiters")
-    assert SessionLifecycleService._lock_has_live_waiters(lock) is False  # noqa: SLF001
 
 
 @pytest.mark.asyncio
