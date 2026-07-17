@@ -22,10 +22,6 @@ from agent.flows.crisis import (
     crisis_resource_tool_input_text_for_state as crisis_resource_prompt_for_state_path,
 )
 from agent.flows.guided_exercise import prepare_guided_exercise_route
-from agent.flows.therapeutic import (
-    operational_context_for_prompt as operational_context_for_prompt_path,
-    therapeutic_agent_prompt_for_state as therapeutic_agent_prompt_for_state_path,
-)
 from agent.guardrails import run_crisis_input_guardrail
 from agent.runtime.memory_context import build_turn_memory_delta
 from agent.runtime.state_ops import (
@@ -57,6 +53,9 @@ from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState, AgentTurnInputState
 from agent.specialists.therapeutic_response.prompts import (
     build_therapeutic_response_prompt,
+)
+from agent.specialists.therapeutic_response.runtime_prompts import (
+    build_therapeutic_agent_input,
 )
 from llm.openai_client import DEFAULT_OPENAI_MODEL
 
@@ -452,14 +451,10 @@ class OpenAITextRuntime:
         *,
         include_recent_history: bool = True,
     ) -> str:
-        prompt_state = (
-            state if include_recent_history else state_without_prompt_history(state)
+        return build_therapeutic_agent_input(
+            state,
+            include_recent_history=include_recent_history,
         )
-        prompt = therapeutic_agent_prompt_for_state_path(prompt_state)
-        operational_context = operational_context_for_prompt_path(state)
-        if not operational_context:
-            return prompt
-        return f"{prompt}\n\n{operational_context}"
 
     def _crisis_input_text_for_state(
         self,

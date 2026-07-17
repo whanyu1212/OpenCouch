@@ -5,9 +5,10 @@ from __future__ import annotations
 from hashlib import sha256
 from typing import cast
 
-from agent.flows.therapeutic import (
+from agent.specialists.therapeutic_response.runtime_prompts import (
+    build_therapeutic_agent_input,
+    build_therapeutic_response_llm_request,
     operational_context_for_prompt,
-    therapeutic_response_llm_request_for_state,
 )
 from agent.runtime.openai_text_runtime import OpenAITextRuntime
 from agent.specialists.therapeutic_response.prompts import (
@@ -125,6 +126,21 @@ def test_sdk_agent_input_contract_without_history() -> None:
     assert "Operational context:" in prompt
 
 
+def test_sdk_agent_input_keeps_full_state_operational_context_without_history() -> None:
+    state = _dynamic_state()
+    state["transcript"] = [{"role": "user", "content": "old private turn"}]
+
+    prompt = build_therapeutic_agent_input(
+        state,
+        include_recent_history=False,
+    )
+
+    assert "old private turn" not in prompt
+    assert "Recent conversation:\n(no prior history)" in prompt
+    assert "Target preview: presentation anxiety note" in prompt
+    assert "Triage tentatively suggested 'grounded_lookup'" in prompt
+
+
 def test_operational_context_omits_inactive_dynamic_sections() -> None:
     context = operational_context_for_prompt(_prompt_state())
 
@@ -149,11 +165,13 @@ def test_operational_context_contract() -> None:
 
 def test_response_llm_request_contracts_history_boundary() -> None:
     # Both structured fallback and streaming response-LLM paths call this same
-    # request builder; session history policy is exactly None versus non-None.
+    # request builder after orchestration resolves the prompt-history policy.
     state = _prompt_state()
-    with_history = therapeutic_response_llm_request_for_state(state, session=None)
-    without_history = therapeutic_response_llm_request_for_state(
-        state, session=object()
+    with_history = build_therapeutic_response_llm_request(
+        state, include_recent_history=True
+    )
+    without_history = build_therapeutic_response_llm_request(
+        state, include_recent_history=False
     )
 
     assert len(with_history.prompt) == 591
@@ -174,7 +192,9 @@ def test_response_llm_request_contracts_history_boundary() -> None:
 
 
 def test_response_llm_system_instruction_contract() -> None:
-    request = therapeutic_response_llm_request_for_state(_prompt_state(), session=None)
+    request = build_therapeutic_response_llm_request(
+        _prompt_state(), include_recent_history=True
+    )
 
     assert len(request.system_instruction) == 43475
     assert (
@@ -189,7 +209,9 @@ def test_response_llm_system_instruction_contract() -> None:
 
 
 def test_response_llm_safety_clarification_contract() -> None:
-    request = therapeutic_response_llm_request_for_state(_dynamic_state(), session=None)
+    request = build_therapeutic_response_llm_request(
+        _dynamic_state(), include_recent_history=True
+    )
 
     assert len(request.system_instruction) == 26501
     assert (
