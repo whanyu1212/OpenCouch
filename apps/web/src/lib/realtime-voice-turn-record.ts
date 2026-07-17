@@ -3,6 +3,13 @@ import type {
   VoiceMemoryMode,
 } from "./api";
 
+export function restoreRealtimeVoiceRecordedToolCalls(
+  failedTurnToolCalls: RealtimeVoiceRecordedToolCall[],
+  queuedToolCalls: RealtimeVoiceRecordedToolCall[]
+): RealtimeVoiceRecordedToolCall[] {
+  return [...failedTurnToolCalls, ...queuedToolCalls];
+}
+
 export function buildRealtimeVoiceTurnRecordInput({
   threadId,
   userId,

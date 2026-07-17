@@ -7,9 +7,14 @@ from typing import Any
 
 import pytest
 
+from agent.memory.modes import MemoryMode
 from agent.models import ChunkEvent, DoneEvent, ResponseReadyEvent
 import agent.runtime.openai_text_runtime as openai_runtime
-from agent.runtime import PersistentAgentRuntime
+from agent.runtime import (
+    PersistentAgentRuntime,
+    RuntimeBehaviorConfig,
+    RuntimePersistenceConfig,
+)
 from agent.specialists.crisis import CRISIS_AGENT_NAME
 from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
 from agent.runtime.session.history import messages_from_sdk_session_items
@@ -17,7 +22,11 @@ from tests.support.openai_text import (
     FakeOpenAISDKRunner,
     ScriptedOpenAITextRouteLLM,
 )
-from tests.support.persistence import FakeCrossRestartLLM, runtime_storage_paths
+from tests.support.persistence import (
+    FakeCrossRestartLLM,
+    runtime_persistence_config,
+    runtime_storage_paths,
+)
 from tests.support.safety_capture import (
     CRISIS_RESPONSE_TEXT,
     CRISIS_USER_TEXT,
@@ -145,6 +154,7 @@ async def test_persistent_runtime_openai_safe_turn_persists_transcript(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-1",
@@ -193,7 +203,10 @@ async def test_persistent_runtime_disabled_sdk_session_keeps_legacy_prompt_histo
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        text_session_backend="disabled",
+        persistence_config=RuntimePersistenceConfig(
+            text_session_backend="disabled",
+            allow_legacy_sqlite=True,
+        ),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-legacy-history",
@@ -229,6 +242,7 @@ async def test_persistent_runtime_seeds_empty_openai_sdk_session_from_state(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-seed-sdk",
@@ -275,6 +289,7 @@ async def test_persistent_runtime_stream_seeds_empty_openai_sdk_session_from_sta
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-stream-seed-sdk",
@@ -335,6 +350,7 @@ async def test_persistent_runtime_openai_memory_status_uses_sdk_tool(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-memory-control",
@@ -376,6 +392,7 @@ async def test_persistent_runtime_openai_grounded_lookup_uses_sdk_tool(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-grounded",
@@ -424,6 +441,7 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-crisis",
@@ -476,7 +494,10 @@ async def test_crisis_capture_runs_before_sdk_history_failure(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        finalize_active_sessions_on_close=False,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
     ) as runtime:
 
         async def fail_sdk_history(*args: Any, **kwargs: Any) -> None:
@@ -524,7 +545,10 @@ async def test_streaming_context_is_created_after_mutation_setup(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        finalize_active_sessions_on_close=False,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
     ) as runtime:
         context_calls = 0
         original_context_for_turn = runtime._context_for_turn
@@ -565,6 +589,7 @@ async def test_persistent_runtime_openai_crisis_uses_sdk_session_not_prompt_hist
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-crisis-boundary",
@@ -605,6 +630,7 @@ async def test_persistent_runtime_crisis_response_llm_omits_sdk_session_history(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-crisis-response-llm-boundary",
@@ -643,6 +669,7 @@ async def test_persistent_runtime_openai_level_one_uses_crisis_clarification(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-crisis-check",
@@ -684,6 +711,7 @@ async def test_persistent_runtime_openai_low_confidence_triage_uses_clarifying_r
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         result = await runtime.run_turn(
             thread_id="thread-low-confidence-triage",
@@ -728,6 +756,7 @@ async def test_persistent_runtime_openai_retriage_sees_prior_low_confidence_cont
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-low-confidence-loop",
@@ -776,6 +805,7 @@ async def test_persistent_runtime_openai_low_confidence_triage_preserves_pending
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-low-confidence-memory",
@@ -855,6 +885,7 @@ async def test_persistent_runtime_openai_low_confidence_triage_preserves_active_
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         first = await runtime.run_turn(
             thread_id="thread-low-confidence-exercise",
@@ -933,6 +964,7 @@ async def test_persistent_runtime_openai_streaming_surface(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         events = [
             event
@@ -972,6 +1004,7 @@ async def test_streaming_crisis_capture_precedes_response_ready(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         stream = runtime.run_turn_stream(
             thread_id="thread-stream-crisis-ready",
@@ -1010,6 +1043,7 @@ async def test_persistent_runtime_openai_memory_control_streaming_surface(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         events = [
             event
@@ -1050,6 +1084,7 @@ async def test_persistent_runtime_guided_response_llm_omits_sdk_session_history(
 
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-guided-response-llm-boundary",

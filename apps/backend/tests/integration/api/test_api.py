@@ -31,11 +31,14 @@ from agent.memory.operations.procedural_profile import (
     aput_procedural_profile,
 )
 from agent.models import AgentOutput, CrisisAssessment, ResponseCategory
-from agent.runtime import PersistentAgentRuntime
+from agent.runtime import PersistentAgentRuntime, RuntimeDependencies
 from api.models import ApiMemoryMode
 from llm.base import BaseLLMClient, StructuredResponseT
 from tests.support.api_selection import runtime_selection
-from tests.support.persistence import in_memory_runtime_storage_paths
+from tests.support.persistence import (
+    in_memory_runtime_storage_paths,
+    runtime_persistence_config,
+)
 
 
 class _FakeResponseTierLLM(BaseLLMClient):
@@ -191,7 +194,7 @@ async def runtime():
     llm = _FakeAPILLM()
     rt = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        default_llm_client=llm,
+        dependencies=RuntimeDependencies(default_llm_client=llm),
     )
     async with rt:
         yield rt
@@ -1078,8 +1081,8 @@ class TestThreads:
 
         runtime = PersistentAgentRuntime(
             storage_paths=in_memory_runtime_storage_paths(),
-            memory_mode=MemoryMode.INCOGNITO,
-            default_llm_client=_FakeAPILLM(),
+            persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
+            dependencies=RuntimeDependencies(default_llm_client=_FakeAPILLM()),
         )
         app = FastAPI()
         app.include_router(api_router, prefix="/api")

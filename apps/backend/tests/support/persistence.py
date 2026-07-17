@@ -16,7 +16,8 @@ from agent.memory.types import (
     SessionArc,
     SummarizationResult,
 )
-from agent.runtime import RuntimeStoragePaths
+from agent.memory.modes import MemoryMode
+from agent.runtime import RuntimePersistenceConfig, RuntimeStoragePaths
 from llm.base import BaseLLMClient, StructuredResponseT
 
 _POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
@@ -235,6 +236,15 @@ class FakeCrossRestartLLM(BaseLLMClient):
         if "Active flow: pending_memory_action" in prompt:
             return "clear"
         return "none"
+
+
+def runtime_persistence_config(memory_mode: MemoryMode) -> RuntimePersistenceConfig:
+    """Return grouped persistence settings for a runtime test."""
+
+    return RuntimePersistenceConfig(
+        memory_mode=memory_mode,
+        allow_legacy_sqlite=memory_mode is MemoryMode.LOCAL,
+    )
 
 
 def runtime_storage_paths(tmp_path: Path) -> RuntimeStoragePaths:

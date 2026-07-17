@@ -14,7 +14,10 @@ import pytest
 
 from agent.memory.modes import MemoryMode
 from agent.runtime import PersistentAgentRuntime
-from tests.support.persistence import in_memory_runtime_storage_paths
+from tests.support.persistence import (
+    in_memory_runtime_storage_paths,
+    runtime_persistence_config,
+)
 from agent.voice import runtime_facade as facade_module
 from agent.voice.runtime_facade import VoiceRuntimeFacade
 
@@ -119,7 +122,7 @@ async def test_voice_bootstrap_real_runtime_uses_thread_id_without_user_utteranc
 
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
-        memory_mode=MemoryMode.LOCAL,
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
     async with runtime:
         result = await runtime.voice.voice_session_memory_context(

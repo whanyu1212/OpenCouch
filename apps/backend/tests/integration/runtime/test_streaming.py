@@ -42,7 +42,7 @@ from agent.models import (
     StatusEvent,
     StreamEvent,
 )
-from agent.runtime import PersistentAgentRuntime
+from agent.runtime import PersistentAgentRuntime, RuntimePersistenceConfig
 from llm.base import BaseLLMClient, StructuredResponseT
 from tests.support.persistence import in_memory_runtime_storage_paths
 
@@ -185,7 +185,9 @@ class TestRunTurnStreamStages:
 
         async with PersistentAgentRuntime(
             storage_paths=in_memory_runtime_storage_paths(),
-            text_session_backend="disabled",
+            persistence_config=RuntimePersistenceConfig(
+                text_session_backend="disabled"
+            ),
         ) as runtime:
             events: list[StreamEvent] = []
             async for event in runtime.run_turn_stream(

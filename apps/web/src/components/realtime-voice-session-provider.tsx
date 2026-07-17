@@ -10,6 +10,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { clearHandleAfterSuccessfulDisconnect } from "@/lib/realtime-voice-finalization";
 import {
   connectRealtimeVoiceSession,
   type RealtimeVoiceConnectionStatus,
@@ -38,6 +39,7 @@ type RealtimeVoiceSessionContextValue = {
   session: RealtimeVoiceSessionResponse | null;
   connected: boolean;
   busy: boolean;
+  hasRetryHandle: boolean;
   connect: () => Promise<void>;
   disconnect: (options?: RealtimeVoiceDisconnectOptions) => Promise<void>;
 };
@@ -217,6 +219,7 @@ export function RealtimeVoiceSessionProvider({
   const [status, setStatus] =
     useState<RealtimeVoiceConnectionStatus>("disconnected");
   const [session, setSession] = useState<RealtimeVoiceSessionResponse | null>(null);
+  const [hasRetryHandle, setHasRetryHandle] = useState(false);
 
   const markFinalizationFailed = useCallback(
     (detail: string) => {
@@ -270,7 +273,14 @@ export function RealtimeVoiceSessionProvider({
       }
 
       try {
-        await handle.disconnect({ finalize });
+        await clearHandleAfterSuccessfulDisconnect(
+          () => handle.disconnect({ finalize }),
+          () => {
+            handleRef.current = null;
+            setHasRetryHandle(false);
+            voiceSetRefs({ connection: null });
+          }
+        );
       } catch (error) {
         const message =
           error instanceof Error
@@ -281,8 +291,6 @@ export function RealtimeVoiceSessionProvider({
           markFinalizationFailed(message);
         }
       } finally {
-        handleRef.current = null;
-        voiceSetRefs({ connection: null });
         setVoiceConnected(false);
         setVoiceAgentSpeaking(false);
         setVoiceReadyToSpeak(false);
@@ -377,6 +385,7 @@ export function RealtimeVoiceSessionProvider({
       });
 
       handleRef.current = handle;
+      setHasRetryHandle(true);
       voiceSetRefs({ connection: handle });
     } catch (error) {
       const message =
@@ -416,6 +425,7 @@ export function RealtimeVoiceSessionProvider({
       const handle = handleRef.current;
       if (!handle) return;
       handleRef.current = null;
+      setHasRetryHandle(false);
       voiceSetRefs({ connection: null });
       void handle.disconnect({ finalize: false });
     };
@@ -431,10 +441,11 @@ export function RealtimeVoiceSessionProvider({
         status === "requesting_microphone" ||
         status === "connecting" ||
         status === "finalizing",
+      hasRetryHandle,
       connect,
       disconnect,
     }),
-    [connect, disconnect, session, status]
+    [connect, disconnect, hasRetryHandle, session, status]
   );
 
   return (
