@@ -199,8 +199,11 @@ docker compose -f compose.yml --profile web up --build
 # Follow API logs after background start.
 docker compose -f compose.yml logs -f api
 
-# Stop the stack.
+# Stop the stack while preserving local Postgres data.
 docker compose -f compose.yml down
+
+# Stop the stack and permanently delete the local Postgres data volume.
+docker compose -f compose.yml down -v
 ```
 
 Compose reads `.env`, `.env.local`, `apps/backend/.env`, and `apps/backend/.env.local`. Inside Compose, the API uses the in-network Postgres URL automatically and reuses it for all Postgres-backed stores. Compose exposes the API on `8080`; manual backend development usually uses `8000`.
@@ -229,11 +232,24 @@ The old text CLI/REPL entrypoints are deprecated; use the TUI commands above for
 Use this when you want each process in its own terminal. The fully manual stack uses port `8000` for the API because the web client defaults to `http://localhost:8000/api`.
 
 ```bash
-# Terminal 1: API server.
+# Terminal 1, from the repo root: Postgres for durable persistence.
+docker compose -f compose.yml up -d postgres --wait
+
+# Terminal 2: API server.
 cd apps/backend && uv run uvicorn main:app --port 8000 --reload
 
-# Terminal 2: frontend, from the repo root.
+# Terminal 3: frontend, from the repo root.
 pnpm install && pnpm --dir apps/web dev
+```
+
+When finished, stop the manual processes with `Ctrl+C`, then tear down Postgres:
+
+```bash
+# Preserve local Postgres data for the next run.
+docker compose -f compose.yml down
+
+# Or permanently delete the local Postgres data volume.
+docker compose -f compose.yml down -v
 ```
 
 For the recommended mixed workflow, run Postgres + API in Compose and run the frontend locally:
