@@ -34,15 +34,15 @@ The inventory was produced by searching application runtime, audit, feedback, an
 No new generic persistence test framework is needed.
 
 - Runtime state: `apps/backend/tests/integration/persistence/test_runtime_state_store_contract.py`
-  - missing records, serialized state round trips, overwrite/recency, and idempotent deletion across SQLite and Postgres.
+  - missing records, serialized state round trips, overwrite/recency, and idempotent deletion against Postgres.
 - Active sessions: `apps/backend/tests/integration/persistence/test_active_session_store_contract.py`
-  - payload round trips, listing, mutation tokens, recovery markers, rotation, and deletion across SQLite and Postgres.
+  - payload round trips, listing, mutation tokens, recovery markers, rotation, and deletion against Postgres.
 - Crisis audit and feedback: `apps/backend/tests/integration/storage/test_kv_store_parity.py`
-  - JSON round trips, cross-connection visibility, schema idempotency, failed-connect recovery, ordering, counts, purge semantics, close behavior, duplicate keys, and feedback ordering.
-- Postgres audit: `apps/backend/tests/integration/postgres/test_postgres_crisis_log.py`
-  - durable reopen behavior and full crisis-record fields.
-- Postgres feedback: `apps/backend/tests/integration/postgres/test_postgres_session_feedback.py`
-  - durable reopen behavior, ordering, modality, turn counts, and purge boundaries.
+  - temporary SQLite/Postgres migration coverage for JSON round trips, failed-connect recovery, ordering, counts, purge semantics, close behavior, and duplicate keys.
+- Postgres audit: `apps/backend/tests/integration/persistence/test_crisis_log_store_contract.py`
+  - complete records, date buckets, ordering, counts, concurrency, cross-connection visibility, durable reopen and purge behavior, malformed timestamps, duplicate ids, and close behavior.
+- Postgres feedback: `apps/backend/tests/integration/persistence/test_session_feedback_store_contract.py`
+  - complete records, session isolation, ordering, counts, concurrency, durable reopen and purge behavior, schema constraints, duplicate ids, malformed timestamps, and close behavior.
 
 ## Test migration classification
 
@@ -52,11 +52,36 @@ Use in-memory adapters or fakes when tests assert orchestration, route selection
 
 Cross-backend parity tests are temporary migration guards. Delete their SQLite cases when the corresponding SQLite implementation is removed; keep the supported Postgres contracts.
 
+## Migration guidance
+
+Application callers should cut over all durable runtime-owned stores to one Postgres database before the legacy audit and feedback backends are removed. The API and TUI use these environment variables:
+
+```bash
+OPENCOUCH_PERSISTENCE_BACKEND=postgres
+OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch
+```
+
+Direct runtime callers should use the grouped configuration boundary:
+
+```python
+RuntimePersistenceConfig.for_shared_backend(
+    memory_mode=MemoryMode.LOCAL,
+    persistence_backend="postgres",
+    database_url=database_url,
+)
+```
+
+Existing `crisis.sqlite3` and `session_feedback.sqlite3` rows are not copied automatically. Back up or archive those files before switching configuration, and retain them as read-only legacy records if historical audit or feedback data must remain available. Do not point a Postgres runtime at the old paths and assume an import occurs.
+
+After cutover, exercise one audit write and one feedback write in the target environment, then verify both through their supported read/count paths. Remove `OPENCOUCH_ALLOW_LEGACY_SQLITE` only after every caller uses Postgres. The opt-in is temporary and will stop enabling durable crisis-audit and session-feedback SQLite when their implementations are removed.
+
+This cutover does not migrate `SqliteMemoryStore` or OpenAI SDK text-session SQLite. Those remain separate decisions under #233 and the SDK-session follow-up.
+
 ## Planned removal order
 
 1. ~~Migrate runtime-state and active-session SQL-sensitive tests to Postgres contracts.~~ Completed.
 2. ~~Remove durable SQLite runtime-state and active-session implementations together because both inherit `thread_persistence_backend`.~~ Completed; incognito now uses explicit non-durable adapters.
-3. Migrate audit and feedback durable tests; retain in-memory/null implementations.
+3. ~~Migrate audit and feedback durable tests; retain in-memory/null implementations.~~ Completed; Postgres contracts are authoritative and legacy parity remains until implementation removal.
 4. Remove durable SQLite audit and feedback backends and selection paths.
 5. Remove obsolete application-store SQLite configuration, factories, migrations, exports, and compatibility tests.
 6. Decide OpenAI SDK text-session SQLite separately.

@@ -22,12 +22,13 @@ from tests.support.persistence import (
     truncate_postgres_tables,
 )
 
-# Shared Postgres tables across the runtime state store, active-session store,
-# and memory store — the three that accumulate rows across tests.
+# Shared Postgres tables that accumulate rows across persistence tests.
 _SHARED_POSTGRES_TABLES = (
     "opencouch_thread_state",
     "opencouch_active_sessions",
     "memory_records",
+    "crisis_log",
+    "session_feedback",
 )
 
 
