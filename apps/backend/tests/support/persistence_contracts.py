@@ -7,6 +7,10 @@ from contextlib import asynccontextmanager
 
 import pytest
 
+from agent.audit.crisis_log import CrisisLogBackend
+from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
+from agent.feedback.postgres_session_feedback import PostgresSessionFeedbackBackend
+from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.runtime.session.active_session import (
     ActiveSessionStore,
     PostgresActiveSessionStore,
@@ -52,3 +56,27 @@ async def open_postgres_active_session_store() -> AsyncIterator[ActiveSessionSto
         yield store
     finally:
         await store.aclose()
+
+
+@asynccontextmanager
+async def open_postgres_crisis_log_backend() -> AsyncIterator[CrisisLogBackend]:
+    """Open the supported durable crisis-log backend for a contract test."""
+
+    backend = PostgresCrisisLogBackend(require_postgres_database_url())
+    try:
+        yield backend
+    finally:
+        await backend.aclose()
+
+
+@asynccontextmanager
+async def open_postgres_session_feedback_backend() -> AsyncIterator[
+    SessionFeedbackBackend
+]:
+    """Open the supported durable feedback backend for a contract test."""
+
+    backend = PostgresSessionFeedbackBackend(require_postgres_database_url())
+    try:
+        yield backend
+    finally:
+        await backend.aclose()

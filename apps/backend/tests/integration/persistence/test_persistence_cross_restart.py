@@ -42,6 +42,7 @@ from uuid import uuid4
 
 import pytest
 
+from agent.feedback.session_feedback import InMemorySessionFeedbackBackend
 from agent.memory.types import (
     EntityRef,
     ExtractionResult,
@@ -56,6 +57,7 @@ from agent.memory.types import (
 from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
 from agent.memory.policy.candidates import PolicyDecision, build_semantic_candidate
+from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.models import Channel
 from agent.runtime import (
@@ -498,30 +500,49 @@ async def test_episodic_arc_survives_runtime_close_and_reopen(
 
 
 @pytest.mark.asyncio
-async def test_crisis_log_survives_runtime_close_and_reopen(
+async def test_crisis_log_survives_runtime_close_and_reopen_in_postgres(
     tmp_path: Path,
 ) -> None:
-    """Persistence for the crisis log backend. Writes a crisis event
-    in runtime A, closes, reopens B, verifies the event is still
-    countable. Uses a direct append to the backend rather than
-    routing a crisis message through the graph, because the focus
-    here is the SQLite persistence contract, not the crisis gate's
-    dispatch logic (which is covered by test_crisis_log.py)."""
+    """Postgres crisis records should survive a full runtime restart."""
 
+    database_url = postgres_database_url()
+    if not database_url:
+        pytest.skip(
+            "Postgres integration tests are disabled; set "
+            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
+            "OPENCOUCH_TEST_POSTGRES_URL"
+        )
     storage_paths = runtime_storage_paths(tmp_path)
+    record_id = f"rec-cross-restart-{uuid4()}"
+
+    def _persistence_config() -> RuntimePersistenceConfig:
+        return RuntimePersistenceConfig(
+            memory_mode=MemoryMode.LOCAL,
+            thread_persistence_backend="memory",
+            crisis_log_persistence_backend="postgres",
+            crisis_log_database_url=database_url,
+            text_session_backend="disabled",
+        )
+
+    def _dependencies() -> RuntimeDependencies:
+        return RuntimeDependencies(
+            memory_store=OpenCouchMemoryStore(),
+            session_feedback_backend=InMemorySessionFeedbackBackend(),
+        )
 
     # Runtime A: write a crisis record directly to the backend
     from agent.audit.models import CrisisLogRecord
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
+        persistence_config=_persistence_config(),
+        dependencies=_dependencies(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
     ) as runtime_a:
         record = CrisisLogRecord(
-            id="rec-cross-restart-1",
+            id=record_id,
             session_id_opaque="a" * 64,
             user_id_or_null="test-user",
             detected_at="2026-04-11T10:00:00Z",
@@ -538,7 +559,8 @@ async def test_crisis_log_survives_runtime_close_and_reopen(
     # Runtime B: reopen, verify the count is still 1
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
+        persistence_config=_persistence_config(),
+        dependencies=_dependencies(),
     ) as runtime_b:
         assert await runtime_b.crisis_log_backend.arecord_count() == 1
         # And we can look it up by date
@@ -548,7 +570,7 @@ async def test_crisis_log_survives_runtime_close_and_reopen(
             date(2026, 4, 11)
         )
         assert len(day_records) == 1
-        assert day_records[0].id == "rec-cross-restart-1"
+        assert day_records[0].id == record_id
         assert day_records[0].level == 2
 
 
