@@ -81,7 +81,7 @@ def effective_thread_persistence_backend(
 
     return select_runtime_backends(
         memory_mode=memory_mode,
-        memory_backend="sqlite",
+        memory_backend="postgres",
         thread_persistence_backend=thread_persistence_backend,
         crisis_log_persistence_backend="postgres",
         session_feedback_persistence_backend="postgres",
@@ -116,7 +116,9 @@ def create_memory_store(
         return OpenCouchMemoryStore()
     if memory_backend == "postgres":
         return PostgresMemoryStore(require_postgres_database_url(memory_database_url))
-    return SqliteMemoryStore(memory_sqlite_path)
+    if memory_backend == "sqlite":
+        return SqliteMemoryStore(memory_sqlite_path)
+    raise ValueError(f"Unsupported memory backend: {memory_backend}")
 
 
 def create_crisis_log_backend(

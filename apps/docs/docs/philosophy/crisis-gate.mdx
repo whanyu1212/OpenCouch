@@ -107,6 +107,11 @@ window (exclusive boundary — the cutoff date itself is preserved).
 | `agent/tools/crisis.py` | Crisis resource lookup tool and crisis response delta |
 | `agent/audit/crisis_log.py` | Audit-log write helper, backend protocol, and in-memory/null implementations |
 | `agent/audit/postgres_crisis_log.py` | Primary durable backend with retention purge |
-| `agent/audit/sqlite_crisis_log.py` | Legacy SQLite backend with retention purge, pending removal |
 | `agent/audit/models.py` | `CrisisLogRecord`, `CrisisOverrideOutcome`, `CrisisClassifierPath` |
 | `agent/tools/grounded_search.py` | `find_crisis_resources` for crisis-resource surfacing |
+
+`PostgresCrisisLogBackend` is the only durable crisis-ledger implementation;
+incognito and tests use the in-memory backend. The former SQLite crisis-log
+implementation has been removed. OpenAI Agents SDK text-session SQLite is a
+separate short-term conversation-history surface and does not store crisis
+audit records or long-term memory.

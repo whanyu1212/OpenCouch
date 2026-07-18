@@ -148,7 +148,6 @@ def config_from_args(args: argparse.Namespace) -> ConsoleConfig:
         response_model_tier=args.response_model_tier,
         sqlite_path=args.sqlite_path,
         memory_mode=args.memory_mode,
-        memory_sqlite_path=args.memory_sqlite_path,
     )
 
 

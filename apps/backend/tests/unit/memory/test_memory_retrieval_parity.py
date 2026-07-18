@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 
 import pytest
 
 from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
-from agent.memory.store.sqlite import SqliteMemoryStore
 from tests.support.memory_fixtures import (
     episodic_namespace,
     seed_episodic_arc,
@@ -24,18 +22,11 @@ def _to_utc_z(dt: datetime) -> str:
     return dt.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-@pytest.fixture(params=["memory", "sqlite"])
-async def retrieval_store(
-    request: pytest.FixtureRequest,
-    tmp_path: Path,
-) -> AsyncIterator[MemoryStore]:
-    """Yield each local store behind the backend-neutral retrieval contract."""
+@pytest.fixture
+async def retrieval_store() -> AsyncIterator[MemoryStore]:
+    """Yield the fast in-memory store behind the retrieval contract."""
 
-    store: MemoryStore
-    if request.param == "memory":
-        store = OpenCouchMemoryStore()
-    else:
-        store = SqliteMemoryStore(tmp_path / "retrieval-parity.sqlite3")
+    store = OpenCouchMemoryStore()
     try:
         yield store
     finally:

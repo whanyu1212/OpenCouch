@@ -49,9 +49,7 @@ def session_status_rows(session: Any) -> list[tuple[str, str]]:
     if session.memory_mode == "guest":
         rows.append(("persistence", "ephemeral"))
     else:
-        rows.append(("persistence", str(session.persistence_backend)))
-        if getattr(session, "persistence_backend", None) == "sqlite":
-            rows.append(("sqlite path", str(session.sqlite_path)))
+        rows.append(("persistence", "postgres"))
     rows.extend(
         [
             ("requested mode", session.requested_mode),
@@ -174,7 +172,7 @@ def runtime_doctor_rows(
             (
                 "persistence",
                 "ok",
-                f"Persistent mode is using the {session.persistence_backend} backend.",
+                "Persistent mode is using the shared Postgres backend.",
             )
         )
 

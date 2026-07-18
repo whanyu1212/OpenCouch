@@ -3,36 +3,25 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
-from agent.memory.store.sqlite import SqliteMemoryStore
 from tests.support.persistence_contracts import open_postgres_memory_store
 
 pytestmark = pytest.mark.asyncio
 
 
-@pytest.fixture(params=["memory", "sqlite", "postgres"])
+@pytest.fixture(params=["memory", "postgres"])
 async def store_contract(
     request: pytest.FixtureRequest,
-    tmp_path: Path,
 ) -> AsyncIterator[tuple[MemoryStore, str]]:
     """Yield each supported ephemeral/durable store with a unique owner."""
 
     owner_id = f"memory-contract-{uuid4()}"
     if request.param == "memory":
         store = OpenCouchMemoryStore()
-        try:
-            yield store, owner_id
-        finally:
-            await store.aclose()
-        return
-
-    if request.param == "sqlite":
-        store = SqliteMemoryStore(tmp_path / "memory-contract.sqlite3")
         try:
             yield store, owner_id
         finally:

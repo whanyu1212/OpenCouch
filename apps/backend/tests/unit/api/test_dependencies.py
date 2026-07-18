@@ -8,6 +8,8 @@ from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
 from agent.feedback.postgres_session_feedback import PostgresSessionFeedbackBackend
 from agent.feedback.session_feedback import InMemorySessionFeedbackBackend
 from agent.memory.modes import MemoryMode
+from agent.memory.store import OpenCouchMemoryStore
+from agent.memory.store.postgres import PostgresMemoryStore
 from api import dependencies
 from api.dependencies import (
     get_runtime,
@@ -19,12 +21,11 @@ from api.models import ApiMemoryMode
 from config import Settings
 
 
-def test_build_runtime_rejects_persistent_legacy_sqlite() -> None:
-    with pytest.raises(ValueError, match="SQLite crisis-audit and session-feedback"):
+def test_build_runtime_requires_postgres_dsn_for_persistent_mode() -> None:
+    with pytest.raises(ValueError, match="OPENCOUCH_MEMORY_DATABASE_URL"):
         dependencies._build_runtime(
             memory_mode=MemoryMode.LOCAL,
             settings=Settings(
-                persistence_backend="sqlite",
                 allow_legacy_sqlite=True,
                 text_session_backend="disabled",
             ),
@@ -32,19 +33,38 @@ def test_build_runtime_rejects_persistent_legacy_sqlite() -> None:
         )
 
 
-def test_build_runtime_keeps_incognito_credential_free_under_legacy_setting() -> None:
+def test_build_runtime_keeps_incognito_credential_free_without_dsn() -> None:
     runtime = dependencies._build_runtime(
         memory_mode=MemoryMode.INCOGNITO,
         settings=Settings(
-            persistence_backend="sqlite",
+            memory_database_url=None,
             allow_legacy_sqlite=True,
             text_session_backend="disabled",
         ),
         llm_client=None,
     )
 
+    assert isinstance(runtime.memory_store, OpenCouchMemoryStore)
     assert isinstance(runtime.crisis_log_backend, InMemoryCrisisLogBackend)
     assert isinstance(runtime.session_feedback_backend, InMemorySessionFeedbackBackend)
+
+
+def test_build_runtime_preserves_sqlite_only_for_sdk_sessions() -> None:
+    runtime = dependencies._build_runtime(
+        memory_mode=MemoryMode.LOCAL,
+        settings=Settings(
+            memory_database_url="postgresql://unused/opencouch",
+            allow_legacy_sqlite=True,
+            text_session_backend="sqlite",
+        ),
+        llm_client=None,
+    )
+
+    assert isinstance(runtime.memory_store, PostgresMemoryStore)
+    assert isinstance(runtime.crisis_log_backend, PostgresCrisisLogBackend)
+    assert isinstance(runtime.session_feedback_backend, PostgresSessionFeedbackBackend)
+    assert runtime._text_session_store is not None  # noqa: SLF001
+    assert runtime._text_session_store.backend == "sqlite"  # noqa: SLF001
 
 
 def test_build_runtime_uses_postgres_for_persistent_application_stores() -> None:
@@ -58,6 +78,7 @@ def test_build_runtime_uses_postgres_for_persistent_application_stores() -> None
         llm_client=None,
     )
 
+    assert isinstance(runtime.memory_store, PostgresMemoryStore)
     assert isinstance(runtime.crisis_log_backend, PostgresCrisisLogBackend)
     assert isinstance(runtime.session_feedback_backend, PostgresSessionFeedbackBackend)
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import cast
+from typing import Callable, cast
 
 import pytest
 
@@ -25,7 +25,7 @@ from agent.memory.types import (
 )
 from agent.memory.modes import MemoryMode
 from agent.memory.providers.embeddings import EmbeddingProvider
-from agent.memory.store import MemoryStore
+from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from agent.runtime import (
     RuntimeDependencies,
     RuntimePersistenceConfig,
@@ -65,6 +65,7 @@ async def truncate_postgres_tables(dsn: str, *tables: str) -> None:
         dsn, autocommit=True, row_factory=dict_row
     ) as conn:
         async with conn.cursor() as cursor:
+            present_tables: list[str] = []
             for table in tables:
                 await cursor.execute(
                     "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
@@ -73,7 +74,11 @@ async def truncate_postgres_tables(dsn: str, *tables: str) -> None:
                 )
                 row = await cursor.fetchone()
                 if row and row["present"]:
-                    await cursor.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY")
+                    present_tables.append(table)
+            if present_tables:
+                await cursor.execute(
+                    f"TRUNCATE TABLE {', '.join(present_tables)} RESTART IDENTITY"
+                )
 
 
 class FakeCrossRestartLLM(BaseLLMClient):
@@ -252,11 +257,13 @@ class FakeCrossRestartLLM(BaseLLMClient):
 
 
 def runtime_persistence_config(memory_mode: MemoryMode) -> RuntimePersistenceConfig:
-    """Return non-durable thread persistence settings for a runtime test."""
+    """Return non-durable application-store settings for a runtime test."""
 
     return RuntimePersistenceConfig(
         memory_mode=memory_mode,
+        memory_backend="postgres",
         thread_persistence_backend="memory",
+        # Local behavior tests intentionally retain disk-backed SDK sessions.
         allow_legacy_sqlite=memory_mode is MemoryMode.LOCAL,
     )
 
@@ -268,22 +275,24 @@ def in_memory_audit_feedback_dependencies(
     crisis_log_backend: CrisisLogBackend | None = None,
     session_feedback_backend: SessionFeedbackBackend | None = None,
     embedding_provider: EmbeddingProvider | None = None,
+    auto_finalize_excluded: Callable[[str], bool] | None = None,
 ) -> RuntimeDependencies:
-    """Return fresh non-durable audit and feedback dependencies for a test runtime."""
+    """Return fresh non-durable application stores for a test runtime."""
 
     return RuntimeDependencies(
-        memory_store=memory_store,
+        memory_store=memory_store or OpenCouchMemoryStore(),
         crisis_log_backend=crisis_log_backend or InMemoryCrisisLogBackend(),
         session_feedback_backend=(
             session_feedback_backend or InMemorySessionFeedbackBackend()
         ),
         embedding_provider=embedding_provider,
         default_llm_client=default_llm_client,
+        auto_finalize_excluded=auto_finalize_excluded,
     )
 
 
 def postgres_thread_persistence_config() -> RuntimePersistenceConfig:
-    """Return local test settings with durable Postgres thread persistence."""
+    """Return local test settings with durable Postgres persistence."""
 
     dsn = postgres_database_url()
     if not dsn:
@@ -292,35 +301,26 @@ def postgres_thread_persistence_config() -> RuntimePersistenceConfig:
             "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
             "OPENCOUCH_TEST_POSTGRES_URL"
         )
-    return RuntimePersistenceConfig(
+    return RuntimePersistenceConfig.for_shared_backend(
         memory_mode=MemoryMode.LOCAL,
-        thread_persistence_backend="postgres",
-        thread_database_url=dsn,
-        crisis_log_persistence_backend="postgres",
-        crisis_log_database_url=dsn,
-        session_feedback_persistence_backend="postgres",
-        session_feedback_database_url=dsn,
-        allow_legacy_sqlite=True,
+        persistence_backend="postgres",
+        database_url=dsn,
     )
 
 
 def runtime_storage_paths(tmp_path: Path) -> RuntimeStoragePaths:
-    """Return grouped SQLite paths for a persistence runtime test."""
+    """Return SDK text-session paths for a persistence runtime test."""
 
     return RuntimeStoragePaths(
         sqlite_path=tmp_path / "threads.sqlite3",
-        memory_sqlite_path=tmp_path / "memory.sqlite3",
         text_session_sqlite_path=tmp_path / "text_sessions.sqlite3",
     )
 
 
 def in_memory_runtime_storage_paths() -> RuntimeStoragePaths:
-    """Return grouped in-memory SQLite paths for runtime tests."""
+    """Return an in-memory SDK text-session path for runtime tests."""
 
-    return RuntimeStoragePaths(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-    )
+    return RuntimeStoragePaths(sqlite_path=":memory:")
 
 
 def _default_cross_restart_extraction_result() -> ExtractionResult:

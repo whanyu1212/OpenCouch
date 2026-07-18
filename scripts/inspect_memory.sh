@@ -2,22 +2,28 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BACKEND="${OPENCOUCH_PERSISTENCE_BACKEND:-postgres}"
+BACKEND="auto"
+EXPECT_BACKEND_VALUE=0
 
 for arg in "$@"; do
+  if [ "$EXPECT_BACKEND_VALUE" -eq 1 ]; then
+    BACKEND="$arg"
+    EXPECT_BACKEND_VALUE=0
+    continue
+  fi
   case "$arg" in
-    --backend=sqlite)
-      BACKEND="sqlite"
+    --backend)
+      EXPECT_BACKEND_VALUE=1
       ;;
-    --backend=postgres)
-      BACKEND="postgres"
+    --backend=*)
+      BACKEND="${arg#--backend=}"
       ;;
   esac
 done
 
 if [ "$BACKEND" != "sqlite" ]; then
   docker compose -f "$REPO_ROOT/compose.yml" up -d postgres --wait
-  export OPENCOUCH_PERSISTENCE_BACKEND="${OPENCOUCH_PERSISTENCE_BACKEND:-postgres}"
+  export OPENCOUCH_PERSISTENCE_BACKEND="postgres"
   export OPENCOUCH_MEMORY_DATABASE_URL="${OPENCOUCH_MEMORY_DATABASE_URL:-postgresql://opencouch:opencouch@localhost:5432/opencouch}"
 fi
 

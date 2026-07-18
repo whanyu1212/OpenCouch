@@ -1,12 +1,12 @@
 """PostgreSQL-backed implementation of the :class:`MemoryStore` protocol.
 
-:class:`PostgresMemoryStore` mirrors the behavioral contract of
-:class:`agent.memory.store.sqlite.SqliteMemoryStore`, but persists
-records through a lazily opened psycopg async connection.
+:class:`PostgresMemoryStore` is the supported durable implementation of the
+memory-store contract and persists records through a lazily opened psycopg
+async connection.
 
 Retrieval reuses the shared lexical and fusion helpers while pushing bounded
 canonical-vector ranking and declarative filters into SQL. This keeps result
-semantics aligned with the in-memory and SQLite stores without loading every
+semantics aligned with the in-memory store without loading every
 embedding into Python.
 """
 

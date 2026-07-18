@@ -2,9 +2,8 @@
 
 - ``INCOGNITO`` — ephemeral, in-memory only. Session state is stored in
   ``:memory:`` and memory/audit stores avoid disk writes.
-- ``LOCAL`` — persists through the configured local backend and stays on
-  the device. Postgres is the recommended durable backend; SQLite remains
-  available only as an explicit legacy fallback.
+- ``LOCAL`` — persists through Postgres and stays within the configured
+  deployment. Direct SQLite compatibility remains only pending removal.
 - ``SYNCED`` — reserved for a future remote persistence tier. Runtime
   code currently treats it like durable mode while backend sync remains
   unimplemented.

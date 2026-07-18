@@ -25,7 +25,7 @@ const LAYERS: LayerDef[] = [
     id: 'persistent',
     label: 'Persistent',
     entry: 'PersistentAgentRuntime.run_turn()',
-    desc: 'Thread-aware runtime with Postgres as the durable persistence target and legacy SQLite compatibility pending removal. Conversations resume across sessions. Also exposes run_turn_stream() for text-token streaming.',
+    desc: 'Thread-aware runtime with Postgres-backed application state. Conversations resume across sessions. OpenAI Agents SDK text-session storage is a separate short-term history surface. Also exposes run_turn_stream() for text-token streaming.',
     usedBy: ['CLI', 'Web/API text', 'Multi-turn sessions'],
     persists: true,
   },
@@ -92,7 +92,7 @@ export default function RuntimeLayers() {
           </div>
           <div className={styles.detailMeta}>
             <span className={styles.metaKey}>Persists</span>
-            <span className={styles.metaVal}>{layer.persists ? 'Yes — Postgres durable backend; SQLite is legacy compatibility pending removal' : 'No — caller manages history'}</span>
+            <span className={styles.metaVal}>{layer.persists ? 'Yes — Postgres is the only supported durable application backend; SDK text-session SQLite is separate' : 'No — caller manages history'}</span>
           </div>
         </div>
       )}

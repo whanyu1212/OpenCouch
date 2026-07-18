@@ -14,7 +14,6 @@ from agent.memory.store import MemoryStore, Namespace, StoreRecord
 from agent.memory.types import SemanticFact, StoredSessionArc
 from agent.models import Message, StreamEvent
 from agent.runtime import (
-    DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
     RuntimeBehaviorConfig,
@@ -25,7 +24,6 @@ from agent.runtime import (
 )
 from agent.state import AgentState
 from config import (
-    PersistenceBackend,
     ResponseModelTier,
     Settings,
     create_configured_control_llm_client,
@@ -80,7 +78,6 @@ class ConsoleConfig:
     response_model_tier: ResponseModelTier = "fast"
     sqlite_path: str = str(DEFAULT_THREAD_DB_PATH)
     memory_mode: MemoryModeName = "guest"
-    memory_sqlite_path: str = str(DEFAULT_MEMORY_DB_PATH)
 
 
 @dataclass
@@ -91,7 +88,6 @@ class ConsoleSession:
     resolved_mode: str
     thread_id: str
     memory_mode: MemoryModeName
-    persistence_backend: PersistenceBackend
     user_id: str | None
     response_model_tier: ResponseModelTier
     llm_client: BaseLLMClient | None
@@ -164,31 +160,18 @@ class ConsoleRuntime:
         is_guest_mode = runtime_memory_mode == MemoryMode.INCOGNITO
         effective_user_id = None if is_guest_mode else self.config.user_id
 
-        if settings.persistence_backend == "postgres":
-            persistence_config = RuntimePersistenceConfig.for_shared_backend(
-                memory_mode=runtime_memory_mode,
-                persistence_backend="postgres",
-                database_url=settings.memory_database_url,
-                text_session_backend=settings.text_session_backend,
-                text_session_database_url=settings.text_session_database_url,
-                allow_legacy_sqlite=settings.allow_legacy_sqlite,
-            )
-        else:
-            persistence_config = RuntimePersistenceConfig(
-                memory_mode=runtime_memory_mode,
-                memory_backend="sqlite",
-                thread_persistence_backend="memory",
-                crisis_log_persistence_backend="sqlite",
-                session_feedback_persistence_backend="sqlite",
-                text_session_backend=settings.text_session_backend,
-                text_session_database_url=settings.text_session_database_url,
-                allow_legacy_sqlite=settings.allow_legacy_sqlite,
-            )
+        persistence_config = RuntimePersistenceConfig.for_shared_backend(
+            memory_mode=runtime_memory_mode,
+            persistence_backend="postgres",
+            database_url=settings.memory_database_url,
+            text_session_backend=settings.text_session_backend,
+            text_session_database_url=settings.text_session_database_url,
+            allow_legacy_sqlite=settings.allow_legacy_sqlite,
+        )
 
         runtime = PersistentAgentRuntime(
             storage_paths=RuntimeStoragePaths(
                 sqlite_path=":memory:" if is_guest_mode else self.config.sqlite_path,
-                memory_sqlite_path=self.config.memory_sqlite_path,
             ),
             persistence_config=persistence_config,
             dependencies=RuntimeDependencies(default_llm_client=llm_client),
@@ -204,7 +187,6 @@ class ConsoleRuntime:
             resolved_mode=resolved_mode,
             thread_id=self.config.thread_id,
             memory_mode=self.config.memory_mode,
-            persistence_backend=settings.persistence_backend,
             user_id=effective_user_id,
             response_model_tier=self.config.response_model_tier,
             llm_client=llm_client,

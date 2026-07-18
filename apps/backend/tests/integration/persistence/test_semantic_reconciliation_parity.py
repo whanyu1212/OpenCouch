@@ -1,9 +1,8 @@
-"""Durable-backend parity tests for semantic reconciliation behavior."""
+"""Backend parity tests for semantic reconciliation behavior."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -16,9 +15,8 @@ from agent.memory.operations.semantic_writes import (
     write_new_semantic_fact,
 )
 from agent.memory.policy.candidates import build_semantic_candidate
-from agent.memory.store import MemoryStore
+from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from agent.memory.store.postgres import PostgresMemoryStore
-from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.memory.types import EntityRef, MemoryWrite
 from llm.base import BaseLLMClient, StructuredResponseT
 from tests.support.persistence_contracts import (
@@ -81,16 +79,15 @@ def _sarah_write(
     )
 
 
-@pytest.fixture(params=["sqlite", "postgres"])
+@pytest.fixture(params=["memory", "postgres"])
 async def reconciliation_store(
     request: pytest.FixtureRequest,
-    tmp_path: Path,
 ) -> AsyncIterator[tuple[MemoryStore, str]]:
-    """Yield each durable memory backend with isolated records."""
+    """Yield each supported memory backend with isolated records."""
 
     owner_id = f"semantic-reconciliation-{uuid4()}"
-    if request.param == "sqlite":
-        store = SqliteMemoryStore(tmp_path / "semantic-reconciliation.sqlite3")
+    if request.param == "memory":
+        store = OpenCouchMemoryStore()
         try:
             yield store, owner_id
         finally:

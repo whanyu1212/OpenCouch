@@ -3,10 +3,9 @@
 :class:`SqliteMemoryStore` provides the same async interface as
 :class:`agent.memory.store.OpenCouchMemoryStore`, but persists records
 through an aiosqlite connection so memory survives process restarts.
-This is a legacy fallback backend selectable only with explicit opt-in
-(``OPENCOUCH_PERSISTENCE_BACKEND=sqlite`` plus
-``OPENCOUCH_ALLOW_LEGACY_SQLITE=1``); Postgres is the default and
-recommended durable backend.
+This legacy durable backend remains only for direct compatibility and removal
+work. Application runtime selection is Postgres-only; use this class directly
+only to inspect compatibility before its planned deletion.
 
 All semantic, episodic, and procedural records live in one
 ``memory_records`` table and are separated by ``owner_id`` and

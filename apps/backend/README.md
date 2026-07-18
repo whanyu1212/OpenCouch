@@ -29,13 +29,29 @@ Resume a persisted local thread:
 uv run python -m opencouch_tui.cli_app --mode auto --thread-id local-demo
 ```
 
-Run the CLI against the Dockerized Postgres memory backend:
+Run the CLI against the Dockerized Postgres memory backend. Postgres is the
+only supported durable backend for long-term memory:
 
 ```bash
 OPENCOUCH_PERSISTENCE_BACKEND=postgres \
 OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch \
 uv run python -m opencouch_tui.cli_app --mode auto --thread-id local-demo
 ```
+
+Legacy `memory.sqlite3` files are not imported, copied, or deleted during the
+Postgres cutover; no importer is provided. Archive or discard an old file as
+appropriate. Until the legacy store is removed, operators may inspect one only
+with an explicit backend and path:
+
+```bash
+.venv/bin/python ../../scripts/inspect_memory.py \
+  --backend sqlite \
+  --sqlite-path .store/memory.sqlite3 \
+  --all-users
+```
+
+This is migration-only tooling, not a supported runtime backend. The OpenAI
+Agents SDK `text_sessions.sqlite3` store is separate and unchanged.
 
 Run backend tests:
 

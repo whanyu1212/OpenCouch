@@ -27,7 +27,6 @@ def test_persistent_runtime_defaults_to_openai_text_runtime() -> None:
     runtime = _runtime(
         storage_paths=RuntimeStoragePaths(
             sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
             text_session_sqlite_path=":memory:",
         ),
         persistence_config=RuntimePersistenceConfig(

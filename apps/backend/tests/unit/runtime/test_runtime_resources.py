@@ -9,6 +9,7 @@ import pytest
 
 from agent.memory.modes import MemoryMode
 from agent.memory.providers.embeddings import NullEmbeddingProvider
+from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.resources import RuntimeResources, build_runtime_resources
 from agent.runtime.session.active_session import ActiveSessionManager
 
@@ -168,8 +169,8 @@ def test_build_runtime_resources_requires_database_url_for_postgres_thread_backe
             text_session_database_url=None,
             text_session_create_tables=True,
             text_session_history_limit=None,
-            memory_store=None,
-            memory_backend="sqlite",
+            memory_store=OpenCouchMemoryStore(),
+            memory_backend="postgres",
             memory_database_url=None,
             memory_sqlite_path=":memory:",
             crisis_log_backend=None,

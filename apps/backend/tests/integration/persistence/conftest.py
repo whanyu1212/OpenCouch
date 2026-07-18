@@ -24,6 +24,8 @@ from tests.support.persistence import (
 
 # Shared Postgres tables that accumulate rows across persistence tests.
 _SHARED_POSTGRES_TABLES = (
+    "agent_messages",
+    "agent_sessions",
     "opencouch_thread_state",
     "opencouch_active_sessions",
     "memory_records",

@@ -247,7 +247,7 @@ class RuntimePersistenceConfig:
         cls,
         *,
         memory_mode: MemoryMode,
-        persistence_backend: Literal["sqlite", "postgres"],
+        persistence_backend: Literal["postgres"],
         database_url: str | None,
         text_session_backend: TextSessionBackend = "auto",
         text_session_database_url: str | None = None,
@@ -255,8 +255,11 @@ class RuntimePersistenceConfig:
     ) -> RuntimePersistenceConfig:
         """Build config when all durable stores share one backend/DSN."""
 
-        if persistence_backend == "sqlite":
-            raise ValueError(_REMOVED_THREAD_SQLITE_MESSAGE)
+        if persistence_backend != "postgres":
+            raise ValueError(
+                f"Unsupported shared persistence backend: {persistence_backend}. "
+                "Use 'postgres'."
+            )
 
         resolved_text_session_database_url = text_session_database_url or database_url
         return cls(

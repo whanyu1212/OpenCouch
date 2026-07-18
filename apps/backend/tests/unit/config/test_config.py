@@ -33,33 +33,38 @@ def test_get_settings_defaults_to_postgres_backend(
     assert settings.text_session_database_url is None
 
 
-def test_get_settings_rejects_sqlite_backend_without_legacy_opt_in(
+@pytest.mark.parametrize("legacy_opt_in", [None, "1"])
+def test_get_settings_rejects_sqlite_backend_even_with_legacy_opt_in(
     monkeypatch: pytest.MonkeyPatch,
+    legacy_opt_in: str | None,
 ) -> None:
-    """Durable SQLite requires an explicit temporary legacy opt-in."""
+    """Application persistence no longer accepts SQLite selection."""
 
     monkeypatch.setattr(config, "_DOTENV_LOADED", True)
     monkeypatch.setenv("OPENCOUCH_PERSISTENCE_BACKEND", "sqlite")
-    monkeypatch.delenv("OPENCOUCH_ALLOW_LEGACY_SQLITE", raising=False)
+    if legacy_opt_in is None:
+        monkeypatch.delenv("OPENCOUCH_ALLOW_LEGACY_SQLITE", raising=False)
+    else:
+        monkeypatch.setenv("OPENCOUCH_ALLOW_LEGACY_SQLITE", legacy_opt_in)
     monkeypatch.delenv("OPENCOUCH_MEMORY_DATABASE_URL", raising=False)
 
-    with pytest.raises(ValueError, match="OPENCOUCH_ALLOW_LEGACY_SQLITE"):
+    with pytest.raises(ValueError, match="sqlite is no longer supported"):
         config.get_settings()
 
 
-def test_get_settings_reads_sqlite_backend_with_legacy_opt_in(
+def test_get_settings_retains_legacy_opt_in_for_direct_compatibility(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """SQLite remains available only through the explicit legacy opt-in."""
+    """The legacy flag remains independent of application backend selection."""
 
     monkeypatch.setattr(config, "_DOTENV_LOADED", True)
-    monkeypatch.setenv("OPENCOUCH_PERSISTENCE_BACKEND", "sqlite")
+    monkeypatch.setenv("OPENCOUCH_PERSISTENCE_BACKEND", "postgres")
     monkeypatch.setenv("OPENCOUCH_ALLOW_LEGACY_SQLITE", "1")
     monkeypatch.delenv("OPENCOUCH_MEMORY_DATABASE_URL", raising=False)
 
     settings = config.get_settings()
 
-    assert settings.persistence_backend == "sqlite"
+    assert settings.persistence_backend == "postgres"
     assert settings.memory_database_url is None
     assert settings.allow_legacy_sqlite is True
 

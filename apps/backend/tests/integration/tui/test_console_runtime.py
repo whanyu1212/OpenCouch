@@ -11,7 +11,7 @@ from agent.models import DoneEvent, ResponseReadyEvent, StatusEvent
 
 
 @pytest.mark.asyncio
-async def test_console_runtime_rejects_persistent_legacy_sqlite() -> None:
+async def test_console_runtime_requires_postgres_dsn_for_persistent_mode() -> None:
     from config import Settings
     from opencouch_tui.runtime import ConsoleConfig, ConsoleRuntime
 
@@ -22,13 +22,12 @@ async def test_console_runtime_rejects_persistent_legacy_sqlite() -> None:
             memory_mode="persistent",
         ),
         settings=Settings(
-            persistence_backend="sqlite",
             allow_legacy_sqlite=True,
             text_session_backend="disabled",
         ),
     )
 
-    with pytest.raises(ValueError, match="SQLite crisis-audit and session-feedback"):
+    with pytest.raises(ValueError, match="OPENCOUCH_MEMORY_DATABASE_URL"):
         await runtime.__aenter__()
 
 
@@ -36,6 +35,8 @@ async def test_console_runtime_rejects_persistent_legacy_sqlite() -> None:
 async def test_console_runtime_streams_deterministic_guest_turn() -> None:
     """Deterministic guest mode should run without configured credentials."""
 
+    from agent.memory.store import OpenCouchMemoryStore
+    from config import Settings
     from opencouch_tui.runtime import ConsoleConfig, ConsoleRuntime
 
     async with ConsoleRuntime(
@@ -44,15 +45,18 @@ async def test_console_runtime_streams_deterministic_guest_turn() -> None:
             thread_id="tui-deterministic",
             user_id="alice",
             memory_mode="guest",
-        )
+        ),
+        settings=Settings(memory_database_url=None),
     ) as runtime:
         events = [event async for event in runtime.run_turn_stream("hello")]
         session = runtime.session
+        memory_store = runtime._require_runtime().memory_store
 
     assert session is not None
     assert session.requested_mode == "deterministic"
     assert session.resolved_mode == "deterministic"
     assert session.memory_mode == "guest"
+    assert isinstance(memory_store, OpenCouchMemoryStore)
     assert session.user_id is None
     assert session.owner_id == "tui-deterministic"
     assert [event.stage for event in events if isinstance(event, StatusEvent)] == [
@@ -96,7 +100,6 @@ async def test_console_runtime_reports_recoverable_turn_errors(monkeypatch) -> N
     monkeypatch.setattr(
         "opencouch_tui.runtime.get_settings",
         lambda: SimpleNamespace(
-            persistence_backend="sqlite",
             memory_database_url=None,
             allow_legacy_sqlite=True,
             text_session_backend="disabled",
@@ -132,7 +135,7 @@ async def test_console_runtime_reports_recoverable_turn_errors(monkeypatch) -> N
         ("persistent", "/tmp/thread.sqlite3", "alice"),
     ],
 )
-async def test_console_runtime_uses_grouped_storage_paths(
+async def test_console_runtime_uses_sqlite_path_only_for_sdk_sessions(
     memory_mode: str,
     expected_thread_path: str | None,
     expected_user_id: str | None,
@@ -165,10 +168,9 @@ async def test_console_runtime_uses_grouped_storage_paths(
     monkeypatch.setattr(
         "opencouch_tui.runtime.get_settings",
         lambda: SimpleNamespace(
-            persistence_backend="sqlite",
-            memory_database_url=None,
+            memory_database_url="postgresql://unused/opencouch",
             allow_legacy_sqlite=True,
-            text_session_backend="disabled",
+            text_session_backend="sqlite",
             text_session_database_url=None,
         ),
     )
@@ -184,7 +186,6 @@ async def test_console_runtime_uses_grouped_storage_paths(
             user_id="alice",
             memory_mode=memory_mode,
             sqlite_path="/tmp/thread.sqlite3",
-            memory_sqlite_path="/tmp/memory.sqlite3",
         )
     ) as runtime:
         session = runtime.session
@@ -197,7 +198,11 @@ async def test_console_runtime_uses_grouped_storage_paths(
     storage_paths = kwargs["storage_paths"]
     assert isinstance(storage_paths, RuntimeStoragePaths)
     assert storage_paths.sqlite_path == expected_thread_path
-    assert storage_paths.memory_sqlite_path == "/tmp/memory.sqlite3"
+    persistence_config = kwargs["persistence_config"]
+    assert persistence_config.memory_backend == "postgres"
+    assert persistence_config.thread_persistence_backend == "postgres"
+    assert persistence_config.text_session_backend == "sqlite"
+    assert persistence_config.allow_legacy_sqlite is True
     assert session is not None
     assert session.user_id == expected_user_id
 
@@ -230,7 +235,6 @@ async def test_console_runtime_memory_snapshot_includes_notebook_projection(
     monkeypatch.setattr(
         "opencouch_tui.runtime.get_settings",
         lambda: SimpleNamespace(
-            persistence_backend="sqlite",
             memory_database_url=None,
             allow_legacy_sqlite=True,
             text_session_backend="disabled",
@@ -291,7 +295,6 @@ async def test_console_runtime_memory_snapshot_preserves_raw_memory_when_noteboo
     monkeypatch.setattr(
         "opencouch_tui.runtime.get_settings",
         lambda: SimpleNamespace(
-            persistence_backend="sqlite",
             memory_database_url=None,
             allow_legacy_sqlite=True,
             text_session_backend="disabled",
@@ -363,7 +366,6 @@ async def test_console_runtime_memory_snapshot_can_skip_notebook_projection(
     monkeypatch.setattr(
         "opencouch_tui.runtime.get_settings",
         lambda: SimpleNamespace(
-            persistence_backend="sqlite",
             memory_database_url=None,
             allow_legacy_sqlite=True,
             text_session_backend="disabled",
@@ -446,7 +448,6 @@ async def test_console_runtime_notebook_snapshot_fetches_complete_raw_namespaces
     monkeypatch.setattr(
         "opencouch_tui.runtime.get_settings",
         lambda: SimpleNamespace(
-            persistence_backend="sqlite",
             memory_database_url=None,
             allow_legacy_sqlite=True,
             text_session_backend="disabled",
@@ -487,7 +488,6 @@ async def test_console_runtime_notebook_snapshot_fetches_complete_raw_namespaces
 def test_console_config_defaults_are_tui_safe() -> None:
     """The adapter defaults should be safe for credential-free TUI smoke runs."""
 
-    from agent.runtime import DEFAULT_MEMORY_DB_PATH
     from opencouch_tui.runtime import ConsoleConfig
 
     config = ConsoleConfig(thread_id="tui-defaults")
@@ -497,4 +497,4 @@ def test_console_config_defaults_are_tui_safe() -> None:
     assert config.user_id is None
     assert config.memory_mode == "guest"
     assert config.response_model_tier == "fast"
-    assert config.memory_sqlite_path == str(DEFAULT_MEMORY_DB_PATH)
+    assert not hasattr(config, "memory_sqlite_path")

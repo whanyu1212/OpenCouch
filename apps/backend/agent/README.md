@@ -22,16 +22,20 @@ conversation history for the SDK runner. The runtime state snapshot holds
 product state such as diagnostics, crisis metadata, exercise state, pending
 memory actions, and transcript fallback for API/CLI history.
 
-Active-session coordination is stored in `opencouch_active_sessions` and is
-independent from both runtime state and SDK session history.
+Durable active-session coordination is stored by
+`PostgresActiveSessionStore` in `opencouch_active_sessions` and is independent
+from both runtime state and SDK session history.
 
-Durable persistence direction: Postgres is the intended durable backend for
-runtime state, memory, audit, feedback, and active-session recovery. In-memory
-stores remain the incognito/test path. SQLite stores are legacy compatibility
-until the follow-up removal work lands and require explicit legacy opt-in in
-grouped durable runtime configuration. New runtime construction should use
-`RuntimePersistenceConfig` and `RuntimeStoragePaths`; direct SQLite path kwargs
-on `PersistentAgentRuntime` are deprecated compatibility shims.
+Postgres is the only supported durable backend for application-owned runtime
+state, long-term memory, crisis audit, session feedback, and active-session
+recovery. In-memory stores remain the incognito/test path. The old SQLite
+runtime-state, active-session, crisis-log, and feedback implementations have
+been removed. `SqliteMemoryStore` remains only for explicit migration
+inspection of old long-term-memory files.
+
+OpenAI Agents SDK text sessions are a separate, model-visible short-term
+history surface. Their SDK `SQLiteSession` option, including
+`text_sessions.sqlite3`, is not an OpenCouch long-term-memory backend.
 
 ## Agent Shape
 

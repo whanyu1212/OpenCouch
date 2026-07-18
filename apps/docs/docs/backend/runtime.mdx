@@ -193,8 +193,9 @@ memory overhead. Both are free correctness wins.
 
 ## Active session recovery
 
-`PersistentAgentRuntime` keeps an `opencouch_active_sessions` table
-in the configured active-session backend. Each row carries the
+For durable runtimes, `PersistentAgentRuntime` uses
+`PostgresActiveSessionStore`, backed by the `opencouch_active_sessions` table.
+Each row carries the
 thread's `session_buffer` (held semantic / procedural candidates),
 `max_crisis_level`, and `transcript_start_index` for the current
 session. A 20-minute inactivity sweeper auto-finalizes expired
@@ -208,18 +209,19 @@ is written.
 
 ---
 
-## Durable persistence direction
+## Durable persistence
 
-Postgres is the intended durable backend for runtime state, SDK text
-sessions, memory, crisis audit, session feedback, and active-session
-recovery. In-memory stores remain the incognito/test path. SQLite-backed
-stores still exist in the codebase for legacy local compatibility and
-focused migration tests, but grouped durable runtime configuration rejects
-SQLite unless it is explicitly marked as legacy opt-in. New durable-runtime
-work should target Postgres first and avoid expanding SQLite-specific
-behavior. New runtime construction should use grouped `RuntimePersistenceConfig`
-and `RuntimeStoragePaths`; direct SQLite path kwargs on `PersistentAgentRuntime`
-are deprecated compatibility shims.
+Postgres is the only supported durable backend for application-owned runtime
+state, long-term memory, crisis audit, session feedback, and active-session
+recovery. In-memory stores remain the incognito/test path. The SQLite
+runtime-state, active-session, crisis-log, and feedback implementations have
+been removed. `SqliteMemoryStore` remains only for explicit migration
+inspection and is not a supported durable long-term-memory backend.
+
+New durable runtime construction should use `RuntimePersistenceConfig` with a
+Postgres database URL. OpenAI Agents SDK text sessions are a separate,
+model-visible short-term history surface. The SDK `SQLiteSession` option may use
+`text_sessions.sqlite3`; it is not OpenCouch long-term memory.
 
 ## Key files
 
@@ -229,10 +231,11 @@ are deprecated compatibility shims.
 | `agent/runtime/turn.py` | `build_initial_state`, `state_to_output`, `run_agent` |
 | `agent/state.py` | State fragments plus `AgentTurnInputState` and `AgentState` |
 | `agent/runtime/workflow_context.py` | `WorkflowContext` frozen dataclass |
+| `agent/runtime/state_store.py` | `RuntimeStateStore` protocol plus in-memory and `PostgresRuntimeStateStore` implementations |
+| `agent/runtime/session/store.py` | `ActiveSessionStore` protocol plus in-memory, null, and `PostgresActiveSessionStore` implementations |
+| `agent/runtime/session_store.py` | Separate OpenAI Agents SDK text-session storage using SDK SQLite or SQLAlchemy sessions |
 | `agent/audit/capture.py` | Bounded runtime capture seam for minimal safety events |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
 | `agent/audit/postgres_crisis_log.py` | Primary durable Postgres crisis log with retention purge |
-| `agent/audit/sqlite_crisis_log.py` | Legacy SQLite crisis-log backend pending removal |
 | `agent/feedback/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
 | `agent/feedback/postgres_session_feedback.py` | Primary durable Postgres feedback store |
-| `agent/feedback/sqlite_session_feedback.py` | Legacy SQLite feedback backend pending removal |

@@ -43,14 +43,11 @@ Design decisions:
    embed multiple records in a single network round-trip when
    they need to.
 
-4. **Embeddings are plain ``list[float]``, not numpy arrays.** The
-   store serializes embeddings to a BLOB via
-   ``struct.pack``/``unpack`` (see ``sqlite_store.py``). Keeping
-   the protocol type as plain lists means callers don't need
-   numpy at the boundary. numpy only enters the picture inside
-   the retrieval scoring helper in ``retrieval.py``, and even
-   there it's optional (the cosine similarity can run on pure
-   Python floats).
+4. **Embeddings are plain ``list[float]``, not numpy arrays.** Each
+   concrete store owns its database serialization; the legacy SQLite
+   implementation packs vectors in :mod:`agent.memory.store.sqlite`.
+   Keeping plain lists at the protocol boundary avoids a numpy dependency.
+   Shared cosine scoring lives in :mod:`agent.memory.retrieval.ranking`.
 
 5. **Failures degrade to None, not exceptions.** ``aembed`` catches
    provider errors internally and returns a list of ``None`` values

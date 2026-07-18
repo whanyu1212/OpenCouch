@@ -7,7 +7,7 @@ from typing import Literal
 
 from agent.models import Message
 from agent.state import AgentState
-from config import PersistenceBackend, ResponseModelTier
+from config import ResponseModelTier
 from llm.base import BaseLLMClient
 
 TraceMode = Literal["off", "on", "once"]
@@ -26,7 +26,6 @@ class RunnerSession:
     thread_id: str
     sqlite_path: str
     memory_mode: str
-    persistence_backend: PersistenceBackend = "postgres"
     # Optional stable owner for long-term memory. Falls back to thread_id.
     user_id: str | None = None
     history: list[Message] = field(default_factory=list)

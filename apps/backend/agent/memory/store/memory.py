@@ -40,8 +40,8 @@ class OpenCouchMemoryStore:
     Records live in a per-instance dict keyed by namespace and are
     discarded when the instance is garbage collected. Tests and
     incognito-mode sessions prefer this implementation because it has
-    no connection lifecycle and no disk writes. Legacy SQLite fallback
-    runtimes use :class:`agent.memory.store.sqlite.SqliteMemoryStore`.
+    no connection lifecycle and no disk writes. Supported persistent runtimes
+    use :class:`agent.memory.store.postgres.PostgresMemoryStore`.
 
     The store is **not** thread-safe. Each runtime instance should own
     its own store; do not share a single instance across runtimes or

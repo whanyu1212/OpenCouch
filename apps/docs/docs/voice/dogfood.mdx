@@ -23,10 +23,6 @@ OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/op
 .venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Legacy SQLite smoke mode still exists for compatibility while removal work is
-pending, but do not use it for persistence verification or new durable-runtime
-behavior. Use the Postgres mode above for dogfood and restart checks.
-
 ## Web
 
 Run from `apps/web`:
