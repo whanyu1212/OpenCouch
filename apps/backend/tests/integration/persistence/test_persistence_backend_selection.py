@@ -113,6 +113,30 @@ def test_explicit_in_memory_backends_preserve_local_credential_free_runtime() ->
     assert isinstance(runtime.session_feedback_backend, InMemorySessionFeedbackBackend)
 
 
+def test_flat_memory_sqlite_path_warns_and_is_ignored(tmp_path: Path) -> None:
+    memory_store = OpenCouchMemoryStore()
+    memory_path = tmp_path / "removed-memory.sqlite3"
+
+    with pytest.warns(DeprecationWarning, match="memory_sqlite_path is ignored"):
+        runtime = PersistentAgentRuntime(
+            **{"memory_sqlite_path": memory_path},
+            persistence_config=RuntimePersistenceConfig(
+                memory_mode=MemoryMode.LOCAL,
+                memory_backend="postgres",
+                thread_persistence_backend="memory",
+                text_session_backend="disabled",
+            ),
+            dependencies=RuntimeDependencies(
+                memory_store=memory_store,
+                crisis_log_backend=InMemoryCrisisLogBackend(),
+                session_feedback_backend=InMemorySessionFeedbackBackend(),
+            ),
+        )
+
+    assert runtime.memory_store is memory_store
+    assert not memory_path.exists()
+
+
 def test_shared_postgres_configuration_selects_every_durable_store() -> None:
     runtime = PersistentAgentRuntime(
         persistence_config=RuntimePersistenceConfig.for_shared_backend(

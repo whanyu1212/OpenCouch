@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-07-19 — Legacy SQLite Memory Removal
+
+- Removed `SqliteMemoryStore`, its runtime selection and store compatibility
+  tests, and the built-in SQLite modes from the memory inspection and clear
+  tools; Postgres is now the only supported durable long-term-memory backend
+- Left old `memory.sqlite3` files untouched with no importer; archived files
+  require an older OpenCouch release or an external read-only SQLite tool, while
+  the separate OpenAI Agents SDK `text_sessions.sqlite3` store remains preserved
+
 ## 2026-05-13 — Therapeutic Repair, Resource Routing, and Voice Policy Alignment
 
 ### Therapeutic text behavior

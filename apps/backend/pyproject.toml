@@ -68,7 +68,6 @@ python_version = "3.12"
 
 [[tool.mypy.overrides]]
 module = [
-  "aiosqlite",
   "google",
   "google.*",
   "openai",

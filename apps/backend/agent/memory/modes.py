@@ -1,9 +1,9 @@
 """Memory persistence modes for the OpenCouch agent.
 
-- ``INCOGNITO`` — ephemeral, in-memory only. Session state is stored in
-  ``:memory:`` and memory/audit stores avoid disk writes.
+- ``INCOGNITO`` — ephemeral, in-memory only. Memory and audit stores avoid
+  disk writes.
 - ``LOCAL`` — persists through Postgres and stays within the configured
-  deployment. Direct SQLite compatibility remains only pending removal.
+  deployment.
 - ``SYNCED`` — reserved for a future remote persistence tier. Runtime
   code currently treats it like durable mode while backend sync remains
   unimplemented.

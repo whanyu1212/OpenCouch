@@ -10,7 +10,6 @@ from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.feedback.session_feedback import InMemorySessionFeedbackBackend
 from agent.memory.modes import MemoryMode
 from agent.runtime.configuration import (
-    DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
     RuntimePersistenceConfig,
     _resolve_runtime_persistence_config,
@@ -25,9 +24,6 @@ def _resolve(**overrides: object):
         "memory_mode": MemoryMode.LOCAL,
         "memory_backend": "postgres",
         "memory_database_url": _POSTGRES_URL,
-        "memory_sqlite_path": DEFAULT_MEMORY_DB_PATH,
-        "memory_sqlite_path_configured": False,
-        "memory_store": None,
         "thread_persistence_backend": "postgres",
         "thread_database_url": _POSTGRES_URL,
         "sqlite_path": DEFAULT_THREAD_DB_PATH,
@@ -102,24 +98,21 @@ def test_explicit_in_memory_audit_feedback_overrides_skip_removed_selectors() ->
     assert resolved.session_feedback_persistence_backend == "sqlite"
 
 
-def test_durable_sqlite_memory_remains_guarded_under_233() -> None:
-    with pytest.raises(ValueError) as exc_info:
+@pytest.mark.parametrize("memory_mode", [MemoryMode.LOCAL, MemoryMode.INCOGNITO])
+@pytest.mark.parametrize("allow_legacy_sqlite", [False, True])
+def test_flat_sqlite_memory_backend_is_always_rejected(
+    memory_mode: MemoryMode,
+    allow_legacy_sqlite: bool,
+) -> None:
+    with pytest.raises(ValueError, match="SQLite memory persistence has been removed"):
         _resolve(
+            persistence_config=RuntimePersistenceConfig(
+                memory_mode=memory_mode,
+                allow_legacy_sqlite=allow_legacy_sqlite,
+            ),
             memory_backend="sqlite",
             memory_database_url=None,
-            memory_sqlite_path=Path("memory.sqlite3"),
         )
-
-    assert str(exc_info.value).endswith("SQLite fields: memory_backend.")
-
-
-def test_in_memory_sqlite_memory_remains_available_for_tests() -> None:
-    resolved = _resolve(
-        memory_backend="sqlite",
-        memory_database_url=None,
-        memory_sqlite_path=":memory:",
-    )
-    assert resolved.memory_backend == "sqlite"
 
 
 def test_disk_sdk_text_session_sqlite_remains_a_separate_legacy_guard() -> None:

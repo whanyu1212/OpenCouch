@@ -22,14 +22,14 @@ TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
 DEFAULT_LLM_PROVIDER: LLMProvider = "openai"
 DEFAULT_OPENAI_QUALITY_MODEL = "gpt-5.4"
 # Postgres is the only application persistence backend. The legacy SQLite flag
-# remains available for direct runtime memory and SDK text-session compatibility.
+# remains available for SDK text-session compatibility.
 DEFAULT_PERSISTENCE_BACKEND: PersistenceBackend = "postgres"
 LEGACY_SQLITE_OPT_IN_ENV = "OPENCOUCH_ALLOW_LEGACY_SQLITE"
 LEGACY_SQLITE_REJECT_MESSAGE = (
     "OPENCOUCH_PERSISTENCE_BACKEND=sqlite is no longer supported. "
     "Use OPENCOUCH_PERSISTENCE_BACKEND=postgres with "
     "OPENCOUCH_MEMORY_DATABASE_URL. OPENCOUCH_ALLOW_LEGACY_SQLITE only retains "
-    "direct runtime memory and SDK text-session compatibility."
+    "SDK text-session compatibility."
 )
 
 # Shared, actionable error text raised by every postgres-without-URL guard
@@ -42,7 +42,7 @@ MISSING_MEMORY_DATABASE_URL_MESSAGE = (
     "postgresql://opencouch:opencouch@localhost:5432/opencouch "
     "(or @postgres:5432/opencouch from inside the compose network). "
     "Application-owned durable persistence requires Postgres. Legacy SQLite "
-    "compatibility is limited to memory and SDK text sessions."
+    "compatibility is limited to SDK text sessions."
 )
 
 _DOTENV_LOADED = False

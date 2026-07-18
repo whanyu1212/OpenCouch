@@ -92,7 +92,6 @@ logger = logging.getLogger(__name__)
 
 # Preserve direct imports from ``agent.runtime.runtime`` for external callers.
 DEFAULT_THREAD_DB_PATH = _runtime_configuration.DEFAULT_THREAD_DB_PATH
-DEFAULT_MEMORY_DB_PATH = _runtime_configuration.DEFAULT_MEMORY_DB_PATH
 DEFAULT_TEXT_SESSION_DB_PATH = _runtime_configuration.DEFAULT_TEXT_SESSION_DB_PATH
 DEFAULT_CRISIS_LOG_DB_PATH = _runtime_configuration.DEFAULT_CRISIS_LOG_DB_PATH
 DEFAULT_FEEDBACK_DB_PATH = _runtime_configuration.DEFAULT_FEEDBACK_DB_PATH
@@ -194,8 +193,8 @@ class PersistentAgentRuntime:
                 for persistent modes.
             session_feedback_database_url: PostgreSQL connection string used when
                 ``session_feedback_persistence_backend`` is ``"postgres"``.
-            memory_sqlite_path: Deprecated direct SQLite path for the default
-                memory store. Use ``storage_paths`` instead.
+            memory_sqlite_path: Deprecated path for the removed SQLite memory
+                store. Accepted with a warning and ignored until #266.
             text_session_backend: Optional OpenAI Agents SDK session backend
                 used for model-visible short-term conversation memory.
             text_session_database_url: SQLAlchemy async-capable database URL
@@ -237,7 +236,6 @@ class PersistentAgentRuntime:
             text_session_sqlite_path=text_session_sqlite_path,
         )
         sqlite_path = resolved_storage_paths.sqlite_path
-        memory_sqlite_path = resolved_storage_paths.memory_sqlite_path
         text_session_sqlite_path = resolved_storage_paths.text_session_sqlite_path
 
         resolved_dependencies = _resolve_runtime_dependencies(
@@ -261,11 +259,6 @@ class PersistentAgentRuntime:
             memory_mode=memory_mode,
             memory_backend=memory_backend,
             memory_database_url=memory_database_url,
-            memory_sqlite_path=memory_sqlite_path,
-            memory_sqlite_path_configured=(
-                resolved_storage_paths.memory_sqlite_path_configured
-            ),
-            memory_store=memory_store,
             thread_persistence_backend=thread_persistence_backend,
             thread_database_url=thread_database_url,
             sqlite_path=sqlite_path,
@@ -340,7 +333,6 @@ class PersistentAgentRuntime:
             memory_store=memory_store,
             memory_backend=memory_backend,
             memory_database_url=memory_database_url,
-            memory_sqlite_path=memory_sqlite_path,
             crisis_log_backend=crisis_log_backend,
             crisis_log_persistence_backend=crisis_log_persistence_backend,
             crisis_log_database_url=crisis_log_database_url,

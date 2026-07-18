@@ -11,7 +11,6 @@ from agent.memory.modes import MemoryMode
 from agent.runtime.configuration import (
     DEFAULT_CRISIS_LOG_DB_PATH,
     DEFAULT_FEEDBACK_DB_PATH,
-    DEFAULT_MEMORY_DB_PATH,
     DEFAULT_TEXT_SESSION_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
     RuntimeBehaviorConfig,
@@ -43,11 +42,8 @@ def _resolve_persistence(**overrides: object):
     arguments = {
         "persistence_config": RuntimePersistenceConfig(allow_legacy_sqlite=True),
         "memory_mode": MemoryMode.LOCAL,
-        "memory_backend": "sqlite",
+        "memory_backend": "postgres",
         "memory_database_url": None,
-        "memory_sqlite_path": DEFAULT_MEMORY_DB_PATH,
-        "memory_sqlite_path_configured": False,
-        "memory_store": None,
         "thread_persistence_backend": "memory",
         "thread_database_url": None,
         "sqlite_path": DEFAULT_THREAD_DB_PATH,
@@ -76,10 +72,11 @@ def test_public_configuration_exports_remain_compatible() -> None:
     assert runtime_package.RuntimeDependencies is RuntimeDependencies
     assert runtime_package.RuntimeBehaviorConfig is RuntimeBehaviorConfig
     assert runtime_package.DEFAULT_THREAD_DB_PATH == DEFAULT_THREAD_DB_PATH
+    assert not hasattr(runtime_package, "DEFAULT_MEMORY_DB_PATH")
     assert runtime_module.RuntimeStoragePaths is RuntimeStoragePaths
     assert runtime_module.RuntimePersistenceConfig is RuntimePersistenceConfig
     assert runtime_module.DEFAULT_THREAD_DB_PATH == DEFAULT_THREAD_DB_PATH
-    assert runtime_module.DEFAULT_MEMORY_DB_PATH == DEFAULT_MEMORY_DB_PATH
+    assert not hasattr(runtime_module, "DEFAULT_MEMORY_DB_PATH")
     assert runtime_module.DEFAULT_TEXT_SESSION_DB_PATH == DEFAULT_TEXT_SESSION_DB_PATH
     assert runtime_module.DEFAULT_CRISIS_LOG_DB_PATH == DEFAULT_CRISIS_LOG_DB_PATH
     assert runtime_module.DEFAULT_FEEDBACK_DB_PATH == DEFAULT_FEEDBACK_DB_PATH
@@ -90,13 +87,18 @@ def test_storage_defaults_share_the_configuration_sentinel() -> None:
     resolved = _resolve_storage()
 
     assert paths.sqlite_path is _UNSET
-    assert paths.memory_sqlite_path is _UNSET
+    assert not hasattr(paths, "memory_sqlite_path")
     assert resolved.sqlite_path == DEFAULT_THREAD_DB_PATH
-    assert resolved.memory_sqlite_path == DEFAULT_MEMORY_DB_PATH
     assert resolved.crisis_log_sqlite_path == DEFAULT_CRISIS_LOG_DB_PATH
     assert resolved.feedback_sqlite_path == DEFAULT_FEEDBACK_DB_PATH
     assert resolved.text_session_sqlite_path is None
     assert resolved.sqlite_path_configured is False
+    assert not hasattr(resolved, "memory_sqlite_path")
+
+
+def test_grouped_storage_rejects_removed_memory_sqlite_path() -> None:
+    with pytest.raises(TypeError, match="memory_sqlite_path"):
+        RuntimeStoragePaths(**{"memory_sqlite_path": ":memory:"})
 
 
 def test_legacy_storage_warning_lists_supplied_args_in_stable_order(
@@ -113,12 +115,12 @@ def test_legacy_storage_warning_lists_supplied_args_in_stable_order(
         "Legacy args: sqlite_path, memory_sqlite_path, text_session_sqlite_path."
     )
     assert resolved.sqlite_path_configured is True
-    assert resolved.memory_sqlite_path_configured is True
+    assert not hasattr(resolved, "memory_sqlite_path")
     assert resolved.text_session_sqlite_path is None
     assert resolved.text_session_sqlite_path_configured is False
 
 
-def test_grouped_storage_overrides_legacy_and_preserves_unset_fields(
+def test_grouped_storage_overrides_legacy_and_ignores_flat_memory_path(
     tmp_path: Path,
 ) -> None:
     legacy_memory = tmp_path / "legacy-memory.sqlite3"
@@ -132,9 +134,8 @@ def test_grouped_storage_overrides_legacy_and_preserves_unset_fields(
         )
 
     assert resolved.sqlite_path == grouped_thread
-    assert resolved.memory_sqlite_path == legacy_memory
     assert resolved.sqlite_path_configured is True
-    assert resolved.memory_sqlite_path_configured is True
+    assert not hasattr(resolved, "memory_sqlite_path")
 
 
 def test_repeating_default_storage_path_is_not_a_custom_override() -> None:
@@ -177,21 +178,17 @@ def test_removed_application_store_validation_precedes_legacy_opt_in() -> None:
     )
 
 
-def test_custom_durable_sqlite_paths_require_legacy_opt_in(tmp_path: Path) -> None:
+def test_custom_durable_sdk_sqlite_path_requires_legacy_opt_in(tmp_path: Path) -> None:
     with pytest.raises(ValueError) as exc_info:
         _resolve_persistence(
             persistence_config=RuntimePersistenceConfig(allow_legacy_sqlite=False),
             sqlite_path=tmp_path / "threads.sqlite3",
             sqlite_path_configured=True,
-            memory_sqlite_path=tmp_path / "memory.sqlite3",
-            memory_sqlite_path_configured=True,
             text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
             text_session_sqlite_path_configured=True,
         )
 
-    assert str(exc_info.value).endswith(
-        "SQLite fields: memory_backend, text_session_backend."
-    )
+    assert str(exc_info.value).endswith("SQLite fields: text_session_backend.")
 
 
 def test_incognito_and_in_memory_paths_bypass_durable_sqlite_guard() -> None:
@@ -202,12 +199,11 @@ def test_incognito_and_in_memory_paths_bypass_durable_sqlite_guard() -> None:
     in_memory = _resolve_persistence(
         persistence_config=None,
         sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
         text_session_sqlite_path=":memory:",
     )
 
     assert incognito.memory_mode is MemoryMode.INCOGNITO
-    assert in_memory.memory_backend == "sqlite"
+    assert in_memory.memory_backend == "postgres"
 
 
 def test_dependency_config_can_override_and_explicitly_clear_values() -> None:

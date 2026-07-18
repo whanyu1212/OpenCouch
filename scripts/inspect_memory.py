@@ -4,14 +4,12 @@
 Usage:
     python scripts/inspect_memory.py --database-url postgresql://opencouch:opencouch@localhost:5432/opencouch --user hy
     python scripts/inspect_memory.py --database-url postgresql://opencouch:opencouch@localhost:5432/opencouch --all-users
-    python scripts/inspect_memory.py --backend sqlite --sqlite-path apps/backend/.store/memory.sqlite3 --all-users
     python scripts/inspect_memory.py --backend postgres --database-url postgresql://opencouch:opencouch@localhost:5432/opencouch --all-users
 
 Run from the repo root or apps/backend/. Postgres is the supported durable
-memory store and is always selected by the automatic mode. Explicit SQLite
-access is migration-only and requires both ``--backend sqlite`` and
-``--sqlite-path``. Use ``scripts/inspect_memory.sh`` when you want local Docker
-Postgres started before inspection.
+memory store and is always selected by the automatic mode. Use
+``scripts/inspect_memory.sh`` when you want local Docker Postgres started before
+inspection.
 """
 
 from __future__ import annotations
@@ -19,33 +17,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sqlite3
 import sys
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any, Literal
 
-Backend = Literal["sqlite", "postgres"]
+Backend = Literal["postgres"]
 
 
 def resolve_backend(*, requested_backend: str) -> Backend:
     """Resolve the effective memory backend for inspection."""
 
-    if requested_backend == "sqlite":
-        return "sqlite"
     if requested_backend in {"auto", "postgres"}:
         return "postgres"
     raise ValueError(f"Unsupported memory backend: {requested_backend}")
-
-
-def find_sqlite_db(sqlite_path: str) -> Path:
-    """Validate an explicitly selected legacy memory SQLite database."""
-
-    path = Path(sqlite_path).expanduser()
-    if path.exists():
-        return path
-    print(f"Could not find memory SQLite database at {path}", file=sys.stderr)
-    sys.exit(1)
 
 
 def resolve_database_url(database_url: str | None = None) -> str:
@@ -69,35 +53,6 @@ def _decode_record_value(value: Any) -> dict[str, Any]:
     if isinstance(value, dict):
         return value
     return {"value": value}
-
-
-def fetch_sqlite_records(
-    db: Path,
-    *,
-    owner_id: str | None = None,
-    namespace: str | None = None,
-) -> list[dict[str, Any]]:
-    """Fetch SQLite memory records, optionally filtered by owner and namespace."""
-
-    conn = sqlite3.connect(str(db))
-    conn.row_factory = sqlite3.Row
-    try:
-        cursor = conn.cursor()
-        query = "SELECT * FROM memory_records WHERE 1=1"
-        params: list[str] = []
-
-        if owner_id:
-            query += " AND owner_id = ?"
-            params.append(owner_id)
-        if namespace:
-            query += " AND namespace_kind = ?"
-            params.append(namespace)
-
-        query += " ORDER BY insertion_order"
-        cursor.execute(query, params)
-        return [dict(row) for row in cursor.fetchall()]
-    finally:
-        conn.close()
 
 
 def fetch_postgres_records(
@@ -135,24 +90,6 @@ def fetch_postgres_records(
         with conn.cursor() as cursor:
             cursor.execute(query, params)
             return list(cursor.fetchall())
-
-
-def list_sqlite_users(db: Path) -> list[dict[str, Any]]:
-    """List all SQLite users with record counts per namespace."""
-
-    conn = sqlite3.connect(str(db))
-    try:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT owner_id, namespace_kind, COUNT(*) as cnt "
-            "FROM memory_records GROUP BY owner_id, namespace_kind "
-            "ORDER BY owner_id, namespace_kind"
-        )
-        rows = cursor.fetchall()
-    finally:
-        conn.close()
-
-    return _group_user_counts(rows)
 
 
 def list_postgres_users(database_url: str) -> list[dict[str, Any]]:
@@ -343,19 +280,9 @@ def main() -> None:
     )
     parser.add_argument(
         "--backend",
-        choices=["auto", "sqlite", "postgres"],
+        choices=["auto", "postgres"],
         default="auto",
-        help=(
-            "Memory backend to inspect. 'auto' always selects Postgres. "
-            "SQLite is migration-only and must be selected explicitly."
-        ),
-    )
-    parser.add_argument(
-        "--sqlite-path",
-        help=(
-            "Legacy SQLite memory database path; requires --backend sqlite "
-            "for migration-only inspection."
-        ),
+        help="Memory backend to inspect. 'auto' selects Postgres.",
     )
     parser.add_argument(
         "--database-url",
@@ -364,44 +291,20 @@ def main() -> None:
     args = parser.parse_args()
 
     backend = resolve_backend(requested_backend=args.backend)
-
-    sqlite_db: Path | None = None
-    database_url: str | None = None
-    if backend == "sqlite":
-        if not args.sqlite_path:
-            parser.error("--backend sqlite requires --sqlite-path")
-        if args.database_url:
-            parser.error("--database-url cannot be used with --backend sqlite")
-        sqlite_db = find_sqlite_db(args.sqlite_path)
-    else:
-        if args.sqlite_path:
-            parser.error("--sqlite-path requires --backend sqlite")
-        database_url = resolve_database_url(args.database_url)
+    database_url = resolve_database_url(args.database_url)
 
     if args.all_users:
-        users = (
-            list_sqlite_users(sqlite_db)
-            if backend == "sqlite" and sqlite_db is not None
-            else list_postgres_users(database_url or "")
-        )
+        users = list_postgres_users(database_url)
         _print_user_counts(users, backend=backend)
         return
 
     if not args.user:
         parser.error("--user is required (or use --all-users)")
 
-    records = (
-        fetch_sqlite_records(
-            sqlite_db,
-            owner_id=args.user,
-            namespace=args.namespace,
-        )
-        if backend == "sqlite" and sqlite_db is not None
-        else fetch_postgres_records(
-            database_url or "",
-            owner_id=args.user,
-            namespace=args.namespace,
-        )
+    records = fetch_postgres_records(
+        database_url,
+        owner_id=args.user,
+        namespace=args.namespace,
     )
     _print_records(
         records,

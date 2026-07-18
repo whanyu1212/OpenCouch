@@ -141,7 +141,7 @@ def prepare_memory_record_fields(
 
 
 def parse_store_record_value(value: Any) -> dict[str, Any]:
-    """Return a StoreRecord value from SQLite JSON text or Postgres JSONB."""
+    """Return a StoreRecord value from a backend-extracted payload."""
 
     if isinstance(value, str):
         return cast(dict[str, Any], json.loads(value))
@@ -172,8 +172,7 @@ class MemoryStore(Protocol):
     """The async interface implemented by supported memory stores.
 
     The runtime can swap ephemeral in-memory and durable Postgres
-    implementations without node code knowing which one it is holding. The
-    legacy SQLite implementation remains only as guarded PR3 compatibility.
+    implementations without node code knowing which one it is holding.
 
     Design notes:
     - **``@runtime_checkable``** so ``isinstance(store, MemoryStore)``

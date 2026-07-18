@@ -59,5 +59,6 @@ stored for your review.
 Durable long-term memory lives in Postgres, the only supported durable backend,
 so back up or export that database. OpenCouch does not import, copy, or delete an
 older `memory.sqlite3`; no importer is provided. Archive or discard the file as
-appropriate. Explicit migration-only inspection remains available until final
-removal. OpenAI SDK `text_sessions.sqlite3` storage is separate and unchanged.
+appropriate. The legacy store and built-in SQLite memory tools are removed, so
+inspection requires an older OpenCouch release or an external read-only SQLite
+tool. OpenAI SDK `text_sessions.sqlite3` storage is separate and preserved.

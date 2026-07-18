@@ -6,8 +6,8 @@ retrieval code that decides when those records are read or written.
 
 Postgres-backed typed records are the source of truth and Postgres is the only
 supported durable long-term memory backend. In-memory stores are for
-incognito/test paths. SQLite code remains temporarily for migration-only
-inspection and focused removal coverage, not as a supported runtime fallback.
+incognito/test paths. The legacy `SqliteMemoryStore` and built-in SQLite memory
+tools have been removed.
 
 ## Boundary
 
@@ -126,8 +126,6 @@ retention, multi-user storage, incognito behavior, or structured retrieval.
   namespace helpers, and shared record parsing.
 - [`store/memory.py`](./store/memory.py): in-memory store for incognito/tests.
 - [`store/postgres.py`](./store/postgres.py): primary durable Postgres store.
-- [`store/sqlite.py`](./store/sqlite.py): legacy store retained temporarily for
-  migration/removal work.
 - [`modes.py`](./modes.py): `MemoryMode` enum used by runtime wiring.
 
 ### Retrieval
@@ -237,13 +235,12 @@ retention, multi-user storage, incognito behavior, or structured retrieval.
 - Incognito mode uses in-memory stores and must not write durable user memory.
 - Old `memory.sqlite3` files are not imported into Postgres, copied, or deleted;
   there is no importer. Archive or discard them according to local retention
-  needs.
-- Until final removal, `scripts/inspect_memory.py --backend sqlite
-  --sqlite-path <path> ...` and the equivalent clear command provide explicit
-  migration-only access. Automatic script selection always targets Postgres
-  and requires `OPENCOUCH_MEMORY_DATABASE_URL` or `--database-url`.
+  needs. Inspect an archived file with an older OpenCouch release or an external
+  read-only SQLite tool.
+- The built-in memory inspection and clear tools support Postgres only and
+  require `OPENCOUCH_MEMORY_DATABASE_URL` or `--database-url`.
 - OpenAI Agents SDK `text_sessions.sqlite3` storage is a separate runtime
-  surface and is unchanged by long-term memory retirement.
+  surface and is preserved by long-term memory retirement.
 - Crisis audit and session feedback persistence are separate from prompt memory
   even when they share the same deployment database.
 

@@ -97,14 +97,15 @@ The `--user-id` flag decouples memory identity from thread identity
 Postgres is the only supported durable long-term memory backend. OpenCouch has
 no importer for old `memory.sqlite3` files and does not copy or delete them
 during cutover. Archive a file if its records are still needed, or discard it.
-Until final removal, `scripts/inspect_memory.py` supports migration-only access
-when both `--backend sqlite` and `--sqlite-path <path>` are supplied.
+The legacy `SqliteMemoryStore` and built-in SQLite memory inspection and clear
+paths have been removed. Inspect an archived file with an older OpenCouch
+release or an external read-only SQLite tool.
 
-This migration-only `SqliteMemoryStore` path is unrelated to OpenAI Agents SDK
-text sessions. The SDK may separately use `SQLiteSession` and
-`text_sessions.sqlite3` for model-visible short-term history; that storage is
-not an OpenCouch long-term-memory backend. SQLite runtime-state, active-session,
-crisis-log, and feedback implementations have been removed.
+OpenAI Agents SDK text sessions are separate. The SDK may use `SQLiteSession`
+and `text_sessions.sqlite3` for model-visible short-term history; that storage
+is preserved and is not an OpenCouch long-term-memory backend. SQLite
+runtime-state, active-session, crisis-log, and feedback implementations have
+also been removed.
 :::
 
 ---
@@ -131,7 +132,6 @@ crisis-log, and feedback implementations have been removed.
 |---|---|
 | `agent/memory/store/__init__.py` | `MemoryStore` protocol — `aput`, `aput_batch`, `asearch_similar`, `alatest`, plus the in-memory `OpenCouchMemoryStore` |
 | `agent/memory/store/postgres.py` | Primary durable Postgres backend with hybrid retrieval support |
-| `agent/memory/store/sqlite.py` | Legacy backend pending removal; retained only for migration/removal work |
 | `agent/memory/modes.py` | `MemoryMode` enum (`INCOGNITO`, `LOCAL`, `SYNCED`) |
 | `agent/memory/retrieval/` | `ranking.py` (RRF fusion `k=60`, lexical/dense rank, cosine similarity) and `service.py` (`load_memory_for_turn` orchestration) |
 | `agent/memory/providers/embeddings.py` | `EmbeddingProvider` protocol + OpenAI / Null providers |

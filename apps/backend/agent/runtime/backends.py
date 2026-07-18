@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Literal
 
 from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
@@ -18,7 +17,6 @@ from agent.memory.providers.embeddings import (
     NullEmbeddingProvider,
     create_configured_embedding_provider,
 )
-from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.memory.modes import MemoryMode
 from agent.memory.store.postgres import PostgresMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
@@ -26,6 +24,8 @@ from agent.runtime.postgres import require_postgres_database_url
 
 PersistenceBackend = Literal["sqlite", "postgres"]
 RuntimeStoreBackend = Literal["memory", "sqlite", "postgres"]
+MemoryPersistenceBackend = Literal["postgres"]
+MemoryStoreBackend = Literal["memory", "postgres"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,7 +33,7 @@ class RuntimeBackendSelection:
     """Effective runtime-owned backends after mode overrides are applied."""
 
     thread_persistence_backend: RuntimeStoreBackend
-    memory_store_backend: RuntimeStoreBackend
+    memory_store_backend: MemoryStoreBackend
     crisis_log_backend: RuntimeStoreBackend
     session_feedback_backend: RuntimeStoreBackend
 
@@ -41,7 +41,7 @@ class RuntimeBackendSelection:
 def select_runtime_backends(
     *,
     memory_mode: MemoryMode,
-    memory_backend: PersistenceBackend,
+    memory_backend: MemoryPersistenceBackend,
     thread_persistence_backend: RuntimeStoreBackend,
     crisis_log_persistence_backend: PersistenceBackend,
     session_feedback_persistence_backend: PersistenceBackend,
@@ -91,17 +91,15 @@ def effective_thread_persistence_backend(
 def create_memory_store(
     *,
     memory_store: MemoryStore | None,
-    memory_backend: RuntimeStoreBackend,
+    memory_backend: MemoryStoreBackend,
     memory_database_url: str | None,
-    memory_sqlite_path: str | Path,
 ) -> MemoryStore:
     """Create the runtime memory store.
 
     Args:
         memory_store (MemoryStore | None): Optional explicit store override.
-        memory_backend (RuntimeStoreBackend): Selected memory backend.
+        memory_backend (MemoryStoreBackend): Selected memory backend.
         memory_database_url (str | None): PostgreSQL URL for persistent memory.
-        memory_sqlite_path (str | Path): SQLite path for local memory.
 
     Returns:
         MemoryStore: Configured memory store.
@@ -116,8 +114,6 @@ def create_memory_store(
         return OpenCouchMemoryStore()
     if memory_backend == "postgres":
         return PostgresMemoryStore(require_postgres_database_url(memory_database_url))
-    if memory_backend == "sqlite":
-        return SqliteMemoryStore(memory_sqlite_path)
     raise ValueError(f"Unsupported memory backend: {memory_backend}")
 
 

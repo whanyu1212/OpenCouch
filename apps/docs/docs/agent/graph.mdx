@@ -169,8 +169,9 @@ for the full breakdown.
 Postgres is the only supported durable backend for OpenCouch long-term memory
 and other application-owned persistence. OpenAI Agents SDK `SQLiteSession`
 storage is a separate model-visible short-term history surface, not long-term
-memory. The old SQLite runtime-state, active-session, crisis-log, and feedback
-implementations have been removed.
+memory, and is preserved. The old SQLite runtime-state, active-session,
+crisis-log, feedback, and long-term-memory implementations and built-in SQLite
+memory tools have been removed.
 
 ## Adding a new therapeutic response style
 

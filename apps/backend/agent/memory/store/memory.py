@@ -2,8 +2,8 @@
 
 The :class:`OpenCouchMemoryStore` keeps records in per-instance dicts and
 is the default backend for tests and incognito-mode sessions, where no
-connection lifecycle or disk persistence is wanted. Durable backends live
-in :mod:`agent.memory.store.sqlite` and :mod:`agent.memory.store.postgres`.
+connection lifecycle or disk persistence is wanted. Durable memory uses
+:mod:`agent.memory.store.postgres`.
 """
 
 from __future__ import annotations

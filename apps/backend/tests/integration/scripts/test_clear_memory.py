@@ -2,147 +2,153 @@
 
 from __future__ import annotations
 
-import json
+import importlib.util
 import os
-import sqlite3
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[5]
 SCRIPT = REPO_ROOT / "scripts" / "clear_memory.py"
+WRAPPER = REPO_ROOT / "scripts" / "clear_memory.sh"
 
 
-def _create_memory_db(path: Path) -> None:
-    conn = sqlite3.connect(path)
-    try:
-        conn.execute(
-            """
-            CREATE TABLE memory_records (
-                insertion_order INTEGER PRIMARY KEY AUTOINCREMENT,
-                id TEXT NOT NULL,
-                owner_id TEXT NOT NULL,
-                namespace_kind TEXT NOT NULL,
-                category TEXT,
-                value TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                last_referenced_at TEXT NOT NULL,
-                dormant_at TEXT,
-                user_visible INTEGER NOT NULL DEFAULT 1
-            )
-            """
-        )
-        for index, owner_id in enumerate(("user-1", "user-2"), start=1):
-            conn.execute(
-                """
-                INSERT INTO memory_records (
-                    id,
-                    owner_id,
-                    namespace_kind,
-                    category,
-                    value,
-                    created_at,
-                    last_referenced_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    f"memory-{index}",
-                    owner_id,
-                    "semantic",
-                    "trigger",
-                    json.dumps({"evidence_quote": f"memory for {owner_id}"}),
-                    "2026-05-23T00:00:00Z",
-                    "2026-05-23T00:00:00Z",
-                ),
-            )
-        conn.commit()
-    finally:
-        conn.close()
+def _load_script() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("clear_memory", SCRIPT)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
 
 
-def _record_count(path: Path) -> int:
-    conn = sqlite3.connect(path)
-    try:
-        return int(conn.execute("SELECT COUNT(*) FROM memory_records").fetchone()[0])
-    finally:
-        conn.close()
+def test_clear_memory_auto_always_selects_postgres() -> None:
+    module = _load_script()
+
+    assert module.resolve_backend(requested_backend="auto") == "postgres"
+    assert module.resolve_backend(requested_backend="postgres") == "postgres"
+    with pytest.raises(ValueError, match="Unsupported memory backend: sqlite"):
+        module.resolve_backend(requested_backend="sqlite")
 
 
-def _owner_count(path: Path, owner_id: str) -> int:
-    conn = sqlite3.connect(path)
-    try:
-        return int(
-            conn.execute(
-                "SELECT COUNT(*) FROM memory_records WHERE owner_id = ?",
-                (owner_id,),
-            ).fetchone()[0]
-        )
-    finally:
-        conn.close()
-
-
-def test_clear_memory_deletes_one_sqlite_user_with_force(tmp_path: Path) -> None:
-    db_path = tmp_path / "memory.sqlite3"
-    _create_memory_db(db_path)
-
+def test_clear_memory_rejects_sqlite_backend() -> None:
     result = subprocess.run(
         [
             sys.executable,
             str(SCRIPT),
             "--backend",
             "sqlite",
+            "--all-users",
+            "--force",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "invalid choice: 'sqlite'" in result.stderr
+
+
+def test_clear_memory_rejects_sqlite_path() -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
             "--sqlite-path",
-            str(db_path),
+            "memory.sqlite3",
+            "--all-users",
+            "--force",
+        ],
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert "unrecognized arguments: --sqlite-path memory.sqlite3" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("removed_args", "error_message"),
+    [
+        (("--backend", "sqlite"), "Unsupported memory backend: sqlite"),
+        (("--backend=sqlite",), "Unsupported memory backend: sqlite"),
+        (("--sqlite-path", "memory.sqlite3"), "SQLite memory tooling has been removed"),
+        (("--sqlite-path=memory.sqlite3",), "SQLite memory tooling has been removed"),
+    ],
+)
+def test_clear_memory_wrapper_rejects_sqlite_before_starting_docker(
+    tmp_path: Path,
+    removed_args: tuple[str, ...],
+    error_message: str,
+) -> None:
+    docker_marker = tmp_path / "docker-called"
+    fake_docker = tmp_path / "docker"
+    fake_docker.write_text(
+        '#!/usr/bin/env bash\ntouch "$DOCKER_MARKER"\n', encoding="utf-8"
+    )
+    fake_docker.chmod(0o755)
+    env = os.environ.copy()
+    env["DOCKER_MARKER"] = str(docker_marker)
+    env["PATH"] = f"{tmp_path}{os.pathsep}{env['PATH']}"
+
+    result = subprocess.run(
+        ["bash", str(WRAPPER), *removed_args, "--all-users", "--force"],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 2
+    assert error_message in result.stderr
+    assert not docker_marker.exists()
+
+
+def test_clear_memory_accepts_postgres_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    module = _load_script()
+    calls: list[tuple[str, str | None]] = []
+
+    def clear_records(database_url: str, *, owner_id: str | None = None) -> int:
+        calls.append((database_url, owner_id))
+        return 3
+
+    monkeypatch.setattr(module, "clear_postgres_records", clear_records)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            str(SCRIPT),
+            "--backend",
+            "postgres",
+            "--database-url",
+            "postgresql://example/opencouch",
             "--user",
             "user-1",
             "--force",
         ],
-        check=True,
-        capture_output=True,
-        text=True,
     )
 
-    assert "Deleted 1 memory record(s) for user 'user-1' from sqlite." in result.stdout
-    assert _owner_count(db_path, "user-1") == 0
-    assert _owner_count(db_path, "user-2") == 1
+    module.main()
+
+    assert calls == [("postgresql://example/opencouch", "user-1")]
+    assert (
+        capsys.readouterr().out
+        == "Deleted 3 memory record(s) for user 'user-1' from postgres.\n"
+    )
 
 
-def test_clear_memory_deletes_all_sqlite_users_with_force(tmp_path: Path) -> None:
-    db_path = tmp_path / "memory.sqlite3"
-    _create_memory_db(db_path)
-
+def test_clear_memory_requires_confirmation_without_force() -> None:
     result = subprocess.run(
         [
             sys.executable,
             str(SCRIPT),
-            "--backend",
-            "sqlite",
-            "--sqlite-path",
-            str(db_path),
-            "--all-users",
-            "--force",
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    assert "Deleted 2 memory record(s) for all users from sqlite." in result.stdout
-    assert _record_count(db_path) == 0
-
-
-def test_clear_memory_requires_confirmation_without_force(tmp_path: Path) -> None:
-    db_path = tmp_path / "memory.sqlite3"
-    _create_memory_db(db_path)
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT),
-            "--backend",
-            "sqlite",
-            "--sqlite-path",
-            str(db_path),
+            "--database-url",
+            "postgresql://example/opencouch",
             "--all-users",
         ],
         input="no\n",
@@ -151,49 +157,27 @@ def test_clear_memory_requires_confirmation_without_force(tmp_path: Path) -> Non
     )
 
     assert result.returncode == 1
+    assert "from the postgres store" in result.stdout
     assert "Cancelled." in result.stdout
-    assert _record_count(db_path) == 2
 
 
 def test_clear_memory_requires_explicit_target() -> None:
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--backend", "sqlite", "--force"],
+        [sys.executable, str(SCRIPT), "--force"],
         capture_output=True,
         text=True,
     )
 
-    assert result.returncode != 0
+    assert result.returncode == 2
     assert "one of the arguments --user/-u --all-users is required" in result.stderr
 
 
-def test_clear_memory_auto_always_selects_postgres() -> None:
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("clear_memory", SCRIPT)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-
-    assert module.resolve_backend(requested_backend="auto") == "postgres"
-    assert module.resolve_backend(requested_backend="postgres") == "postgres"
-    assert module.resolve_backend(requested_backend="sqlite") == "sqlite"
-
-
-def test_clear_memory_auto_requires_postgres_dsn_even_with_legacy_sqlite(
-    tmp_path: Path,
-) -> None:
-    store_dir = tmp_path / ".store"
-    store_dir.mkdir()
-    db_path = store_dir / "memory.sqlite3"
-    _create_memory_db(db_path)
+def test_clear_memory_requires_postgres_dsn() -> None:
     env = os.environ.copy()
-    env["OPENCOUCH_PERSISTENCE_BACKEND"] = "sqlite"
     env.pop("OPENCOUCH_MEMORY_DATABASE_URL", None)
 
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--all-users", "--force"],
-        cwd=tmp_path,
         env=env,
         capture_output=True,
         text=True,
@@ -201,57 +185,3 @@ def test_clear_memory_auto_requires_postgres_dsn_even_with_legacy_sqlite(
 
     assert result.returncode == 1
     assert "Postgres clearing requires --database-url" in result.stderr
-    assert _record_count(db_path) == 2
-
-
-def test_clear_memory_sqlite_requires_explicit_path() -> None:
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT),
-            "--backend",
-            "sqlite",
-            "--all-users",
-            "--force",
-        ],
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode != 0
-    assert "--backend sqlite requires --sqlite-path" in result.stderr
-
-
-def test_clear_memory_sqlite_path_requires_explicit_backend(tmp_path: Path) -> None:
-    db_path = tmp_path / "memory.sqlite3"
-    _create_memory_db(db_path)
-
-    result = subprocess.run(
-        [
-            sys.executable,
-            str(SCRIPT),
-            "--sqlite-path",
-            str(db_path),
-            "--all-users",
-            "--force",
-        ],
-        capture_output=True,
-        text=True,
-    )
-
-    assert result.returncode != 0
-    assert "--sqlite-path requires --backend sqlite" in result.stderr
-    assert _record_count(db_path) == 2
-
-
-def test_clear_memory_help_marks_sqlite_as_migration_only() -> None:
-    result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--help"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-
-    help_text = " ".join(result.stdout.split())
-    assert "'auto' always selects Postgres" in help_text
-    assert "SQLite is migration-only" in help_text

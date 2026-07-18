@@ -172,7 +172,6 @@ def test_build_runtime_resources_requires_database_url_for_postgres_thread_backe
             memory_store=OpenCouchMemoryStore(),
             memory_backend="postgres",
             memory_database_url=None,
-            memory_sqlite_path=":memory:",
             crisis_log_backend=None,
             crisis_log_persistence_backend="postgres",
             crisis_log_database_url="postgresql://unused/crisis",

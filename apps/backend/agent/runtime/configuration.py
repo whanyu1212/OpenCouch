@@ -20,20 +20,22 @@ from llm.base import BaseLLMClient
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 _STORE_DIR = BACKEND_ROOT / ".store"
 DEFAULT_THREAD_DB_PATH = _STORE_DIR / "threads.sqlite3"
-DEFAULT_MEMORY_DB_PATH = _STORE_DIR / "memory.sqlite3"
 DEFAULT_TEXT_SESSION_DB_PATH = _STORE_DIR / "text_sessions.sqlite3"
 DEFAULT_CRISIS_LOG_DB_PATH = _STORE_DIR / "crisis.sqlite3"
 DEFAULT_FEEDBACK_DB_PATH = _STORE_DIR / "session_feedback.sqlite3"
 SESSION_TIMEOUT = timedelta(minutes=20)
 _UNSET = object()
 _LEGACY_STORAGE_PATH_WARNING = (
-    "PersistentAgentRuntime direct SQLite path arguments are deprecated; "
-    "use storage_paths=RuntimeStoragePaths(...) instead."
+    "PersistentAgentRuntime direct SQLite path arguments are deprecated."
 )
 _LEGACY_SQLITE_DURABLE_MESSAGE = (
-    "Durable SQLite memory or SDK-session persistence is legacy and disabled "
-    "unless explicitly allowed. Use Postgres for durable runtime persistence, "
+    "Durable SQLite SDK-session persistence is legacy and disabled unless "
+    "explicitly allowed. Use Postgres for durable runtime persistence, "
     "or set allow_legacy_sqlite=True for temporary migration-only usage."
+)
+_REMOVED_MEMORY_SQLITE_MESSAGE = (
+    "SQLite memory persistence has been removed. Use memory_backend='postgres' "
+    "with a Postgres database URL, or inject a MemoryStore for ephemeral tests."
 )
 _REMOVED_THREAD_SQLITE_MESSAGE = (
     "SQLite runtime-state and active-session persistence has been removed. "
@@ -62,10 +64,9 @@ def _is_non_default_sqlite_path(
 
 @dataclass(slots=True)
 class RuntimeStoragePaths:
-    """Grouped SQLite path overrides for runtime-owned storage."""
+    """Grouped compatibility paths; only SDK-session SQLite remains effective."""
 
     sqlite_path: str | Path | object = _UNSET
-    memory_sqlite_path: str | Path | object = _UNSET
     crisis_log_sqlite_path: str | Path | object = _UNSET
     feedback_sqlite_path: str | Path | object = _UNSET
     text_session_sqlite_path: str | Path | None | object = _UNSET
@@ -76,12 +77,10 @@ class _ResolvedRuntimeStoragePaths:
     """Constructor-ready SQLite path values for runtime-owned storage."""
 
     sqlite_path: str | Path
-    memory_sqlite_path: str | Path
     crisis_log_sqlite_path: str | Path
     feedback_sqlite_path: str | Path
     text_session_sqlite_path: str | Path | None
     sqlite_path_configured: bool
-    memory_sqlite_path_configured: bool
     crisis_log_sqlite_path_configured: bool
     feedback_sqlite_path_configured: bool
     text_session_sqlite_path_configured: bool
@@ -109,8 +108,19 @@ def _resolve_runtime_storage_paths(
         name for name, value in legacy_path_args if value is not _UNSET
     ]
     if supplied_legacy_path_args:
+        guidance: list[str] = []
+        if memory_sqlite_path is not _UNSET:
+            guidance.append(
+                "memory_sqlite_path is ignored because SQLite memory persistence "
+                "has been removed."
+            )
+        if any(name != "memory_sqlite_path" for name in supplied_legacy_path_args):
+            guidance.append(
+                "Use storage_paths=RuntimeStoragePaths(...) for supported path "
+                "overrides."
+            )
         warnings.warn(
-            f"{_LEGACY_STORAGE_PATH_WARNING} Legacy args: "
+            f"{_LEGACY_STORAGE_PATH_WARNING} {' '.join(guidance)} Legacy args: "
             f"{', '.join(supplied_legacy_path_args)}.",
             DeprecationWarning,
             stacklevel=3,
@@ -119,10 +129,6 @@ def _resolve_runtime_storage_paths(
     sqlite_path_configured = _is_non_default_sqlite_path(
         sqlite_path,
         default_path=DEFAULT_THREAD_DB_PATH,
-    )
-    memory_sqlite_path_configured = _is_non_default_sqlite_path(
-        memory_sqlite_path,
-        default_path=DEFAULT_MEMORY_DB_PATH,
     )
     crisis_log_sqlite_path_configured = _is_non_default_sqlite_path(
         crisis_log_sqlite_path,
@@ -141,11 +147,6 @@ def _resolve_runtime_storage_paths(
         DEFAULT_THREAD_DB_PATH
         if sqlite_path is _UNSET
         else cast(str | Path, sqlite_path)
-    )
-    resolved_memory_sqlite_path = (
-        DEFAULT_MEMORY_DB_PATH
-        if memory_sqlite_path is _UNSET
-        else cast(str | Path, memory_sqlite_path)
     )
     resolved_crisis_log_sqlite_path = (
         DEFAULT_CRISIS_LOG_DB_PATH
@@ -169,15 +170,6 @@ def _resolve_runtime_storage_paths(
             sqlite_path_configured = _is_non_default_sqlite_path(
                 storage_paths.sqlite_path,
                 default_path=DEFAULT_THREAD_DB_PATH,
-            )
-        if storage_paths.memory_sqlite_path is not _UNSET:
-            resolved_memory_sqlite_path = cast(
-                str | Path,
-                storage_paths.memory_sqlite_path,
-            )
-            memory_sqlite_path_configured = _is_non_default_sqlite_path(
-                storage_paths.memory_sqlite_path,
-                default_path=DEFAULT_MEMORY_DB_PATH,
             )
         if storage_paths.crisis_log_sqlite_path is not _UNSET:
             resolved_crisis_log_sqlite_path = cast(
@@ -209,12 +201,10 @@ def _resolve_runtime_storage_paths(
 
     return _ResolvedRuntimeStoragePaths(
         sqlite_path=resolved_sqlite_path,
-        memory_sqlite_path=resolved_memory_sqlite_path,
         crisis_log_sqlite_path=resolved_crisis_log_sqlite_path,
         feedback_sqlite_path=resolved_feedback_sqlite_path,
         text_session_sqlite_path=resolved_text_session_sqlite_path,
         sqlite_path_configured=sqlite_path_configured,
-        memory_sqlite_path_configured=memory_sqlite_path_configured,
         crisis_log_sqlite_path_configured=crisis_log_sqlite_path_configured,
         feedback_sqlite_path_configured=feedback_sqlite_path_configured,
         text_session_sqlite_path_configured=text_session_sqlite_path_configured,
@@ -226,7 +216,7 @@ class RuntimePersistenceConfig:
     """Grouped backend and database URL configuration for the runtime."""
 
     memory_mode: MemoryMode | object = _UNSET
-    memory_backend: Literal["sqlite", "postgres"] | object = _UNSET
+    memory_backend: Literal["postgres"] | object = _UNSET
     memory_database_url: str | None | object = _UNSET
     thread_persistence_backend: Literal["memory", "sqlite", "postgres"] | object = (
         _UNSET
@@ -288,8 +278,6 @@ def _validate_legacy_sqlite_durable_allowed(
     *,
     memory_mode: MemoryMode,
     memory_backend: Literal["sqlite", "postgres"],
-    memory_sqlite_path: str | Path,
-    memory_store: MemoryStore | None,
     thread_persistence_backend: Literal["memory", "sqlite", "postgres"],
     sqlite_path: str | Path,
     crisis_log_persistence_backend: Literal["sqlite", "postgres"],
@@ -302,6 +290,9 @@ def _validate_legacy_sqlite_durable_allowed(
     allow_legacy_sqlite: bool,
 ) -> None:
     """Reject removed stores and unapproved remaining durable SQLite."""
+
+    if memory_backend == "sqlite":
+        raise ValueError(_REMOVED_MEMORY_SQLITE_MESSAGE)
 
     if memory_mode != MemoryMode.INCOGNITO and thread_persistence_backend == "sqlite":
         raise ValueError(_REMOVED_THREAD_SQLITE_MESSAGE)
@@ -329,12 +320,6 @@ def _validate_legacy_sqlite_durable_allowed(
         return
 
     sqlite_backends: list[str] = []
-    if (
-        memory_store is None
-        and memory_backend == "sqlite"
-        and not _is_in_memory_sqlite_path(memory_sqlite_path)
-    ):
-        sqlite_backends.append("memory_backend")
     text_session_uses_sqlite = text_session_backend == "sqlite" or (
         text_session_backend == "auto" and not text_session_database_url
     )
@@ -358,7 +343,7 @@ class _ResolvedRuntimePersistenceConfig:
     """Constructor-ready backend and database URL settings."""
 
     memory_mode: MemoryMode
-    memory_backend: Literal["sqlite", "postgres"]
+    memory_backend: Literal["postgres"]
     memory_database_url: str | None
     thread_persistence_backend: Literal["memory", "sqlite", "postgres"]
     thread_database_url: str | None
@@ -376,9 +361,6 @@ def _resolve_runtime_persistence_config(
     memory_mode: MemoryMode,
     memory_backend: Literal["sqlite", "postgres"],
     memory_database_url: str | None,
-    memory_sqlite_path: str | Path,
-    memory_sqlite_path_configured: bool,
-    memory_store: MemoryStore | None,
     thread_persistence_backend: Literal["memory", "sqlite", "postgres"],
     thread_database_url: str | None,
     sqlite_path: str | Path,
@@ -462,8 +444,6 @@ def _resolve_runtime_persistence_config(
     _validate_legacy_sqlite_durable_allowed(
         memory_mode=memory_mode,
         memory_backend=memory_backend,
-        memory_sqlite_path=memory_sqlite_path,
-        memory_store=memory_store,
         thread_persistence_backend=thread_persistence_backend,
         sqlite_path=sqlite_path,
         crisis_log_persistence_backend=crisis_log_persistence_backend,
@@ -478,7 +458,7 @@ def _resolve_runtime_persistence_config(
 
     return _ResolvedRuntimePersistenceConfig(
         memory_mode=memory_mode,
-        memory_backend=memory_backend,
+        memory_backend=cast(Literal["postgres"], memory_backend),
         memory_database_url=memory_database_url,
         thread_persistence_backend=thread_persistence_backend,
         thread_database_url=thread_database_url,
