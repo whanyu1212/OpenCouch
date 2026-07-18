@@ -194,20 +194,34 @@ def _build_runtime(
 ) -> PersistentAgentRuntime:
     """Construct a runtime with API persistence settings."""
 
+    if settings.persistence_backend == "postgres":
+        persistence_config = RuntimePersistenceConfig.for_shared_backend(
+            memory_mode=memory_mode,
+            persistence_backend="postgres",
+            database_url=settings.memory_database_url,
+            text_session_backend=settings.text_session_backend,
+            text_session_database_url=settings.text_session_database_url,
+            allow_legacy_sqlite=settings.allow_legacy_sqlite,
+        )
+    else:
+        persistence_config = RuntimePersistenceConfig(
+            memory_mode=memory_mode,
+            memory_backend="sqlite",
+            thread_persistence_backend="memory",
+            crisis_log_persistence_backend="sqlite",
+            session_feedback_persistence_backend="sqlite",
+            text_session_backend=settings.text_session_backend,
+            text_session_database_url=settings.text_session_database_url,
+            allow_legacy_sqlite=settings.allow_legacy_sqlite,
+        )
+
     return PersistentAgentRuntime(
         storage_paths=RuntimeStoragePaths(
             sqlite_path=str(DEFAULT_THREAD_DB_PATH),
             memory_sqlite_path=str(DEFAULT_MEMORY_DB_PATH),
             crisis_log_sqlite_path=str(DEFAULT_CRISIS_LOG_DB_PATH),
         ),
-        persistence_config=RuntimePersistenceConfig.for_shared_backend(
-            memory_mode=memory_mode,
-            persistence_backend=settings.persistence_backend,
-            database_url=settings.memory_database_url,
-            text_session_backend=settings.text_session_backend,
-            text_session_database_url=settings.text_session_database_url,
-            allow_legacy_sqlite=settings.allow_legacy_sqlite,
-        ),
+        persistence_config=persistence_config,
         dependencies=RuntimeDependencies(
             default_llm_client=llm_client,
         ),

@@ -43,6 +43,7 @@ async def test_prewarm_initializes_openai_text_runtime(tmp_path) -> None:
             text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
         ),
         persistence_config=RuntimePersistenceConfig(
+            thread_persistence_backend="memory",
             text_session_backend="sqlite",
             allow_legacy_sqlite=True,
         ),
@@ -60,6 +61,7 @@ async def test_runtime_reset_clears_runtime_and_sdk_session_state(tmp_path) -> N
             text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
         ),
         persistence_config=RuntimePersistenceConfig(
+            thread_persistence_backend="memory",
             text_session_backend="sqlite",
             allow_legacy_sqlite=True,
         ),
@@ -91,6 +93,7 @@ async def test_runtime_history_falls_back_to_runtime_state_transcript(tmp_path) 
             text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
         ),
         persistence_config=RuntimePersistenceConfig(
+            thread_persistence_backend="memory",
             text_session_backend="sqlite",
             allow_legacy_sqlite=True,
         ),

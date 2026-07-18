@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from tests.support.persistence_contracts import open_active_session_store
+from tests.support.persistence_contracts import open_postgres_active_session_store
 
 pytestmark = pytest.mark.asyncio
 
@@ -17,15 +17,11 @@ def _thread_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
 
 
-@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
-async def test_active_session_store_round_trip_list_and_delete(
-    backend: str,
-    tmp_path,
-) -> None:
+async def test_active_session_store_round_trip_list_and_delete() -> None:
     """Payload save/load/list/delete behavior should persist across opens."""
 
-    thread_a = f"a-{_thread_id(backend)}"
-    thread_b = f"z-{_thread_id(backend)}"
+    thread_a = f"a-{_thread_id('postgres')}"
+    thread_b = f"z-{_thread_id('postgres')}"
     payload_a = (
         f'{{"thread_id":"{thread_a}","session_buffer":{{"session_id":"{thread_a}"}}}}'
     )
@@ -33,12 +29,12 @@ async def test_active_session_store_round_trip_list_and_delete(
         f'{{"thread_id":"{thread_b}","session_buffer":{{"session_id":"{thread_b}"}}}}'
     )
 
-    async with open_active_session_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_active_session_store() as store:
         assert await store.load_row(thread_a) is None
         await store.save_payload(thread_b, payload_b)
         await store.save_payload(thread_a, payload_a)
 
-    async with open_active_session_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_active_session_store() as store:
         assert await store.load_row(thread_a) == (
             payload_a,
             None,
@@ -63,24 +59,20 @@ async def test_active_session_store_round_trip_list_and_delete(
         await store.delete_session(thread_a)
         await store.delete_session(thread_b)
 
-    async with open_active_session_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_active_session_store() as store:
         assert await store.load_row(thread_a) is None
         assert await store.load_row(thread_b) is None
 
 
-@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
-async def test_active_session_store_mutation_rotation_and_delete(
-    backend: str,
-    tmp_path,
-) -> None:
+async def test_active_session_store_mutation_rotation_and_delete() -> None:
     """Mutation and rotation metadata should have the same persistence semantics."""
 
-    thread_id = _thread_id(f"{backend}-mutation")
+    thread_id = _thread_id("postgres-mutation")
     payload_json = (
         f'{{"thread_id":"{thread_id}","session_buffer":{{"session_id":"{thread_id}"}}}}'
     )
 
-    async with open_active_session_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_active_session_store() as store:
         await store.save_payload(thread_id, payload_json)
 
         await store.set_mutation(
@@ -106,7 +98,7 @@ async def test_active_session_store_mutation_rotation_and_delete(
             "interrupted",
         )
 
-    async with open_active_session_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_active_session_store() as store:
         assert await store.load_row(thread_id) == (
             payload_json,
             "token-1",
@@ -116,7 +108,7 @@ async def test_active_session_store_mutation_rotation_and_delete(
         )
         await store.clear_mutation(thread_id, "token-1")
 
-    async with open_active_session_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_active_session_store() as store:
         assert await store.load_row(thread_id) == (
             payload_json,
             None,
@@ -126,7 +118,7 @@ async def test_active_session_store_mutation_rotation_and_delete(
         )
         await store.set_rotation_required(thread_id)
 
-    async with open_active_session_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_active_session_store() as store:
         assert await store.load_row(thread_id) == (
             payload_json,
             None,
@@ -136,7 +128,7 @@ async def test_active_session_store_mutation_rotation_and_delete(
         )
         await store.delete_session(thread_id)
 
-    async with open_active_session_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_active_session_store() as store:
         assert await store.load_row(thread_id) is None
         await store.delete_session(thread_id)
         assert await store.load_row(thread_id) is None

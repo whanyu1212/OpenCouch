@@ -34,7 +34,7 @@ RuntimeStoreBackend = Literal["memory", "sqlite", "postgres"]
 class RuntimeBackendSelection:
     """Effective runtime-owned backends after mode overrides are applied."""
 
-    thread_persistence_backend: PersistenceBackend
+    thread_persistence_backend: RuntimeStoreBackend
     memory_store_backend: RuntimeStoreBackend
     crisis_log_backend: RuntimeStoreBackend
     session_feedback_backend: RuntimeStoreBackend
@@ -44,7 +44,7 @@ def select_runtime_backends(
     *,
     memory_mode: MemoryMode,
     memory_backend: PersistenceBackend,
-    thread_persistence_backend: PersistenceBackend,
+    thread_persistence_backend: RuntimeStoreBackend,
     crisis_log_persistence_backend: PersistenceBackend,
     session_feedback_persistence_backend: PersistenceBackend,
 ) -> RuntimeBackendSelection:
@@ -52,7 +52,7 @@ def select_runtime_backends(
 
     if memory_mode == MemoryMode.INCOGNITO:
         return RuntimeBackendSelection(
-            thread_persistence_backend="sqlite",
+            thread_persistence_backend="memory",
             memory_store_backend="memory",
             crisis_log_backend="memory",
             session_feedback_backend="memory",
@@ -68,8 +68,8 @@ def select_runtime_backends(
 def effective_thread_persistence_backend(
     *,
     memory_mode: MemoryMode,
-    thread_persistence_backend: PersistenceBackend,
-) -> PersistenceBackend:
+    thread_persistence_backend: RuntimeStoreBackend,
+) -> RuntimeStoreBackend:
     """Return the effective runtime-state backend for a memory mode.
 
     Args:
@@ -78,7 +78,7 @@ def effective_thread_persistence_backend(
             thread-state backend.
 
     Returns:
-        PersistenceBackend: Backend to use for thread state snapshots.
+        RuntimeStoreBackend: Backend to use for thread state snapshots.
     """
 
     return select_runtime_backends(

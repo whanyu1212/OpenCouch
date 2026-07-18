@@ -8,7 +8,7 @@ import pytest
 
 import agent.runtime.state_store as runtime_state_store_module
 from agent.models import Channel, CrisisAssessment
-from tests.support.persistence_contracts import open_runtime_state_store
+from tests.support.persistence_contracts import open_postgres_runtime_state_store
 
 pytestmark = pytest.mark.asyncio
 
@@ -19,14 +19,10 @@ def _thread_id(prefix: str) -> str:
     return f"{prefix}-{uuid4().hex}"
 
 
-@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
-async def test_runtime_state_store_round_trip_preserves_serialized_state(
-    backend: str,
-    tmp_path,
-) -> None:
+async def test_runtime_state_store_round_trip_preserves_serialized_state() -> None:
     """A stored runtime snapshot should round-trip with expected type restoration."""
 
-    thread_id = _thread_id(f"{backend}-round-trip")
+    thread_id = _thread_id("postgres-round-trip")
     expected_crisis = CrisisAssessment(
         level=2,
         confidence="high",
@@ -43,11 +39,11 @@ async def test_runtime_state_store_round_trip_preserves_serialized_state(
         "diagnostics": {"source": "contract-test"},
     }
 
-    async with open_runtime_state_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_runtime_state_store() as store:
         assert await store.load_state(thread_id) is None
         await store.save_state(thread_id, state)
 
-    async with open_runtime_state_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_runtime_state_store() as store:
         try:
             loaded = await store.load_state(thread_id)
 
@@ -64,10 +60,7 @@ async def test_runtime_state_store_round_trip_preserves_serialized_state(
             await store.delete_thread(thread_id)
 
 
-@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
 async def test_runtime_state_store_overwrite_updates_latest_value_and_recency(
-    backend: str,
-    tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The latest save should replace prior state and drive recency ordering."""
@@ -81,15 +74,15 @@ async def test_runtime_state_store_overwrite_updates_latest_value_and_recency(
     )
     monkeypatch.setattr(runtime_state_store_module, "iso_now", lambda: next(timestamps))
 
-    thread_a = _thread_id(f"{backend}-state-a")
-    thread_b = _thread_id(f"{backend}-state-b")
+    thread_a = _thread_id("postgres-state-a")
+    thread_b = _thread_id("postgres-state-b")
 
-    async with open_runtime_state_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_runtime_state_store() as store:
         await store.save_state(thread_a, {"session_progress": {"turn_count": 1}})
         await store.save_state(thread_b, {"session_progress": {"turn_count": 2}})
         await store.save_state(thread_a, {"session_progress": {"turn_count": 3}})
 
-    async with open_runtime_state_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_runtime_state_store() as store:
         try:
             loaded_a = await store.load_state(thread_a)
             assert loaded_a is not None
@@ -100,20 +93,16 @@ async def test_runtime_state_store_overwrite_updates_latest_value_and_recency(
             await store.delete_thread(thread_b)
 
 
-@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
-async def test_runtime_state_store_delete_is_idempotent(
-    backend: str,
-    tmp_path,
-) -> None:
+async def test_runtime_state_store_delete_is_idempotent() -> None:
     """Deleting a thread should remove it and remain safe when repeated."""
 
-    thread_id = _thread_id(f"{backend}-delete")
+    thread_id = _thread_id("postgres-delete")
 
-    async with open_runtime_state_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_runtime_state_store() as store:
         await store.save_state(thread_id, {"session_progress": {"turn_count": 1}})
         await store.delete_thread(thread_id)
 
-    async with open_runtime_state_store(backend, tmp_path=tmp_path) as store:
+    async with open_postgres_runtime_state_store() as store:
         assert await store.load_state(thread_id) is None
         await store.delete_thread(thread_id)
         assert await store.load_state(thread_id) is None

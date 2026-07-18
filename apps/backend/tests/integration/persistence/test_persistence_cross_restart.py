@@ -69,6 +69,7 @@ from llm.base import StructuredResponseT
 from tests.support.persistence import (
     FakeCrossRestartLLM,
     postgres_database_url,
+    postgres_thread_persistence_config,
     runtime_persistence_config,
     runtime_storage_paths,
 )
@@ -327,7 +328,7 @@ async def test_semantic_facts_survive_runtime_close_and_reopen(tmp_path: Path) -
     llm_a = FakeCrossRestartLLM()
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -355,7 +356,7 @@ async def test_semantic_facts_survive_runtime_close_and_reopen(tmp_path: Path) -
     # ── Runtime B: open the same files, verify the fact came back ─────
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
     ) as runtime_b:
         # Graceful shutdown now also writes an episodic summary, so
         # assert directly on the semantic namespace rather than the
@@ -463,7 +464,7 @@ async def test_episodic_arc_survives_runtime_close_and_reopen(
     llm_a = FakeCrossRestartLLM()
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -483,7 +484,7 @@ async def test_episodic_arc_survives_runtime_close_and_reopen(
     # Runtime B: verify the arc is still there
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
     ) as runtime_b:
         arcs = await runtime_b.memory_store.asearch(
             ("thread-a", "episodic"),
@@ -514,7 +515,7 @@ async def test_crisis_log_survives_runtime_close_and_reopen(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -537,7 +538,7 @@ async def test_crisis_log_survives_runtime_close_and_reopen(
     # Runtime B: reopen, verify the count is still 1
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
     ) as runtime_b:
         assert await runtime_b.crisis_log_backend.arecord_count() == 1
         # And we can look it up by date
@@ -585,7 +586,7 @@ async def test_all_three_layers_persist_across_full_lifecycle(
     )
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -631,7 +632,7 @@ async def test_all_three_layers_persist_across_full_lifecycle(
     llm_b = FakeCrossRestartLLM()
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
     ) as runtime_b:
         # runtime state store restored the transcript
         history = await runtime_b.get_history("thread-a")
@@ -809,6 +810,7 @@ async def test_feedback_layer_parity_in_postgres(
         storage_paths=storage_paths,
         persistence_config=RuntimePersistenceConfig(
             memory_mode=MemoryMode.LOCAL,
+            thread_persistence_backend="memory",
             session_feedback_persistence_backend="postgres",
             session_feedback_database_url=memory_database_url,
             allow_legacy_sqlite=True,
@@ -839,6 +841,7 @@ async def test_feedback_layer_parity_in_postgres(
         storage_paths=storage_paths,
         persistence_config=RuntimePersistenceConfig(
             memory_mode=MemoryMode.LOCAL,
+            thread_persistence_backend="memory",
             session_feedback_persistence_backend="postgres",
             session_feedback_database_url=memory_database_url,
             allow_legacy_sqlite=True,
@@ -877,7 +880,7 @@ async def test_fresh_thread_after_restart_sees_prior_records_in_same_namespace(
     llm_a = FakeCrossRestartLLM()
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
     ) as runtime_a:
         await runtime_a.run_turn(
             thread_id="thread-old",
@@ -906,7 +909,7 @@ async def test_fresh_thread_after_restart_sees_prior_records_in_same_namespace(
     llm_b = FakeCrossRestartLLM(extraction_result=_empty_extraction_result())
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
     ) as runtime_b:
         # The Emma record should still be there (owner_id keyed)
         assert (
@@ -952,7 +955,7 @@ async def test_held_session_buffer_survives_restart_until_end_session(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -986,7 +989,7 @@ async def test_held_session_buffer_survives_restart_until_end_session(
     )
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
     ) as runtime_b:
         persisted = (
             await runtime_b._active_session_manager.load_persisted_active_session(
@@ -1125,7 +1128,7 @@ async def test_end_session_clears_session_continuity_from_runtime_state(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -1183,7 +1186,7 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         dependencies=RuntimeDependencies(default_llm_client=llm),
     ) as runtime:
         await runtime.run_turn(
@@ -1354,7 +1357,7 @@ async def test_finalize_active_sessions_commits_pending_memory_on_shutdown(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         dependencies=RuntimeDependencies(default_llm_client=llm),
     ) as runtime:
         await runtime.run_turn(
@@ -1398,7 +1401,7 @@ async def test_background_timeout_sweeper_proactively_finalizes_expired_session(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         dependencies=RuntimeDependencies(default_llm_client=llm),
     ) as runtime:
         await runtime.run_turn(
@@ -1446,7 +1449,7 @@ async def test_background_timeout_sweeper_reports_not_expired_session(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         dependencies=RuntimeDependencies(default_llm_client=llm),
     ) as runtime:
         await runtime.run_turn(
@@ -1485,7 +1488,7 @@ async def test_background_timeout_sweeper_reports_excluded_session(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         dependencies=RuntimeDependencies(
             default_llm_client=llm,
             auto_finalize_excluded=lambda thread_id: thread_id == "thread-excluded",
@@ -1534,7 +1537,7 @@ async def test_background_timeout_sweeper_reports_listing_failure(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -1573,7 +1576,7 @@ async def test_background_timeout_sweeper_continues_after_per_thread_failure(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         dependencies=RuntimeDependencies(default_llm_client=llm),
     ) as runtime:
         await runtime.run_turn(
@@ -1703,7 +1706,7 @@ async def test_end_transcript_session_writes_episodic_memory_only(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
     ) as runtime:
         stored_arc = await runtime.end_transcript_session(
             thread_id="voice-thread",
@@ -1775,7 +1778,7 @@ async def test_schema_idempotent_across_multiple_opens(tmp_path: Path) -> None:
     for i in range(3):
         async with PersistentAgentRuntime(
             storage_paths=storage_paths,
-            persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+            persistence_config=postgres_thread_persistence_config(),
         ) as runtime:
             # Use a unique thread_id per iteration so the runtime
             # state store doesn't accumulate cross-thread state.
@@ -1800,7 +1803,7 @@ async def test_schema_idempotent_across_multiple_opens(tmp_path: Path) -> None:
     # After 3 iterations, check the total record count via a fresh runtime
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
     ) as final_runtime:
         total_semantic = sum(
             [

@@ -25,8 +25,9 @@ from pathlib import Path
 import pytest
 
 from agent.runtime.session.active_session import (
+    InMemoryActiveSessionStore,
+    NullActiveSessionStore,
     PostgresActiveSessionStore,
-    SqliteActiveSessionStore,
 )
 from agent.audit.crisis_log import InMemoryCrisisLogBackend, NullCrisisLogBackend
 from agent.memory.providers.embeddings import NullEmbeddingProvider
@@ -57,12 +58,16 @@ from tests.support.persistence import in_memory_runtime_storage_paths
 
 
 def _legacy_sqlite_runtime(**kwargs) -> PersistentAgentRuntime:
-    """Construct a runtime with temporary legacy SQLite opt-in for tests."""
+    """Construct a runtime with legacy non-thread SQLite stores for tests."""
 
-    kwargs.setdefault(
-        "persistence_config",
-        RuntimePersistenceConfig(allow_legacy_sqlite=True),
-    )
+    if "persistence_config" not in kwargs:
+        thread_backend = kwargs.pop("thread_persistence_backend", "memory")
+        thread_database_url = kwargs.pop("thread_database_url", None)
+        kwargs["persistence_config"] = RuntimePersistenceConfig(
+            thread_persistence_backend=thread_backend,
+            thread_database_url=thread_database_url,
+            allow_legacy_sqlite=True,
+        )
     return PersistentAgentRuntime(**kwargs)
 
 
@@ -141,6 +146,7 @@ def test_incognito_mode_sqlite_path_forced_to_memory() -> None:
         ),
     )
     assert runtime.sqlite_path == Path(":memory:")
+    assert isinstance(runtime._active_session_store, NullActiveSessionStore)  # noqa: SLF001
 
 
 # ─── Local mode — legacy SQLite opt-in ─────────────────────────────────
@@ -149,7 +155,7 @@ def test_incognito_mode_sqlite_path_forced_to_memory() -> None:
 def test_local_mode_rejects_durable_sqlite_without_legacy_opt_in() -> None:
     """Durable constructor SQLite must be explicitly marked legacy."""
 
-    with pytest.raises(ValueError, match="Durable SQLite persistence is legacy"):
+    with pytest.raises(ValueError, match="SQLite runtime-state and active-session"):
         PersistentAgentRuntime(
             persistence_config=RuntimePersistenceConfig(memory_mode=MemoryMode.LOCAL)
         )
@@ -158,7 +164,7 @@ def test_local_mode_rejects_durable_sqlite_without_legacy_opt_in() -> None:
 def test_empty_grouped_storage_paths_do_not_opt_into_sqlite() -> None:
     """An empty grouped storage object should not bypass the SQLite guard."""
 
-    with pytest.raises(ValueError, match="thread_persistence_backend"):
+    with pytest.raises(ValueError, match="SQLite runtime-state and active-session"):
         PersistentAgentRuntime(
             persistence_config=RuntimePersistenceConfig(
                 memory_mode=MemoryMode.LOCAL,
@@ -170,7 +176,7 @@ def test_empty_grouped_storage_paths_do_not_opt_into_sqlite() -> None:
 def test_default_grouped_storage_path_does_not_opt_into_sqlite() -> None:
     """Restating the default path should not count as a concrete override."""
 
-    with pytest.raises(ValueError, match="thread_persistence_backend"):
+    with pytest.raises(ValueError, match="SQLite runtime-state and active-session"):
         PersistentAgentRuntime(
             persistence_config=RuntimePersistenceConfig(
                 memory_mode=MemoryMode.LOCAL,
@@ -184,7 +190,7 @@ def test_partial_grouped_storage_paths_do_not_opt_into_default_sqlite(
 ) -> None:
     """A single custom path should not allow unrelated default SQLite stores."""
 
-    with pytest.raises(ValueError, match="memory_backend"):
+    with pytest.raises(ValueError, match="SQLite runtime-state and active-session"):
         PersistentAgentRuntime(
             persistence_config=RuntimePersistenceConfig(
                 memory_mode=MemoryMode.LOCAL,
@@ -221,7 +227,7 @@ def test_local_mode_uses_sqlite_memory_store_with_legacy_opt_in() -> None:
 
     runtime = _legacy_sqlite_runtime(memory_mode=MemoryMode.LOCAL)
     assert isinstance(runtime.memory_store, SqliteMemoryStore)
-    assert isinstance(runtime._active_session_store, SqliteActiveSessionStore)  # noqa: SLF001
+    assert isinstance(runtime._active_session_store, InMemoryActiveSessionStore)  # noqa: SLF001
     # The SqliteMemoryStore's path should be the default memory path.
     assert runtime.memory_store.sqlite_path == Path(DEFAULT_MEMORY_DB_PATH)
 
@@ -321,7 +327,7 @@ def test_synced_mode_can_use_legacy_sqlite_with_opt_in() -> None:
     runtime = _legacy_sqlite_runtime(memory_mode=MemoryMode.SYNCED)
     assert isinstance(runtime.memory_store, SqliteMemoryStore)
     assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
-    assert isinstance(runtime._active_session_store, SqliteActiveSessionStore)  # noqa: SLF001
+    assert isinstance(runtime._active_session_store, InMemoryActiveSessionStore)  # noqa: SLF001
 
 
 def test_local_mode_can_select_postgres_memory_store() -> None:
@@ -348,6 +354,7 @@ def test_grouped_persistence_config_can_select_postgres_memory_store() -> None:
         persistence_config=RuntimePersistenceConfig(
             memory_mode=MemoryMode.LOCAL,
             memory_backend="postgres",
+            thread_persistence_backend="memory",
             memory_database_url="postgresql://opencouch:opencouch@postgres:5432/opencouch",
             allow_legacy_sqlite=True,
         )
@@ -396,14 +403,12 @@ def test_shared_backend_persistence_config_fans_out_backend_and_database_url() -
 def test_shared_backend_persistence_config_rejects_sqlite_without_opt_in() -> None:
     """Grouped durable SQLite config must be explicitly marked legacy."""
 
-    config = RuntimePersistenceConfig.for_shared_backend(
-        memory_mode=MemoryMode.LOCAL,
-        persistence_backend="sqlite",
-        database_url=None,
-    )
-
-    with pytest.raises(ValueError, match="Durable SQLite persistence is legacy"):
-        PersistentAgentRuntime(persistence_config=config)
+    with pytest.raises(ValueError, match="SQLite runtime-state and active-session"):
+        RuntimePersistenceConfig.for_shared_backend(
+            memory_mode=MemoryMode.LOCAL,
+            persistence_backend="sqlite",
+            database_url=None,
+        )
 
 
 def test_grouped_persistence_config_rejects_auto_text_sessions_without_dsn() -> None:
@@ -429,21 +434,18 @@ def test_grouped_persistence_config_rejects_auto_text_sessions_without_dsn() -> 
         PersistentAgentRuntime(persistence_config=config)
 
 
-def test_shared_backend_persistence_config_allows_sqlite_with_opt_in() -> None:
-    """Temporary legacy SQLite config remains available with explicit opt-in."""
+def test_shared_backend_persistence_config_rejects_removed_thread_sqlite_with_opt_in() -> (
+    None
+):
+    """Legacy opt-in cannot restore the removed thread SQLite backend."""
 
-    runtime = PersistentAgentRuntime(
-        persistence_config=RuntimePersistenceConfig.for_shared_backend(
+    with pytest.raises(ValueError, match="SQLite runtime-state and active-session"):
+        RuntimePersistenceConfig.for_shared_backend(
             memory_mode=MemoryMode.LOCAL,
             persistence_backend="sqlite",
             database_url=None,
             allow_legacy_sqlite=True,
         )
-    )
-
-    assert isinstance(runtime.memory_store, SqliteMemoryStore)
-    assert isinstance(runtime.crisis_log_backend, SqliteCrisisLogBackend)
-    assert isinstance(runtime.session_feedback_backend, SqliteSessionFeedbackBackend)
 
 
 def test_shared_backend_persistence_config_accepts_text_session_url_override() -> None:
@@ -805,6 +807,10 @@ async def test_aexit_closes_feedback_backend() -> None:
     backend = _CountingBackend()
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=RuntimePersistenceConfig(
+            thread_persistence_backend="memory",
+            allow_legacy_sqlite=True,
+        ),
         dependencies=RuntimeDependencies(session_feedback_backend=backend),
     )
     async with runtime:
@@ -830,6 +836,10 @@ async def test_aenter_prewarms_embedding_provider_and_text_runtime() -> None:
 
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=RuntimePersistenceConfig(
+            thread_persistence_backend="memory",
+            allow_legacy_sqlite=True,
+        ),
         dependencies=RuntimeDependencies(embedding_provider=embedding_provider),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,

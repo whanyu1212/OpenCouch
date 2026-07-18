@@ -12,10 +12,7 @@ import asyncio
 import json
 import logging
 from collections.abc import Mapping
-from pathlib import Path
 from typing import Any, Literal, Protocol, cast
-
-import aiosqlite
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -26,16 +23,7 @@ from agent.state import AgentState
 
 logger = logging.getLogger(__name__)
 
-RuntimeStateBackend = Literal["sqlite", "postgres"]
-
-RUNTIME_STATE_DDL_SQLITE = """
-CREATE TABLE IF NOT EXISTS opencouch_thread_state (
-    thread_id TEXT PRIMARY KEY,
-    updated_at TEXT NOT NULL,
-    turn_count INTEGER NOT NULL DEFAULT 0,
-    value TEXT NOT NULL
-);
-"""
+RuntimeStateBackend = Literal["memory", "postgres"]
 
 RUNTIME_STATE_DDL_POSTGRES = """
 CREATE TABLE IF NOT EXISTS opencouch_thread_state (
@@ -74,122 +62,64 @@ class RuntimeStateStore(Protocol):
         """Close store resources."""
 
 
-class SqliteRuntimeStateStore:
-    """SQLite-backed latest-state snapshot store."""
+class InMemoryRuntimeStateStore:
+    """Process-local runtime state store for incognito sessions."""
 
-    def __init__(self, sqlite_path: str | Path) -> None:
-        self.sqlite_path = (
-            Path(sqlite_path) if sqlite_path != ":memory:" else Path(":memory:")
-        )
-        self._connection: aiosqlite.Connection | None = None
+    def __init__(self) -> None:
+        self._states: dict[str, tuple[str, int, dict[str, Any]]] = {}
+        self._lock = asyncio.Lock()
+        self._write_sequence = 0
         self._closed = False
-        self._connect_lock = asyncio.Lock()
 
-    async def _ensure_connection(self) -> aiosqlite.Connection:
+    def _ensure_open(self) -> None:
         if self._closed:
-            raise RuntimeError("SqliteRuntimeStateStore is closed.")
-        if self._connection is not None:
-            return self._connection
-
-        async with self._connect_lock:
-            if self._closed:
-                raise RuntimeError("SqliteRuntimeStateStore is closed.")
-            if self._connection is not None:
-                return self._connection
-
-            if str(self.sqlite_path) != ":memory:":
-                self.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
-            conn = await aiosqlite.connect(str(self.sqlite_path))
-            try:
-                conn.row_factory = aiosqlite.Row
-                await self._ensure_schema(conn)
-            except BaseException:
-                await conn.close()
-                raise
-            self._connection = conn
-            return self._connection
-
-    @staticmethod
-    async def _ensure_schema(conn: aiosqlite.Connection) -> None:
-        await conn.execute(RUNTIME_STATE_DDL_SQLITE)
-        await conn.execute(RUNTIME_STATE_INDEX_UPDATED_AT)
-        await conn.commit()
+            raise RuntimeError("InMemoryRuntimeStateStore is closed.")
 
     async def ensure_schema(self) -> None:
-        await self._ensure_connection()
+        self._ensure_open()
 
     async def load_state(self, thread_id: str) -> AgentState | None:
-        conn = await self._ensure_connection()
-        async with conn.execute(
-            """
-            SELECT value
-            FROM opencouch_thread_state
-            WHERE thread_id = ?
-            """,
-            (thread_id,),
-        ) as cursor:
-            row = await cursor.fetchone()
-        if row is None:
+        self._ensure_open()
+        stored = self._states.get(thread_id)
+        if stored is None:
             return None
-        return _state_from_payload(json.loads(str(row["value"])))
+        return _state_from_payload(json.loads(json.dumps(stored[2])))
 
     async def save_state(self, thread_id: str, state: Mapping[str, Any]) -> None:
-        conn = await self._ensure_connection()
-        payload = _state_payload(state)
-        await conn.execute(
-            """
-            INSERT INTO opencouch_thread_state(thread_id, updated_at, turn_count, value)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(thread_id) DO UPDATE SET
-                updated_at = excluded.updated_at,
-                turn_count = excluded.turn_count,
-                value = excluded.value
-            """,
-            (
-                thread_id,
+        self._ensure_open()
+        payload = json.loads(json.dumps(_state_payload(state)))
+        async with self._lock:
+            self._ensure_open()
+            self._write_sequence += 1
+            self._states[thread_id] = (
                 iso_now(),
-                _turn_count(payload),
-                json.dumps(payload),
-            ),
-        )
-        await conn.commit()
+                self._write_sequence,
+                payload,
+            )
 
     async def delete_thread(self, thread_id: str) -> None:
-        conn = await self._ensure_connection()
-        await conn.execute(
-            "DELETE FROM opencouch_thread_state WHERE thread_id = ?",
-            (thread_id,),
-        )
-        await conn.commit()
+        self._ensure_open()
+        async with self._lock:
+            self._ensure_open()
+            self._states.pop(thread_id, None)
 
     async def list_thread_ids(self, *, limit: int) -> list[str]:
-        conn = await self._ensure_connection()
-        async with conn.execute(
-            """
-            SELECT thread_id
-            FROM opencouch_thread_state
-            ORDER BY updated_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ) as cursor:
-            rows = await cursor.fetchall()
-        return [str(row["thread_id"]) for row in rows]
+        self._ensure_open()
+        ordered = sorted(
+            self._states.items(),
+            key=lambda item: (item[1][0], item[1][1]),
+            reverse=True,
+        )
+        return [thread_id for thread_id, _ in ordered[:limit]]
 
     async def aclose(self) -> None:
         if self._closed:
             return
-        self._closed = True
-        if self._connection is not None:
-            try:
-                await self._connection.close()
-            except Exception:
-                logger.warning(
-                    "SqliteRuntimeStateStore: connection close raised; ignoring",
-                    exc_info=True,
-                )
-            finally:
-                self._connection = None
+        async with self._lock:
+            if self._closed:
+                return
+            self._states.clear()
+            self._closed = True
 
 
 class PostgresRuntimeStateStore:
@@ -317,14 +247,15 @@ class PostgresRuntimeStateStore:
 def create_runtime_state_store(
     *,
     backend: RuntimeStateBackend,
-    sqlite_path: str | Path,
     database_url: str | None,
 ) -> RuntimeStateStore:
     """Create a runtime-owned text state snapshot store."""
 
+    if backend == "memory":
+        return InMemoryRuntimeStateStore()
     if backend == "postgres":
         return PostgresRuntimeStateStore(require_postgres_database_url(database_url))
-    return SqliteRuntimeStateStore(sqlite_path)
+    raise ValueError(f"Unsupported runtime-state backend: {backend}")
 
 
 def _state_payload(state: Mapping[str, Any]) -> dict[str, Any]:
@@ -365,9 +296,9 @@ def _turn_count(payload: Mapping[str, Any]) -> int:
 
 
 __all__ = [
+    "InMemoryRuntimeStateStore",
     "PostgresRuntimeStateStore",
     "RuntimeStateBackend",
     "RuntimeStateStore",
-    "SqliteRuntimeStateStore",
     "create_runtime_state_store",
 ]

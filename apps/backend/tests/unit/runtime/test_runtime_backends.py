@@ -35,7 +35,7 @@ def test_select_runtime_backends_forces_incognito_to_ephemeral_backends() -> Non
         session_feedback_persistence_backend="postgres",
     )
 
-    assert selection.thread_persistence_backend == "sqlite"
+    assert selection.thread_persistence_backend == "memory"
     assert selection.memory_store_backend == "memory"
     assert selection.crisis_log_backend == "memory"
     assert selection.session_feedback_backend == "memory"

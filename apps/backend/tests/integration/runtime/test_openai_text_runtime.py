@@ -204,6 +204,7 @@ async def test_persistent_runtime_disabled_sdk_session_keeps_legacy_prompt_histo
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=RuntimePersistenceConfig(
+            thread_persistence_backend="memory",
             text_session_backend="disabled",
             allow_legacy_sqlite=True,
         ),

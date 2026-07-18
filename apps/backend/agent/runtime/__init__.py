@@ -30,7 +30,6 @@ _CONFIGURATION_EXPORTS = {
 _ACTIVE_SESSION_EXPORTS = {
     "PersistedActiveSessionState",
     "PostgresActiveSessionStore",
-    "SqliteActiveSessionStore",
 }
 
 _SESSION_STORE_EXPORTS = {
@@ -121,7 +120,6 @@ __all__ = [
     "SessionInterrupted",
     "SessionLeaseExpired",
     "SessionStatus",
-    "SqliteActiveSessionStore",
     "TextRuntimeChunkEvent",
     "TextRuntimeConfig",
     "TextRuntimeStateEvent",

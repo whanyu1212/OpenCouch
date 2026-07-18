@@ -133,7 +133,7 @@ class PersistentAgentRuntime:
         memory_mode: MemoryMode = MemoryMode.LOCAL,
         memory_backend: Literal["sqlite", "postgres"] = "sqlite",
         memory_database_url: str | None = None,
-        thread_persistence_backend: Literal["sqlite", "postgres"] = "sqlite",
+        thread_persistence_backend: Literal["memory", "sqlite", "postgres"] = "sqlite",
         thread_database_url: str | None = None,
         crisis_log_persistence_backend: Literal["sqlite", "postgres"] = "sqlite",
         crisis_log_database_url: str | None = None,
@@ -178,8 +178,8 @@ class PersistentAgentRuntime:
             memory_backend: Memory-store backend to use for persistent modes.
             memory_database_url: PostgreSQL connection string used when
                 ``memory_backend`` is ``"postgres"``.
-            thread_persistence_backend: Runtime thread-state backend to use for
-                persistent modes.
+            thread_persistence_backend: Runtime thread-state backend. Use
+                ``"postgres"`` for durable state or ``"memory"`` for ephemeral state.
             thread_database_url: PostgreSQL connection string used when
                 ``thread_persistence_backend`` is ``"postgres"``.
             crisis_log_persistence_backend: Crisis-log backend to use for

@@ -15,6 +15,7 @@ from agent.memory.providers.embeddings import EmbeddingProvider
 from agent.memory.store import MemoryStore
 from agent.runtime.backends import (
     PersistenceBackend,
+    RuntimeStoreBackend,
     create_crisis_log_backend,
     create_embedding_provider,
     create_memory_store,
@@ -23,8 +24,10 @@ from agent.runtime.backends import (
 )
 from agent.runtime.session.active_session import (
     ActiveSessionManager,
+    ActiveSessionStore,
+    InMemoryActiveSessionStore,
+    NullActiveSessionStore,
     PostgresActiveSessionStore,
-    SqliteActiveSessionStore,
 )
 from agent.runtime.postgres import require_postgres_database_url
 from agent.runtime.session_store import (
@@ -44,7 +47,7 @@ class RuntimeResources:
     """Runtime-owned storage backends and warmup/close helpers."""
 
     sqlite_path: Path
-    thread_persistence_backend: PersistenceBackend
+    thread_persistence_backend: RuntimeStoreBackend
     thread_database_url: str | None
     state_store: RuntimeStateStore
     text_session_store: TextSessionStore | None
@@ -52,7 +55,7 @@ class RuntimeResources:
     crisis_log_backend: CrisisLogBackend
     session_feedback_backend: SessionFeedbackBackend
     embedding_provider: EmbeddingProvider
-    active_session_store: PostgresActiveSessionStore | SqliteActiveSessionStore
+    active_session_store: ActiveSessionStore
     active_session_manager: ActiveSessionManager
 
     async def ensure_schema(self) -> None:
@@ -94,7 +97,7 @@ def build_runtime_resources(
     memory_mode: MemoryMode,
     sqlite_path: str | Path,
     text_session_sqlite_path: str | Path | None,
-    thread_persistence_backend: PersistenceBackend,
+    thread_persistence_backend: RuntimeStoreBackend,
     thread_database_url: str | None,
     text_session_backend: TextSessionBackend,
     text_session_database_url: str | None,
@@ -146,7 +149,6 @@ def build_runtime_resources(
 
     state_store = create_runtime_state_store(
         backend=backend_selection.thread_persistence_backend,
-        sqlite_path=resolved_runtime_sqlite_path,
         database_url=resolved_thread_database_url,
     )
     text_session_store = create_text_session_store(
@@ -181,12 +183,19 @@ def build_runtime_resources(
     )
 
     if backend_selection.thread_persistence_backend == "postgres":
-        active_session_store = PostgresActiveSessionStore(
+        active_session_store: ActiveSessionStore = PostgresActiveSessionStore(
             dsn=resolved_thread_database_url
         )
+    elif backend_selection.thread_persistence_backend == "memory":
+        active_session_store = (
+            NullActiveSessionStore()
+            if memory_mode == MemoryMode.INCOGNITO
+            else InMemoryActiveSessionStore()
+        )
     else:
-        active_session_store = SqliteActiveSessionStore(
-            sqlite_path=resolved_runtime_sqlite_path
+        raise ValueError(
+            "Unsupported active-session backend: "
+            f"{backend_selection.thread_persistence_backend}"
         )
 
     active_session_manager = ActiveSessionManager(

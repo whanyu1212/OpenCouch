@@ -1,27 +1,18 @@
-"""Shared helpers for persistence backend contract tests."""
+"""Shared helpers for Postgres persistence contract tests."""
 
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import Literal, TypeAlias
 
 import pytest
 
 from agent.runtime.session.active_session import (
     ActiveSessionStore,
     PostgresActiveSessionStore,
-    SqliteActiveSessionStore,
 )
-from agent.runtime.state_store import (
-    PostgresRuntimeStateStore,
-    RuntimeStateStore,
-    SqliteRuntimeStateStore,
-)
+from agent.runtime.state_store import PostgresRuntimeStateStore, RuntimeStateStore
 from tests.support.persistence import postgres_database_url
-
-PersistenceBackend: TypeAlias = Literal["sqlite", "postgres"]
 
 
 def require_postgres_database_url() -> str:
@@ -38,19 +29,10 @@ def require_postgres_database_url() -> str:
 
 
 @asynccontextmanager
-async def open_runtime_state_store(
-    backend: PersistenceBackend,
-    *,
-    tmp_path: Path,
-) -> AsyncIterator[RuntimeStateStore]:
-    """Open one runtime-state store implementation for a contract test."""
+async def open_postgres_runtime_state_store() -> AsyncIterator[RuntimeStateStore]:
+    """Open the supported durable runtime-state store for a contract test."""
 
-    if backend == "sqlite":
-        store: RuntimeStateStore = SqliteRuntimeStateStore(
-            tmp_path / "runtime-state-contract.sqlite3"
-        )
-    else:
-        store = PostgresRuntimeStateStore(require_postgres_database_url())
+    store = PostgresRuntimeStateStore(require_postgres_database_url())
 
     await store.ensure_schema()
     try:
@@ -60,19 +42,10 @@ async def open_runtime_state_store(
 
 
 @asynccontextmanager
-async def open_active_session_store(
-    backend: PersistenceBackend,
-    *,
-    tmp_path: Path,
-) -> AsyncIterator[ActiveSessionStore]:
-    """Open one active-session store implementation for a contract test."""
+async def open_postgres_active_session_store() -> AsyncIterator[ActiveSessionStore]:
+    """Open the supported durable active-session store for a contract test."""
 
-    if backend == "sqlite":
-        store: ActiveSessionStore = SqliteActiveSessionStore(
-            sqlite_path=tmp_path / "active-session-contract.sqlite3"
-        )
-    else:
-        store = PostgresActiveSessionStore(dsn=require_postgres_database_url())
+    store = PostgresActiveSessionStore(dsn=require_postgres_database_url())
 
     await store.ensure_schema()
     try:

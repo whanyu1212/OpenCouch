@@ -48,7 +48,7 @@ def _resolve_persistence(**overrides: object):
         "memory_sqlite_path": DEFAULT_MEMORY_DB_PATH,
         "memory_sqlite_path_configured": False,
         "memory_store": None,
-        "thread_persistence_backend": "sqlite",
+        "thread_persistence_backend": "memory",
         "thread_database_url": None,
         "sqlite_path": DEFAULT_THREAD_DB_PATH,
         "sqlite_path_configured": False,
@@ -172,9 +172,8 @@ def test_sqlite_validation_message_preserves_field_order() -> None:
         _resolve_persistence(persistence_config=None)
 
     assert str(exc_info.value).endswith(
-        "SQLite fields: thread_persistence_backend, memory_backend, "
-        "crisis_log_persistence_backend, session_feedback_persistence_backend, "
-        "text_session_backend."
+        "SQLite fields: memory_backend, crisis_log_persistence_backend, "
+        "session_feedback_persistence_backend, text_session_backend."
     )
 
 
@@ -195,9 +194,8 @@ def test_custom_durable_sqlite_paths_require_legacy_opt_in(tmp_path: Path) -> No
         )
 
     assert str(exc_info.value).endswith(
-        "SQLite fields: thread_persistence_backend, memory_backend, "
-        "crisis_log_persistence_backend, session_feedback_persistence_backend, "
-        "text_session_backend."
+        "SQLite fields: memory_backend, crisis_log_persistence_backend, "
+        "session_feedback_persistence_backend, text_session_backend."
     )
 
 
