@@ -9,8 +9,6 @@ from typing import Literal
 from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
 from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
 from agent.feedback.postgres_session_feedback import PostgresSessionFeedbackBackend
-from agent.audit.sqlite_crisis_log import SqliteCrisisLogBackend
-from agent.feedback.sqlite_session_feedback import SqliteSessionFeedbackBackend
 from agent.feedback.session_feedback import (
     InMemorySessionFeedbackBackend,
     SessionFeedbackBackend,
@@ -85,8 +83,8 @@ def effective_thread_persistence_backend(
         memory_mode=memory_mode,
         memory_backend="sqlite",
         thread_persistence_backend=thread_persistence_backend,
-        crisis_log_persistence_backend="sqlite",
-        session_feedback_persistence_backend="sqlite",
+        crisis_log_persistence_backend="postgres",
+        session_feedback_persistence_backend="postgres",
     ).thread_persistence_backend
 
 
@@ -126,7 +124,6 @@ def create_crisis_log_backend(
     crisis_log_backend: CrisisLogBackend | None,
     crisis_log_persistence_backend: RuntimeStoreBackend,
     crisis_log_database_url: str | None,
-    crisis_log_sqlite_path: str | Path,
 ) -> CrisisLogBackend:
     """Create the runtime crisis-log backend.
 
@@ -136,7 +133,6 @@ def create_crisis_log_backend(
         crisis_log_persistence_backend (RuntimeStoreBackend): Selected crisis-log
             backend.
         crisis_log_database_url (str | None): PostgreSQL URL for crisis logs.
-        crisis_log_sqlite_path (str | Path): SQLite path for local crisis logs.
 
     Returns:
         CrisisLogBackend: Configured crisis-log backend.
@@ -154,7 +150,9 @@ def create_crisis_log_backend(
         return PostgresCrisisLogBackend(
             require_postgres_database_url(crisis_log_database_url)
         )
-    return SqliteCrisisLogBackend(crisis_log_sqlite_path)
+    raise ValueError(
+        f"Unsupported crisis-log backend: {crisis_log_persistence_backend}"
+    )
 
 
 def create_session_feedback_backend(
@@ -162,7 +160,6 @@ def create_session_feedback_backend(
     session_feedback_backend: SessionFeedbackBackend | None,
     session_feedback_persistence_backend: RuntimeStoreBackend,
     session_feedback_database_url: str | None,
-    feedback_sqlite_path: str | Path,
 ) -> SessionFeedbackBackend:
     """Create the runtime session-feedback backend.
 
@@ -172,7 +169,6 @@ def create_session_feedback_backend(
         session_feedback_persistence_backend (RuntimeStoreBackend): Selected
             feedback backend.
         session_feedback_database_url (str | None): PostgreSQL URL for feedback.
-        feedback_sqlite_path (str | Path): SQLite path for local feedback.
 
     Returns:
         SessionFeedbackBackend: Configured session-feedback backend.
@@ -190,7 +186,9 @@ def create_session_feedback_backend(
         return PostgresSessionFeedbackBackend(
             require_postgres_database_url(session_feedback_database_url)
         )
-    return SqliteSessionFeedbackBackend(feedback_sqlite_path)
+    raise ValueError(
+        f"Unsupported session-feedback backend: {session_feedback_persistence_backend}"
+    )
 
 
 def create_embedding_provider(

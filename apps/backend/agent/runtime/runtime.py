@@ -234,8 +234,6 @@ class PersistentAgentRuntime:
         )
         sqlite_path = resolved_storage_paths.sqlite_path
         memory_sqlite_path = resolved_storage_paths.memory_sqlite_path
-        crisis_log_sqlite_path = resolved_storage_paths.crisis_log_sqlite_path
-        feedback_sqlite_path = resolved_storage_paths.feedback_sqlite_path
         text_session_sqlite_path = resolved_storage_paths.text_session_sqlite_path
 
         resolved_dependencies = _resolve_runtime_dependencies(
@@ -270,17 +268,9 @@ class PersistentAgentRuntime:
             sqlite_path_configured=resolved_storage_paths.sqlite_path_configured,
             crisis_log_persistence_backend=crisis_log_persistence_backend,
             crisis_log_database_url=crisis_log_database_url,
-            crisis_log_sqlite_path=crisis_log_sqlite_path,
-            crisis_log_sqlite_path_configured=(
-                resolved_storage_paths.crisis_log_sqlite_path_configured
-            ),
             crisis_log_backend=crisis_log_backend,
             session_feedback_persistence_backend=session_feedback_persistence_backend,
             session_feedback_database_url=session_feedback_database_url,
-            feedback_sqlite_path=feedback_sqlite_path,
-            feedback_sqlite_path_configured=(
-                resolved_storage_paths.feedback_sqlite_path_configured
-            ),
             session_feedback_backend=session_feedback_backend,
             text_session_backend=text_session_backend,
             text_session_database_url=text_session_database_url,
@@ -350,11 +340,9 @@ class PersistentAgentRuntime:
             crisis_log_backend=crisis_log_backend,
             crisis_log_persistence_backend=crisis_log_persistence_backend,
             crisis_log_database_url=crisis_log_database_url,
-            crisis_log_sqlite_path=crisis_log_sqlite_path,
             session_feedback_backend=session_feedback_backend,
             session_feedback_persistence_backend=session_feedback_persistence_backend,
             session_feedback_database_url=session_feedback_database_url,
-            feedback_sqlite_path=feedback_sqlite_path,
             embedding_provider=embedding_provider,
         )
         self._wire_runtime_resources(

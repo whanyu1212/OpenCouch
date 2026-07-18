@@ -110,11 +110,9 @@ def build_runtime_resources(
     crisis_log_backend: CrisisLogBackend | None,
     crisis_log_persistence_backend: PersistenceBackend,
     crisis_log_database_url: str | None,
-    crisis_log_sqlite_path: str | Path,
     session_feedback_backend: SessionFeedbackBackend | None,
     session_feedback_persistence_backend: PersistenceBackend,
     session_feedback_database_url: str | None,
-    feedback_sqlite_path: str | Path,
     embedding_provider: EmbeddingProvider | None,
 ) -> RuntimeResources:
     """Build internal runtime-owned stores, backends, and providers."""
@@ -169,13 +167,11 @@ def build_runtime_resources(
         crisis_log_backend=crisis_log_backend,
         crisis_log_persistence_backend=backend_selection.crisis_log_backend,
         crisis_log_database_url=crisis_log_database_url,
-        crisis_log_sqlite_path=crisis_log_sqlite_path,
     )
     resolved_session_feedback_backend = create_session_feedback_backend(
         session_feedback_backend=session_feedback_backend,
         session_feedback_persistence_backend=backend_selection.session_feedback_backend,
         session_feedback_database_url=session_feedback_database_url,
-        feedback_sqlite_path=feedback_sqlite_path,
     )
     resolved_embedding_provider = create_embedding_provider(
         memory_mode=memory_mode,

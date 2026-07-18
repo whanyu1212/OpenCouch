@@ -24,6 +24,7 @@ from tests.support.openai_text import (
 )
 from tests.support.persistence import (
     FakeCrossRestartLLM,
+    in_memory_audit_feedback_dependencies,
     runtime_persistence_config,
     runtime_storage_paths,
 )
@@ -32,6 +33,13 @@ from tests.support.safety_capture import (
     CRISIS_USER_TEXT,
     openai_crisis_tool_calls,
 )
+
+
+def _runtime(**kwargs) -> PersistentAgentRuntime:
+    return PersistentAgentRuntime(
+        dependencies=in_memory_audit_feedback_dependencies(),
+        **kwargs,
+    )
 
 
 class _SessionInspectingOpenAIRunner(FakeOpenAISDKRunner):
@@ -152,7 +160,7 @@ async def test_persistent_runtime_openai_safe_turn_persists_transcript(
     runner = FakeOpenAISDKRunner("openai persistent reply")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -201,7 +209,7 @@ async def test_persistent_runtime_disabled_sdk_session_keeps_legacy_prompt_histo
     runner = FakeOpenAISDKRunner("legacy first reply")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=RuntimePersistenceConfig(
             thread_persistence_backend="memory",
@@ -241,7 +249,7 @@ async def test_persistent_runtime_seeds_empty_openai_sdk_session_from_state(
     runner = _SessionInspectingOpenAIRunner("first seeded reply")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -288,7 +296,7 @@ async def test_persistent_runtime_stream_seeds_empty_openai_sdk_session_from_sta
     runner = _SessionInspectingOpenAIRunner("first streamed-seed reply")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -349,7 +357,7 @@ async def test_persistent_runtime_openai_memory_status_uses_sdk_tool(
     )
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -391,7 +399,7 @@ async def test_persistent_runtime_openai_grounded_lookup_uses_sdk_tool(
     )
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -440,7 +448,7 @@ async def test_persistent_runtime_openai_crisis_response_uses_crisis_agent(
     )
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -493,7 +501,7 @@ async def test_crisis_capture_runs_before_sdk_history_failure(
     )
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
         behavior_config=RuntimeBehaviorConfig(
@@ -544,7 +552,7 @@ async def test_streaming_context_is_created_after_mutation_setup(
         async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
             return None
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
         behavior_config=RuntimeBehaviorConfig(
@@ -588,7 +596,7 @@ async def test_persistent_runtime_openai_crisis_uses_sdk_session_not_prompt_hist
     runner = FakeOpenAISDKRunner("prior assistant reply")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -629,7 +637,7 @@ async def test_persistent_runtime_crisis_response_llm_omits_sdk_session_history(
     response_llm = _RecordingTextLLM("override crisis reply")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -668,7 +676,7 @@ async def test_persistent_runtime_openai_level_one_uses_crisis_clarification(
     runner = FakeOpenAISDKRunner("Are you in immediate danger right now?")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -710,7 +718,7 @@ async def test_persistent_runtime_openai_low_confidence_triage_uses_clarifying_r
     runner = FakeOpenAISDKRunner("Could you say a little more about what you mean?")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -755,7 +763,7 @@ async def test_persistent_runtime_openai_retriage_sees_prior_low_confidence_cont
     runner = FakeOpenAISDKRunner("That sounds like something to talk through.")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -804,7 +812,7 @@ async def test_persistent_runtime_openai_low_confidence_triage_preserves_pending
     )
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -884,7 +892,7 @@ async def test_persistent_runtime_openai_low_confidence_triage_preserves_active_
     runner = FakeOpenAISDKRunner("Let's stay with the exercise for a moment.")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -963,7 +971,7 @@ async def test_persistent_runtime_openai_streaming_surface(
     runner = FakeOpenAISDKRunner("openai streamed reply")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -1003,7 +1011,7 @@ async def test_streaming_crisis_capture_precedes_response_ready(
     )
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -1042,7 +1050,7 @@ async def test_persistent_runtime_openai_memory_control_streaming_surface(
     )
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -1083,7 +1091,7 @@ async def test_persistent_runtime_guided_response_llm_omits_sdk_session_history(
     response_llm = _RecordingTextLLM("guided fallback reply")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:

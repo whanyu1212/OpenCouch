@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 
 from agent.runtime import (
-    DEFAULT_CRISIS_LOG_DB_PATH,
     DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
 )
@@ -14,9 +13,7 @@ from agent.runtime import (
 def add_common_args(parser: argparse.ArgumentParser) -> None:
     """Add shared CLI arguments for the Textual TUI.
 
-    Covers the seven flags common to all local terminal surfaces: mode,
-    thread-id, user-id, sqlite-path, memory-sqlite-path,
-    crisis-log-sqlite-path, and response-model-tier.
+    Covers the flags common to all local terminal surfaces.
 
     Args:
         parser: Argument parser to extend in-place.
@@ -61,15 +58,6 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         help=(
             "Legacy SQLite path for the memory store (semantic facts + "
             "episodic arcs). Deprecated for normal local development; prefer "
-            "OPENCOUCH_PERSISTENCE_BACKEND=postgres."
-        ),
-    )
-    parser.add_argument(
-        "--crisis-log-sqlite-path",
-        default=str(DEFAULT_CRISIS_LOG_DB_PATH),
-        help=(
-            "Legacy SQLite path for the crisis log (safety audit trail). "
-            "Deprecated for normal local development; prefer "
             "OPENCOUCH_PERSISTENCE_BACKEND=postgres."
         ),
     )

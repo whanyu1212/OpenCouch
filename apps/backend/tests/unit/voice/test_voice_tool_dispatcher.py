@@ -23,9 +23,17 @@ from agent.voice.tools import (
 from tests.support.openai_text import ScriptedOpenAITextRouteLLM
 from tests.support.persistence import (
     FakeCrossRestartLLM,
+    in_memory_audit_feedback_dependencies,
     in_memory_runtime_storage_paths,
     runtime_persistence_config,
 )
+
+
+def _runtime(**kwargs) -> PersistentAgentRuntime:
+    return PersistentAgentRuntime(
+        dependencies=in_memory_audit_feedback_dependencies(),
+        **kwargs,
+    )
 
 
 async def _seed_visible_fact(
@@ -88,7 +96,7 @@ async def test_wait_for_user_tool_is_fast_path_without_context_build() -> None:
 
 @pytest.mark.asyncio
 async def test_voice_guided_exercise_progress_persists_exercise_state_delta() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
         behavior_config=RuntimeBehaviorConfig(
@@ -174,7 +182,7 @@ async def test_voice_guided_exercise_progress_persists_exercise_state_delta() ->
 
 @pytest.mark.asyncio
 async def test_voice_guided_exercise_progress_clears_stale_absent_session() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
         behavior_config=RuntimeBehaviorConfig(
@@ -250,7 +258,7 @@ _MUTATOR_CASES = (
 async def test_voice_memory_deletion_confirmation_reads_persisted_pending_action() -> (
     None
 ):
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -306,7 +314,7 @@ async def test_voice_memory_deletion_confirmation_reads_persisted_pending_action
 
 @pytest.mark.asyncio
 async def test_voice_memory_deletion_cancel_clears_persisted_pending_action() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -360,7 +368,7 @@ async def test_voice_memory_deletion_cancel_clears_persisted_pending_action() ->
 
 @pytest.mark.asyncio
 async def test_voice_save_response_preference_persists_rule_for_voice_context() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -405,7 +413,7 @@ async def test_voice_save_response_preference_persists_rule_for_voice_context() 
 
 @pytest.mark.asyncio
 async def test_voice_proactive_recall_profile_persists_across_finalized_turn() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -467,7 +475,7 @@ async def test_voice_proactive_recall_profile_persists_across_finalized_turn() -
 
 @pytest.mark.asyncio
 async def test_voice_tool_dispatcher_executes_memory_status() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
     )
@@ -613,7 +621,7 @@ async def test_voice_tool_dispatcher_rejects_persistent_memory_tool_in_incognito
 async def test_voice_tool_dispatcher_uses_transcript_when_user_message_is_blank() -> (
     None
 ):
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
     )
@@ -637,7 +645,7 @@ async def test_voice_tool_dispatcher_uses_transcript_when_user_message_is_blank(
 async def test_voice_tool_dispatcher_executes_grounded_lookup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
     )
@@ -724,7 +732,7 @@ async def test_voice_mutator_refuses_without_owner_or_session_id() -> None:
 
 @pytest.mark.asyncio
 async def test_voice_tool_dispatcher_sets_proactive_memory_recall() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -749,7 +757,7 @@ async def test_voice_tool_dispatcher_sets_proactive_memory_recall() -> None:
 
 @pytest.mark.asyncio
 async def test_voice_mutator_verifies_quote_from_recent_user_transcript() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -781,7 +789,7 @@ async def test_voice_mutator_verifies_quote_from_recent_user_transcript() -> Non
 
 @pytest.mark.asyncio
 async def test_voice_mutator_verifies_quote_with_punctuation_difference() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -826,7 +834,7 @@ async def test_voice_mutator_refuses_too_short_user_quote() -> None:
 
 @pytest.mark.asyncio
 async def test_voice_mutator_verifies_eligible_user_quote() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -848,7 +856,7 @@ async def test_voice_mutator_verifies_eligible_user_quote() -> None:
 
 @pytest.mark.asyncio
 async def test_voice_tool_dispatcher_loads_therapeutic_response_skill() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
     )
@@ -874,7 +882,7 @@ async def test_voice_tool_dispatcher_loads_therapeutic_response_skill() -> None:
 
 @pytest.mark.asyncio
 async def test_voice_tool_dispatcher_loads_crisis_support_template() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
     )
@@ -954,7 +962,7 @@ async def test_crisis_support_template_reuses_lookup_across_separate_tool_calls(
     is the persisted state, not an in-memory context shared by the test.
     """
 
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
     )
@@ -1021,7 +1029,7 @@ async def test_voice_crisis_lookup_does_not_bleed_into_a_later_turn() -> None:
     scaffold nothing stale to rehydrate.
     """
 
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
     )
@@ -1081,7 +1089,7 @@ async def test_voice_crisis_lookup_does_not_bleed_into_a_later_turn() -> None:
 
 @pytest.mark.asyncio
 async def test_voice_tool_dispatcher_rejects_unknown_tool() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )

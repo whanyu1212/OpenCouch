@@ -52,15 +52,11 @@ def _resolve_persistence(**overrides: object):
         "thread_database_url": None,
         "sqlite_path": DEFAULT_THREAD_DB_PATH,
         "sqlite_path_configured": False,
-        "crisis_log_persistence_backend": "sqlite",
-        "crisis_log_database_url": None,
-        "crisis_log_sqlite_path": DEFAULT_CRISIS_LOG_DB_PATH,
-        "crisis_log_sqlite_path_configured": False,
+        "crisis_log_persistence_backend": "postgres",
+        "crisis_log_database_url": "postgresql://unused/crisis",
         "crisis_log_backend": None,
-        "session_feedback_persistence_backend": "sqlite",
-        "session_feedback_database_url": None,
-        "feedback_sqlite_path": DEFAULT_FEEDBACK_DB_PATH,
-        "feedback_sqlite_path_configured": False,
+        "session_feedback_persistence_backend": "postgres",
+        "session_feedback_database_url": "postgresql://unused/feedback",
         "session_feedback_backend": None,
         "text_session_backend": "auto",
         "text_session_database_url": None,
@@ -167,13 +163,17 @@ def test_partial_grouped_persistence_preserves_legacy_values() -> None:
     assert resolved.thread_database_url == "postgresql://legacy/thread"
 
 
-def test_sqlite_validation_message_preserves_field_order() -> None:
+def test_removed_application_store_validation_precedes_legacy_opt_in() -> None:
     with pytest.raises(ValueError) as exc_info:
-        _resolve_persistence(persistence_config=None)
+        _resolve_persistence(
+            persistence_config=RuntimePersistenceConfig(allow_legacy_sqlite=True),
+            crisis_log_persistence_backend="sqlite",
+            session_feedback_persistence_backend="sqlite",
+        )
 
     assert str(exc_info.value).endswith(
-        "SQLite fields: memory_backend, crisis_log_persistence_backend, "
-        "session_feedback_persistence_backend, text_session_backend."
+        "Removed fields: crisis_log_persistence_backend, "
+        "session_feedback_persistence_backend."
     )
 
 
@@ -185,17 +185,12 @@ def test_custom_durable_sqlite_paths_require_legacy_opt_in(tmp_path: Path) -> No
             sqlite_path_configured=True,
             memory_sqlite_path=tmp_path / "memory.sqlite3",
             memory_sqlite_path_configured=True,
-            crisis_log_sqlite_path=tmp_path / "crisis.sqlite3",
-            crisis_log_sqlite_path_configured=True,
-            feedback_sqlite_path=tmp_path / "feedback.sqlite3",
-            feedback_sqlite_path_configured=True,
             text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
             text_session_sqlite_path_configured=True,
         )
 
     assert str(exc_info.value).endswith(
-        "SQLite fields: memory_backend, crisis_log_persistence_backend, "
-        "session_feedback_persistence_backend, text_session_backend."
+        "SQLite fields: memory_backend, text_session_backend."
     )
 
 
@@ -208,8 +203,6 @@ def test_incognito_and_in_memory_paths_bypass_durable_sqlite_guard() -> None:
         persistence_config=None,
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
         text_session_sqlite_path=":memory:",
     )
 

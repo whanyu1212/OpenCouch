@@ -11,6 +11,28 @@ from agent.models import DoneEvent, ResponseReadyEvent, StatusEvent
 
 
 @pytest.mark.asyncio
+async def test_console_runtime_rejects_persistent_legacy_sqlite() -> None:
+    from config import Settings
+    from opencouch_tui.runtime import ConsoleConfig, ConsoleRuntime
+
+    runtime = ConsoleRuntime(
+        ConsoleConfig(
+            requested_mode="deterministic",
+            thread_id="tui-legacy-sqlite",
+            memory_mode="persistent",
+        ),
+        settings=Settings(
+            persistence_backend="sqlite",
+            allow_legacy_sqlite=True,
+            text_session_backend="disabled",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="SQLite crisis-audit and session-feedback"):
+        await runtime.__aenter__()
+
+
+@pytest.mark.asyncio
 async def test_console_runtime_streams_deterministic_guest_turn() -> None:
     """Deterministic guest mode should run without configured credentials."""
 
@@ -163,7 +185,6 @@ async def test_console_runtime_uses_grouped_storage_paths(
             memory_mode=memory_mode,
             sqlite_path="/tmp/thread.sqlite3",
             memory_sqlite_path="/tmp/memory.sqlite3",
-            crisis_log_sqlite_path="/tmp/crisis.sqlite3",
         )
     ) as runtime:
         session = runtime.session
@@ -173,12 +194,10 @@ async def test_console_runtime_uses_grouped_storage_paths(
     assert "storage_paths" in kwargs
     assert "sqlite_path" not in kwargs
     assert "memory_sqlite_path" not in kwargs
-    assert "crisis_log_sqlite_path" not in kwargs
     storage_paths = kwargs["storage_paths"]
     assert isinstance(storage_paths, RuntimeStoragePaths)
     assert storage_paths.sqlite_path == expected_thread_path
     assert storage_paths.memory_sqlite_path == "/tmp/memory.sqlite3"
-    assert storage_paths.crisis_log_sqlite_path == "/tmp/crisis.sqlite3"
     assert session is not None
     assert session.user_id == expected_user_id
 
@@ -468,7 +487,7 @@ async def test_console_runtime_notebook_snapshot_fetches_complete_raw_namespaces
 def test_console_config_defaults_are_tui_safe() -> None:
     """The adapter defaults should be safe for credential-free TUI smoke runs."""
 
-    from agent.runtime import DEFAULT_CRISIS_LOG_DB_PATH, DEFAULT_MEMORY_DB_PATH
+    from agent.runtime import DEFAULT_MEMORY_DB_PATH
     from opencouch_tui.runtime import ConsoleConfig
 
     config = ConsoleConfig(thread_id="tui-defaults")
@@ -479,4 +498,3 @@ def test_console_config_defaults_are_tui_safe() -> None:
     assert config.memory_mode == "guest"
     assert config.response_model_tier == "fast"
     assert config.memory_sqlite_path == str(DEFAULT_MEMORY_DB_PATH)
-    assert config.crisis_log_sqlite_path == str(DEFAULT_CRISIS_LOG_DB_PATH)

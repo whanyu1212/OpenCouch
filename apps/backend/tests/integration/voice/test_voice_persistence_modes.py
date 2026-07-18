@@ -9,6 +9,7 @@ from httpx import ASGITransport, AsyncClient
 from agent.memory.modes import MemoryMode
 from agent.runtime import PersistentAgentRuntime
 from tests.support.persistence import (
+    in_memory_audit_feedback_dependencies,
     in_memory_runtime_storage_paths,
     runtime_persistence_config,
 )
@@ -135,6 +136,7 @@ async def test_persistent_voice_turn_request_still_persists_runtime_state(
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(),
     )
     app = FastAPI()
     app.include_router(api_router, prefix="/api")

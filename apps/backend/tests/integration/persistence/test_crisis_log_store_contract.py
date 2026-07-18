@@ -10,7 +10,11 @@ import psycopg
 import pytest
 
 from agent.audit.models import CrisisLogRecord
-from tests.support.persistence_contracts import open_postgres_crisis_log_backend
+from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
+from tests.support.persistence_contracts import (
+    open_postgres_crisis_log_backend,
+    require_postgres_database_url,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -148,6 +152,8 @@ async def test_crisis_log_rejects_duplicate_ids() -> None:
         await backend.aappend(record)
         with pytest.raises(psycopg.errors.UniqueViolation):
             await backend.aappend(record)
+        await backend.aappend(_record())
+        assert await backend.arecord_count() == 2
 
 
 async def test_crisis_log_rejects_malformed_timestamp() -> None:
@@ -169,3 +175,39 @@ async def test_crisis_log_concurrent_appends_all_persist() -> None:
 
         assert {record.id for record in stored} == {record.id for record in records}
         assert await backend.arecord_count() == len(records)
+
+
+async def test_crisis_log_schema_failure_is_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed initial schema transaction must not publish its connection."""
+
+    backend = PostgresCrisisLogBackend(require_postgres_database_url())
+    original_ensure_schema = backend._ensure_schema  # noqa: SLF001
+    calls = 0
+
+    async def fail_once(conn) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("forced schema failure")
+        await original_ensure_schema(conn)
+
+    monkeypatch.setattr(backend, "_ensure_schema", fail_once)
+    try:
+        with pytest.raises(RuntimeError, match="forced schema failure"):
+            await backend.arecord_count()
+        assert backend._connection is None  # noqa: SLF001
+        assert await backend.arecord_count() == 0
+        assert calls == 2
+    finally:
+        await backend.aclose()
+
+
+async def test_crisis_log_close_before_first_use_is_safe() -> None:
+    """Closing a lazy backend must not open a database connection."""
+
+    backend = PostgresCrisisLogBackend(require_postgres_database_url())
+    assert backend._connection is None  # noqa: SLF001
+    await backend.aclose()
+    assert backend._connection is None  # noqa: SLF001

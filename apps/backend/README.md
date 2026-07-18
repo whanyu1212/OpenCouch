@@ -5,7 +5,7 @@ Backend service for the OpenCouch mental health support product.
 Current status:
 - minimal FastAPI app entrypoint
 - OpenAI Agents SDK text runtime with crisis and therapeutic branches
-- configurable persistence (Postgres recommended, SQLite fallback)
+- Postgres durable persistence with ephemeral guest/incognito modes
 - provider-backed LLM adapters
 - local interactive CLI entrypoint
 - pytest backend tests and targeted live-provider checks

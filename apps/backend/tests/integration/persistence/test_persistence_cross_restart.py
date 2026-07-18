@@ -8,8 +8,7 @@ This is the test suite that proves "`/memory list` is not empty
 after CLI restart" — the user-visible fix v0.8 was scoped to deliver.
 It exercises the entire stack:
 
-- ``PersistentAgentRuntime.__init__`` picking SqliteMemoryStore +
-  SqliteCrisisLogBackend based on memory_mode (Stage D wiring)
+- ``PersistentAgentRuntime.__init__`` selecting mode-appropriate stores
 - ``run_turn`` invoking the full OpenAI text runtime, which builds turn
   memory context and dispatches the therapeutic response path
 - ``end_session`` invoking the summarizer, which writes an episodic
@@ -42,6 +41,7 @@ from uuid import uuid4
 
 import pytest
 
+from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.feedback.session_feedback import InMemorySessionFeedbackBackend
 from agent.memory.types import (
     EntityRef,
@@ -408,6 +408,10 @@ async def test_semantic_facts_survive_runtime_close_and_reopen_in_postgres(
             thread_database_url=memory_database_url,
             allow_legacy_sqlite=True,
         ),
+        dependencies=RuntimeDependencies(
+            crisis_log_backend=InMemoryCrisisLogBackend(),
+            session_feedback_backend=InMemorySessionFeedbackBackend(),
+        ),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -439,6 +443,10 @@ async def test_semantic_facts_survive_runtime_close_and_reopen_in_postgres(
             thread_persistence_backend="postgres",
             thread_database_url=memory_database_url,
             allow_legacy_sqlite=True,
+        ),
+        dependencies=RuntimeDependencies(
+            crisis_log_backend=InMemoryCrisisLogBackend(),
+            session_feedback_backend=InMemorySessionFeedbackBackend(),
         ),
     ) as runtime_b:
         count = await runtime_b.memory_store.arecord_count((thread_id, "semantic"))
@@ -719,6 +727,8 @@ async def test_full_trajectory_parity_in_postgres(
             memory_database_url=memory_database_url,
             crisis_log_persistence_backend="postgres",
             crisis_log_database_url=memory_database_url,
+            session_feedback_persistence_backend="postgres",
+            session_feedback_database_url=memory_database_url,
             thread_persistence_backend="postgres",
             thread_database_url=memory_database_url,
             allow_legacy_sqlite=True,
@@ -774,6 +784,8 @@ async def test_full_trajectory_parity_in_postgres(
             memory_database_url=memory_database_url,
             crisis_log_persistence_backend="postgres",
             crisis_log_database_url=memory_database_url,
+            session_feedback_persistence_backend="postgres",
+            session_feedback_database_url=memory_database_url,
             thread_persistence_backend="postgres",
             thread_database_url=memory_database_url,
             allow_legacy_sqlite=True,
@@ -837,6 +849,9 @@ async def test_feedback_layer_parity_in_postgres(
             session_feedback_database_url=memory_database_url,
             allow_legacy_sqlite=True,
         ),
+        dependencies=RuntimeDependencies(
+            crisis_log_backend=InMemoryCrisisLogBackend(),
+        ),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -867,6 +882,9 @@ async def test_feedback_layer_parity_in_postgres(
             session_feedback_persistence_backend="postgres",
             session_feedback_database_url=memory_database_url,
             allow_legacy_sqlite=True,
+        ),
+        dependencies=RuntimeDependencies(
+            crisis_log_backend=InMemoryCrisisLogBackend(),
         ),
     ) as runtime_b:
         stored = await runtime_b.session_feedback_backend.alist_by_session(
@@ -1071,6 +1089,10 @@ async def test_held_session_buffer_survives_restart_until_end_session_in_postgre
             thread_database_url=memory_database_url,
             allow_legacy_sqlite=True,
         ),
+        dependencies=RuntimeDependencies(
+            crisis_log_backend=InMemoryCrisisLogBackend(),
+            session_feedback_backend=InMemorySessionFeedbackBackend(),
+        ),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -1111,6 +1133,10 @@ async def test_held_session_buffer_survives_restart_until_end_session_in_postgre
             thread_persistence_backend="postgres",
             thread_database_url=memory_database_url,
             allow_legacy_sqlite=True,
+        ),
+        dependencies=RuntimeDependencies(
+            crisis_log_backend=InMemoryCrisisLogBackend(),
+            session_feedback_backend=InMemorySessionFeedbackBackend(),
         ),
     ) as runtime_b:
         persisted = (
@@ -1781,7 +1807,6 @@ async def test_incognito_runtime_does_not_persist_to_disk(
     # The memory store and crisis log are in-memory only, so their
     # files are never opened either.
     assert not cast(Path, storage_paths.memory_sqlite_path).exists()
-    assert not cast(Path, storage_paths.crisis_log_sqlite_path).exists()
 
 
 @pytest.mark.asyncio

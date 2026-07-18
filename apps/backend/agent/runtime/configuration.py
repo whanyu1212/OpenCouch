@@ -31,13 +31,18 @@ _LEGACY_STORAGE_PATH_WARNING = (
     "use storage_paths=RuntimeStoragePaths(...) instead."
 )
 _LEGACY_SQLITE_DURABLE_MESSAGE = (
-    "Durable SQLite persistence is legacy and disabled unless explicitly "
-    "allowed. Use Postgres for durable runtime persistence, or set "
-    "allow_legacy_sqlite=True for temporary migration-only SQLite usage."
+    "Durable SQLite memory or SDK-session persistence is legacy and disabled "
+    "unless explicitly allowed. Use Postgres for durable runtime persistence, "
+    "or set allow_legacy_sqlite=True for temporary migration-only usage."
 )
 _REMOVED_THREAD_SQLITE_MESSAGE = (
     "SQLite runtime-state and active-session persistence has been removed. "
     "Use thread_persistence_backend='postgres' with a Postgres database URL."
+)
+_REMOVED_AUDIT_FEEDBACK_SQLITE_MESSAGE = (
+    "SQLite crisis-audit and session-feedback persistence has been removed. "
+    "Use Postgres for durable application persistence; incognito mode and "
+    "explicit in-memory test backends remain available."
 )
 
 
@@ -285,20 +290,37 @@ def _validate_legacy_sqlite_durable_allowed(
     thread_persistence_backend: Literal["memory", "sqlite", "postgres"],
     sqlite_path: str | Path,
     crisis_log_persistence_backend: Literal["sqlite", "postgres"],
-    crisis_log_sqlite_path: str | Path,
     crisis_log_backend: CrisisLogBackend | None,
     session_feedback_persistence_backend: Literal["sqlite", "postgres"],
-    feedback_sqlite_path: str | Path,
     session_feedback_backend: SessionFeedbackBackend | None,
     text_session_backend: TextSessionBackend,
     text_session_database_url: str | None,
     text_session_sqlite_path: str | Path | None,
     allow_legacy_sqlite: bool,
 ) -> None:
-    """Reject removed thread SQLite and unapproved remaining SQLite backends."""
+    """Reject removed stores and unapproved remaining durable SQLite."""
 
     if memory_mode != MemoryMode.INCOGNITO and thread_persistence_backend == "sqlite":
         raise ValueError(_REMOVED_THREAD_SQLITE_MESSAGE)
+
+    removed_backends: list[str] = []
+    if (
+        memory_mode != MemoryMode.INCOGNITO
+        and crisis_log_backend is None
+        and crisis_log_persistence_backend == "sqlite"
+    ):
+        removed_backends.append("crisis_log_persistence_backend")
+    if (
+        memory_mode != MemoryMode.INCOGNITO
+        and session_feedback_backend is None
+        and session_feedback_persistence_backend == "sqlite"
+    ):
+        removed_backends.append("session_feedback_persistence_backend")
+    if removed_backends:
+        raise ValueError(
+            f"{_REMOVED_AUDIT_FEEDBACK_SQLITE_MESSAGE} Removed fields: "
+            f"{', '.join(removed_backends)}."
+        )
 
     if memory_mode == MemoryMode.INCOGNITO or allow_legacy_sqlite:
         return
@@ -310,18 +332,6 @@ def _validate_legacy_sqlite_durable_allowed(
         and not _is_in_memory_sqlite_path(memory_sqlite_path)
     ):
         sqlite_backends.append("memory_backend")
-    if (
-        crisis_log_backend is None
-        and crisis_log_persistence_backend == "sqlite"
-        and not _is_in_memory_sqlite_path(crisis_log_sqlite_path)
-    ):
-        sqlite_backends.append("crisis_log_persistence_backend")
-    if (
-        session_feedback_backend is None
-        and session_feedback_persistence_backend == "sqlite"
-        and not _is_in_memory_sqlite_path(feedback_sqlite_path)
-    ):
-        sqlite_backends.append("session_feedback_persistence_backend")
     text_session_uses_sqlite = text_session_backend == "sqlite" or (
         text_session_backend == "auto" and not text_session_database_url
     )
@@ -372,13 +382,9 @@ def _resolve_runtime_persistence_config(
     sqlite_path_configured: bool,
     crisis_log_persistence_backend: Literal["sqlite", "postgres"],
     crisis_log_database_url: str | None,
-    crisis_log_sqlite_path: str | Path,
-    crisis_log_sqlite_path_configured: bool,
     crisis_log_backend: CrisisLogBackend | None,
     session_feedback_persistence_backend: Literal["sqlite", "postgres"],
     session_feedback_database_url: str | None,
-    feedback_sqlite_path: str | Path,
-    feedback_sqlite_path_configured: bool,
     session_feedback_backend: SessionFeedbackBackend | None,
     text_session_backend: TextSessionBackend,
     text_session_database_url: str | None,
@@ -458,10 +464,8 @@ def _resolve_runtime_persistence_config(
         thread_persistence_backend=thread_persistence_backend,
         sqlite_path=sqlite_path,
         crisis_log_persistence_backend=crisis_log_persistence_backend,
-        crisis_log_sqlite_path=crisis_log_sqlite_path,
         crisis_log_backend=crisis_log_backend,
         session_feedback_persistence_backend=session_feedback_persistence_backend,
-        feedback_sqlite_path=feedback_sqlite_path,
         session_feedback_backend=session_feedback_backend,
         text_session_backend=text_session_backend,
         text_session_database_url=text_session_database_url,

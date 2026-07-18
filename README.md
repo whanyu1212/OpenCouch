@@ -59,7 +59,7 @@ Voice support is being rebuilt on the OpenAI Realtime path. The backend has acti
 - **Three-layer persistent memory.** Semantic facts, episodic arcs, and procedural rules persisted across sessions ([CoALA](https://arxiv.org/abs/2309.02427)-inspired), with per-turn extraction and session-end consolidation.
 - **Safety routing on every turn.** Pre-response safety classification with a durable crisis-audit log; specialist crisis agent takes over when triggered.
 - **13 state-tracked guided exercises.** Multi-turn flows for grounding, box breathing, thought work, values reflection, and related coping skills — with consent and step-state preserved across turns.
-- **Postgres-first persistence.** Thread state, long-term memory, active sessions, crisis log, and feedback all live in Postgres; SQLite fallback for lightweight local runs.
+- **Postgres-first persistence.** Thread state, long-term memory, active sessions, crisis log, and feedback all live in Postgres; guest/incognito runs remain ephemeral, while legacy SQLite is limited to memory and SDK-session compatibility.
 - **Multiple surfaces.** Web chat (Next.js) and text TUI (`scripts/text_tui.sh`), both backed by the same FastAPI runtime.
 - **1100+ backend tests + tracing.** Unit, integration, voice, audit, observability, and live-provider suites; vendor-neutral tracing supports state diagnostics, structured logging, and OpenTelemetry/OTLP export.
 

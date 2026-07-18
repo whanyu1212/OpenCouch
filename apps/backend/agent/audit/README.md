@@ -48,8 +48,7 @@ therapeutic response generation.
 | `capture.py` | Runtime-facing bounded/best-effort capture seam. |
 | `summary.py` | Daily aggregate helper for operator-facing counts. |
 | `crisis_log.py` | `CrisisLogBackend`, in-memory/null implementations, and lower-level crisis record writer. |
-| `postgres_crisis_log.py` | Primary durable Postgres implementation of `CrisisLogBackend`. |
-| `sqlite_crisis_log.py` | Legacy SQLite fallback and migration-compatible implementation. |
+| `postgres_crisis_log.py` | Direct durable Postgres implementation of `CrisisLogBackend`. |
 
 ## What Records Store
 
@@ -73,9 +72,7 @@ The crisis log is always available across memory modes, but persistence is
 mode-aware:
 
 - Incognito mode uses `InMemoryCrisisLogBackend`; records die with the runtime.
-- Persistent modes use the configured durable backend. Postgres is preferred for
-  deployed environments; SQLite remains only as explicit legacy fallback during
-  migration.
+- Persistent modes require Postgres.
 - `NullCrisisLogBackend` is reserved for explicit tests and fixtures.
 
 User memory recall controls must not disable crisis event capture. Retention and
@@ -88,13 +85,12 @@ review work, for example:
 
 ```bash
 cd apps/backend
-.venv/bin/python ../../scripts/audit_crisis_ledger.py summary --date 2026-06-30
-.venv/bin/python ../../scripts/audit_crisis_ledger.py export --date 2026-06-30 --pretty
-.venv/bin/python ../../scripts/audit_crisis_ledger.py purge --before 2026-01-01 --yes
+OPENCOUCH_CRISIS_LOG_DATABASE_URL=postgresql://... \
+  .venv/bin/python ../../scripts/audit_crisis_ledger.py summary --date 2026-06-30
 ```
 
-The script supports SQLite by default and Postgres via `--backend postgres` plus
-`--database-url` or `OPENCOUCH_CRISIS_LOG_DATABASE_URL`.
+The script requires Postgres through `--database-url` or
+`OPENCOUCH_CRISIS_LOG_DATABASE_URL`.
 
 ## Extension Rules
 

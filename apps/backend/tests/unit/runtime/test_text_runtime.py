@@ -11,17 +11,23 @@ from agent.runtime import (
     RuntimePersistenceConfig,
     RuntimeStoragePaths,
 )
+from tests.support.persistence import in_memory_audit_feedback_dependencies
+
+
+def _runtime(**kwargs) -> PersistentAgentRuntime:
+    return PersistentAgentRuntime(
+        dependencies=in_memory_audit_feedback_dependencies(),
+        **kwargs,
+    )
 
 
 def test_persistent_runtime_defaults_to_openai_text_runtime() -> None:
     """PersistentAgentRuntime should use the OpenAI text runtime."""
 
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=RuntimeStoragePaths(
             sqlite_path=":memory:",
             memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
-            feedback_sqlite_path=":memory:",
             text_session_sqlite_path=":memory:",
         ),
         persistence_config=RuntimePersistenceConfig(
@@ -37,7 +43,7 @@ def test_persistent_runtime_defaults_to_openai_text_runtime() -> None:
 async def test_prewarm_initializes_openai_text_runtime(tmp_path) -> None:
     """Runtime prewarm should initialize the OpenAI runtime before use."""
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=RuntimeStoragePaths(
             sqlite_path=tmp_path / "threads.sqlite3",
             text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
@@ -55,7 +61,7 @@ async def test_prewarm_initializes_openai_text_runtime(tmp_path) -> None:
 async def test_runtime_reset_clears_runtime_and_sdk_session_state(tmp_path) -> None:
     """Thread reset should remove runtime state and SDK session history."""
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=RuntimeStoragePaths(
             sqlite_path=tmp_path / "threads.sqlite3",
             text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
@@ -87,7 +93,7 @@ async def test_runtime_reset_clears_runtime_and_sdk_session_state(tmp_path) -> N
 async def test_runtime_history_falls_back_to_runtime_state_transcript(tmp_path) -> None:
     """History remains available from app-owned runtime state snapshots."""
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=RuntimeStoragePaths(
             sqlite_path=tmp_path / "threads.sqlite3",
             text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",

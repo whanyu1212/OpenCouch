@@ -22,19 +22,15 @@ from typing import Any, Protocol
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_ROOT = REPO_ROOT / "apps" / "backend"
-DEFAULT_SQLITE_PATH = BACKEND_ROOT / ".store" / "crisis.sqlite3"
 if str(BACKEND_ROOT) not in sys.path:
     sys.path.insert(0, str(BACKEND_ROOT))
 
 from agent.audit.crisis_log import CrisisLogBackend  # noqa: E402
 from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend  # noqa: E402
-from agent.audit.sqlite_crisis_log import SqliteCrisisLogBackend  # noqa: E402
 from agent.audit.summary import summarize_crisis_log_records  # noqa: E402
 
 
 class _Args(Protocol):
-    backend: str
-    sqlite_path: str
     database_url: str | None
     pretty: bool
 
@@ -60,15 +56,12 @@ def _json_print(payload: Any, *, pretty: bool) -> None:
 
 
 def _build_backend(args: _Args) -> CrisisLogBackend:
-    if args.backend == "postgres":
-        dsn = args.database_url or os.environ.get("OPENCOUCH_CRISIS_LOG_DATABASE_URL")
-        if not dsn:
-            raise SystemExit(
-                "--database-url or OPENCOUCH_CRISIS_LOG_DATABASE_URL is required "
-                "for --backend postgres"
-            )
-        return PostgresCrisisLogBackend(dsn)
-    return SqliteCrisisLogBackend(Path(args.sqlite_path))
+    dsn = args.database_url or os.environ.get("OPENCOUCH_CRISIS_LOG_DATABASE_URL")
+    if not dsn:
+        raise SystemExit(
+            "--database-url or OPENCOUCH_CRISIS_LOG_DATABASE_URL is required"
+        )
+    return PostgresCrisisLogBackend(dsn)
 
 
 async def _run_summary(args: argparse.Namespace) -> None:
@@ -109,17 +102,6 @@ async def _run_purge(args: argparse.Namespace) -> None:
 
 
 def _add_backend_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument(
-        "--backend",
-        choices=("sqlite", "postgres"),
-        default="sqlite",
-        help="ledger backend to inspect (default: sqlite)",
-    )
-    parser.add_argument(
-        "--sqlite-path",
-        default=str(DEFAULT_SQLITE_PATH),
-        help=f"SQLite crisis ledger path (default: {DEFAULT_SQLITE_PATH})",
-    )
     parser.add_argument(
         "--database-url",
         default=None,

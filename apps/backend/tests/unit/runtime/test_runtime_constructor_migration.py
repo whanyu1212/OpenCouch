@@ -48,10 +48,6 @@ _LEGACY_KEYWORDS = {
     "thread_database_url",
     "thread_persistence_backend",
 }
-_ALLOWED_FUNCTION = (
-    "test_partial_grouped_persistence_config_preserves_legacy_thread_backend"
-)
-_ALLOWED_KEYWORDS = {"thread_database_url", "thread_persistence_backend"}
 
 
 def _is_runtime_constructor(call: ast.Call) -> bool:
@@ -67,7 +63,6 @@ def test_internal_runtime_callers_use_grouped_configuration() -> None:
     """New internal callers must use grouped configuration objects."""
 
     violations: list[str] = []
-    allowed_call_seen = False
     for scan_root in _SCAN_ROOTS:
         root = _REPO_ROOT / scan_root
         assert root.is_dir(), f"Runtime caller scan root does not exist: {root}"
@@ -94,22 +89,10 @@ def test_internal_runtime_callers_use_grouped_configuration() -> None:
                     }
                     if not call.args and not legacy:
                         continue
-                    is_allowed = (
-                        relative_path_text.endswith(
-                            "test_persistence_backend_selection.py"
-                        )
-                        and function.name == _ALLOWED_FUNCTION
-                        and not call.args
-                        and legacy == _ALLOWED_KEYWORDS
+                    violations.append(
+                        f"{relative_path_text}:{call.lineno} ({function.name}): "
+                        f"positional={len(call.args)}, legacy={sorted(legacy)}"
                     )
-                    if is_allowed:
-                        allowed_call_seen = True
-                    else:
-                        violations.append(
-                            f"{relative_path_text}:{call.lineno} ({function.name}): "
-                            f"positional={len(call.args)}, legacy={sorted(legacy)}"
-                        )
-    assert allowed_call_seen, "Remove the stale runtime migration allowlist"
     assert not violations, "Use grouped runtime configuration:\n" + "\n".join(
         violations
     )

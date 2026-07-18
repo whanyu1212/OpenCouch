@@ -14,7 +14,6 @@ from agent.memory.store import MemoryStore, Namespace, StoreRecord
 from agent.memory.types import SemanticFact, StoredSessionArc
 from agent.models import Message, StreamEvent
 from agent.runtime import (
-    DEFAULT_CRISIS_LOG_DB_PATH,
     DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
@@ -82,7 +81,6 @@ class ConsoleConfig:
     sqlite_path: str = str(DEFAULT_THREAD_DB_PATH)
     memory_mode: MemoryModeName = "guest"
     memory_sqlite_path: str = str(DEFAULT_MEMORY_DB_PATH)
-    crisis_log_sqlite_path: str = str(DEFAULT_CRISIS_LOG_DB_PATH)
 
 
 @dataclass
@@ -191,7 +189,6 @@ class ConsoleRuntime:
             storage_paths=RuntimeStoragePaths(
                 sqlite_path=":memory:" if is_guest_mode else self.config.sqlite_path,
                 memory_sqlite_path=self.config.memory_sqlite_path,
-                crisis_log_sqlite_path=self.config.crisis_log_sqlite_path,
             ),
             persistence_config=persistence_config,
             dependencies=RuntimeDependencies(default_llm_client=llm_client),

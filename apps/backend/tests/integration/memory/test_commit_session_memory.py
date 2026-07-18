@@ -40,13 +40,13 @@ from agent.runtime.session import run_commit_session_memory
 from agent.runtime.session.history import session_conversation_from_transcript
 from agent.runtime import (
     PersistentAgentRuntime,
-    RuntimeDependencies,
     RuntimePersistenceConfig,
     RuntimeStoragePaths,
 )
 from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
+from tests.support.persistence import in_memory_audit_feedback_dependencies
 
 
 def _semantic_write(
@@ -1593,8 +1593,6 @@ async def test_runtime_end_session_commits_buffered_semantic_candidates(
     async with PersistentAgentRuntime(
         storage_paths=RuntimeStoragePaths(
             sqlite_path=tmp_path / "threads.sqlite3",
-            crisis_log_sqlite_path=tmp_path / "crisis.sqlite3",
-            feedback_sqlite_path=tmp_path / "feedback.sqlite3",
             text_session_sqlite_path=tmp_path / "text_sessions.sqlite3",
         ),
         persistence_config=RuntimePersistenceConfig(
@@ -1602,7 +1600,7 @@ async def test_runtime_end_session_commits_buffered_semantic_candidates(
             thread_persistence_backend="memory",
             allow_legacy_sqlite=True,
         ),
-        dependencies=RuntimeDependencies(memory_store=store),
+        dependencies=in_memory_audit_feedback_dependencies(memory_store=store),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-test",
@@ -1670,8 +1668,6 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
     async with PersistentAgentRuntime(
         storage_paths=RuntimeStoragePaths(
             sqlite_path=tmp_path / "threads.sqlite3",
-            crisis_log_sqlite_path=tmp_path / "crisis.sqlite3",
-            feedback_sqlite_path=tmp_path / "feedback.sqlite3",
             text_session_sqlite_path=tmp_path / "text_sessions.sqlite3",
         ),
         persistence_config=RuntimePersistenceConfig(
@@ -1679,7 +1675,7 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
             thread_persistence_backend="memory",
             allow_legacy_sqlite=True,
         ),
-        dependencies=RuntimeDependencies(memory_store=store),
+        dependencies=in_memory_audit_feedback_dependencies(memory_store=store),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-test",

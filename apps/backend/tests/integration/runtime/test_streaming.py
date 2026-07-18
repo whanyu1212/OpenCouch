@@ -44,7 +44,10 @@ from agent.models import (
 )
 from agent.runtime import PersistentAgentRuntime, RuntimePersistenceConfig
 from llm.base import BaseLLMClient, StructuredResponseT
-from tests.support.persistence import in_memory_runtime_storage_paths
+from tests.support.persistence import (
+    in_memory_audit_feedback_dependencies,
+    in_memory_runtime_storage_paths,
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -176,6 +179,13 @@ async def _collect_stream(
 # ── Tests ────────────────────────────────────────────────────────────────
 
 
+def _runtime(**kwargs) -> PersistentAgentRuntime:
+    return PersistentAgentRuntime(
+        dependencies=in_memory_audit_feedback_dependencies(),
+        **kwargs,
+    )
+
+
 class TestRunTurnStreamStages:
     """The stream should emit one StatusEvent per node in execution order."""
 
@@ -183,7 +193,7 @@ class TestRunTurnStreamStages:
     async def test_deterministic_mode_streams_offline_smoke_response(self) -> None:
         """No-client deterministic turns should stay local and persist transcript state."""
 
-        async with PersistentAgentRuntime(
+        async with _runtime(
             storage_paths=in_memory_runtime_storage_paths(),
             persistence_config=RuntimePersistenceConfig(
                 text_session_backend="disabled"
@@ -223,7 +233,7 @@ class TestRunTurnStreamStages:
         A ResponseReadyEvent is emitted after finalize, before DoneEvent.
         """
 
-        async with PersistentAgentRuntime(
+        async with _runtime(
             storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             statuses, chunks, ready, done = await _collect_stream(
@@ -248,7 +258,7 @@ class TestRunTurnStreamStages:
     async def test_done_event_comes_last(self) -> None:
         """The DoneEvent must be the terminal event, never interleaved."""
 
-        async with PersistentAgentRuntime(
+        async with _runtime(
             storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             events: list[StreamEvent] = []
@@ -271,7 +281,7 @@ class TestRunTurnStreamStages:
     async def test_response_ready_emits_after_finalize_before_done(self) -> None:
         """The reply-ready marker should surface before terminal completion."""
 
-        async with PersistentAgentRuntime(
+        async with _runtime(
             storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             events: list[StreamEvent] = []
@@ -305,7 +315,7 @@ class TestRunTurnStreamDiagnostics:
     async def test_diagnostics_carry_per_stage_timings(self) -> None:
         """Core runtime stages stamp timing keys into diagnostics."""
 
-        async with PersistentAgentRuntime(
+        async with _runtime(
             storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             _, _, _, done = await _collect_stream(
@@ -334,7 +344,7 @@ class TestRunTurnStreamDiagnostics:
         forgot to mirror it.
         """
 
-        async with PersistentAgentRuntime(
+        async with _runtime(
             storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             _, _, _, done = await _collect_stream(
@@ -374,7 +384,7 @@ class TestRunTurnStreamDiagnostics:
               public diagnostics — ``stamp_turn_total_ms`` pops it.
         """
 
-        async with PersistentAgentRuntime(
+        async with _runtime(
             storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             _, _, _, done = await _collect_stream(
@@ -393,7 +403,7 @@ class TestRunTurnStreamDiagnostics:
     async def test_diagnostics_include_retrieval_counts(self) -> None:
         """Turn memory context retrieval-count diagnostics flow through."""
 
-        async with PersistentAgentRuntime(
+        async with _runtime(
             storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             _, _, _, done = await _collect_stream(
@@ -420,7 +430,7 @@ class TestRunTurnStreamSessionTracking:
         for started_at and produce zero-duration session arcs.
         """
 
-        async with PersistentAgentRuntime(
+        async with _runtime(
             storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             # Before: no start time tracked
@@ -438,7 +448,7 @@ class TestRunTurnStreamSessionTracking:
     async def test_stream_tracks_max_crisis_level(self) -> None:
         """The stream path updates max-crisis tracking like run_turn does."""
 
-        async with PersistentAgentRuntime(
+        async with _runtime(
             storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             await _collect_stream(runtime, thread_id="t-stream-7", message="hi")
@@ -462,7 +472,7 @@ class TestRunTurnStreamParity:
         don't interfere.
         """
 
-        async with PersistentAgentRuntime(
+        async with _runtime(
             storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             monolithic = await runtime.run_turn(

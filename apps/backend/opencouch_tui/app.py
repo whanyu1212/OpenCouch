@@ -149,7 +149,6 @@ def config_from_args(args: argparse.Namespace) -> ConsoleConfig:
         sqlite_path=args.sqlite_path,
         memory_mode=args.memory_mode,
         memory_sqlite_path=args.memory_sqlite_path,
-        crisis_log_sqlite_path=args.crisis_log_sqlite_path,
     )
 
 

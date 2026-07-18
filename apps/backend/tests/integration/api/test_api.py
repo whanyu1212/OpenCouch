@@ -37,6 +37,7 @@ from api.models import ApiMemoryMode
 from llm.base import BaseLLMClient, StructuredResponseT
 from tests.support.api_selection import runtime_selection
 from tests.support.persistence import (
+    in_memory_audit_feedback_dependencies,
     in_memory_runtime_storage_paths,
     postgres_thread_persistence_config,
     runtime_persistence_config,
@@ -197,7 +198,7 @@ async def runtime():
     rt = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
-        dependencies=RuntimeDependencies(default_llm_client=llm),
+        dependencies=in_memory_audit_feedback_dependencies(default_llm_client=llm),
     )
     async with rt:
         yield rt
@@ -211,7 +212,7 @@ async def durable_thread_runtime():
     rt = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=postgres_thread_persistence_config(),
-        dependencies=RuntimeDependencies(default_llm_client=llm),
+        dependencies=in_memory_audit_feedback_dependencies(default_llm_client=llm),
     )
     async with rt:
         yield rt

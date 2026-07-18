@@ -92,6 +92,10 @@ async def test_soft_limit_marks_session_rotation_required_in_postgres(
             memory_database_url=memory_database_url,
             thread_persistence_backend="postgres",
             thread_database_url=memory_database_url,
+            crisis_log_persistence_backend="postgres",
+            crisis_log_database_url=memory_database_url,
+            session_feedback_persistence_backend="postgres",
+            session_feedback_database_url=memory_database_url,
             allow_legacy_sqlite=True,
         ),
         behavior_config=RuntimeBehaviorConfig(
@@ -117,6 +121,10 @@ async def test_soft_limit_marks_session_rotation_required_in_postgres(
             memory_database_url=memory_database_url,
             thread_persistence_backend="postgres",
             thread_database_url=memory_database_url,
+            crisis_log_persistence_backend="postgres",
+            crisis_log_database_url=memory_database_url,
+            session_feedback_persistence_backend="postgres",
+            session_feedback_database_url=memory_database_url,
             allow_legacy_sqlite=True,
         ),
         behavior_config=RuntimeBehaviorConfig(
