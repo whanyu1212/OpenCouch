@@ -10,8 +10,7 @@ Concrete backends share the same async protocol:
 
 - ``InMemoryCrisisLogBackend`` is ephemeral and used by tests and
   incognito runtimes.
-- ``SqliteCrisisLogBackend`` is the legacy SQLite fallback for local
-  development and migration compatibility.
+- ``PostgresCrisisLogBackend`` is the supported durable implementation.
 - ``NullCrisisLogBackend`` is reserved for explicit test fixtures.
 """
 

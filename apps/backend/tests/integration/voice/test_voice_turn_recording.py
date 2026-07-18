@@ -18,6 +18,7 @@ from api.routes import voice as voice_routes
 from tests.support.api_selection import runtime_selection
 from tests.support.persistence import (
     FakeCrossRestartLLM,
+    in_memory_audit_feedback_dependencies,
     in_memory_runtime_storage_paths,
     runtime_persistence_config,
 )
@@ -27,6 +28,13 @@ from tests.support.safety_capture import (
     utc_crisis_records,
     voice_crisis_lookup_tool_call,
 )
+
+
+def _runtime(**kwargs) -> PersistentAgentRuntime:
+    return PersistentAgentRuntime(
+        dependencies=in_memory_audit_feedback_dependencies(),
+        **kwargs,
+    )
 
 
 class _VoiceCrisisAuditLLM(FakeCrossRestartLLM):
@@ -71,7 +79,7 @@ class _VoiceCrisisAuditLLM(FakeCrossRestartLLM):
 
 @pytest.mark.asyncio
 async def test_record_voice_turn_persists_thread_history() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
     )
@@ -100,7 +108,7 @@ async def test_record_voice_turn_persists_thread_history() -> None:
 async def test_voice_turn_endpoint_records_transcript(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -156,7 +164,7 @@ async def test_voice_turn_endpoint_records_transcript(
 async def test_voice_turn_endpoint_infers_route_and_tool_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -214,7 +222,7 @@ async def test_voice_turn_endpoint_infers_route_and_tool_metadata(
 
 @pytest.mark.asyncio
 async def test_first_voice_crisis_lookup_does_not_advance_turn_count() -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -259,7 +267,7 @@ async def test_voice_crisis_turn_writes_one_audit_record() -> None:
     thread into the record.
     """
 
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -302,7 +310,7 @@ async def test_voice_crisis_turn_writes_one_audit_record() -> None:
 async def test_voice_non_crisis_followup_does_not_reaudit_prior_crisis() -> None:
     """A later ordinary voice turn must not re-audit stale prior crisis state."""
 
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -338,7 +346,7 @@ async def test_voice_crisis_capture_runs_before_sdk_history_failure(
 ) -> None:
     """A saved voice crisis turn should still audit if SDK bookkeeping fails."""
 
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
         behavior_config=RuntimeBehaviorConfig(
@@ -379,7 +387,7 @@ async def test_voice_crisis_capture_runs_before_sdk_history_failure(
 async def test_non_crisis_voice_turn_writes_no_audit_record() -> None:
     """An ordinary voice turn must not produce a crisis audit record."""
 
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -411,7 +419,7 @@ async def test_non_crisis_voice_turn_writes_no_audit_record() -> None:
 async def test_post_turn_voice_classifier_writes_missed_crisis_audit_record() -> None:
     """A post-turn voice classifier miss is audited without changing latency path."""
 
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -461,7 +469,7 @@ async def test_post_turn_voice_classifier_writes_missed_crisis_audit_record() ->
 async def test_post_turn_voice_classifier_writes_no_record_for_safe_turn() -> None:
     """A safe post-turn classifier result must not create audit noise."""
 
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -488,7 +496,7 @@ async def test_post_turn_voice_classifier_writes_no_record_for_safe_turn() -> No
 async def test_post_turn_voice_classifier_skips_existing_crisis_route() -> None:
     """Realtime crisis routing already produces the only audit record."""
 
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -530,7 +538,7 @@ async def test_post_turn_voice_classifier_skips_existing_crisis_route() -> None:
 async def test_post_turn_safety_drain_waits_for_background_classifier() -> None:
     """The voice facade exposes a deterministic drain for scheduled checks."""
 
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -562,7 +570,7 @@ async def test_voice_crisis_turn_records_lookup_error_status() -> None:
     must preserve that distinction for review.
     """
 
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -600,7 +608,7 @@ async def test_voice_crisis_turn_records_lookup_error_status() -> None:
 async def test_voice_end_endpoint_uses_runtime_session_finalization(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -652,7 +660,7 @@ async def test_voice_end_endpoint_uses_runtime_session_finalization(
 async def test_voice_end_endpoint_summarizes_persistent_voice_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -718,7 +726,7 @@ async def test_voice_end_endpoint_summarizes_persistent_voice_session(
 async def test_voice_end_with_positive_feedback_writes_record(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
@@ -769,7 +777,7 @@ async def test_voice_end_with_positive_feedback_writes_record(
 async def test_incognito_voice_end_with_feedback_scrubs_user_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
     )
@@ -821,7 +829,7 @@ async def test_incognito_voice_end_with_feedback_scrubs_user_identity(
 async def test_voice_end_rejects_invalid_feedback_label(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    runtime = PersistentAgentRuntime(
+    runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )

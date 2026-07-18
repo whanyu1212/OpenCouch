@@ -43,12 +43,11 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from agent.memory.modes import MemoryMode
 from api.models import ApiMemoryMode
 from agent.runtime import (
-    DEFAULT_CRISIS_LOG_DB_PATH,
     DEFAULT_MEMORY_DB_PATH,
     DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
@@ -135,17 +134,22 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
         default=ApiMemoryMode.PERSISTENT,
     )
     _runtimes = {
-        ApiMemoryMode.PERSISTENT: _build_runtime(
-            memory_mode=MemoryMode.LOCAL,
-            settings=settings,
-            llm_client=_llm_client,
-        ),
         ApiMemoryMode.INCOGNITO: _build_runtime(
             memory_mode=MemoryMode.INCOGNITO,
             settings=settings,
             llm_client=_llm_client,
-        ),
+        )
     }
+    if (
+        _default_memory_mode is ApiMemoryMode.PERSISTENT
+        or settings.persistence_backend == "postgres"
+        and settings.memory_database_url
+    ):
+        _runtimes[ApiMemoryMode.PERSISTENT] = _build_runtime(
+            memory_mode=MemoryMode.LOCAL,
+            settings=settings,
+            llm_client=_llm_client,
+        )
 
     async with AsyncExitStack() as stack:
         for runtime in _runtimes.values():
@@ -219,7 +223,6 @@ def _build_runtime(
         storage_paths=RuntimeStoragePaths(
             sqlite_path=str(DEFAULT_THREAD_DB_PATH),
             memory_sqlite_path=str(DEFAULT_MEMORY_DB_PATH),
-            crisis_log_sqlite_path=str(DEFAULT_CRISIS_LOG_DB_PATH),
         ),
         persistence_config=persistence_config,
         dependencies=RuntimeDependencies(
@@ -252,6 +255,17 @@ def get_runtime_selection(
     resolved_mode = resolve_api_memory_mode(memory_mode)
     runtime = _runtimes.get(resolved_mode)
     if runtime is None:
+        if _runtimes:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "memory_mode_unavailable",
+                    "message": (
+                        f"Memory mode {resolved_mode.value!r} is unavailable for "
+                        "this server configuration."
+                    ),
+                },
+            )
         raise RuntimeError(
             "Agent runtime not initialized. "
             "Ensure the lifespan handler is configured on the FastAPI app."

@@ -9,9 +9,17 @@ from agent.memory.modes import MemoryMode
 from agent.runtime import PersistentAgentRuntime
 from tests.support.openai_text import FakeOpenAISDKRunner, ScriptedOpenAITextRouteLLM
 from tests.support.persistence import (
+    in_memory_audit_feedback_dependencies,
     runtime_persistence_config,
     runtime_storage_paths,
 )
+
+
+def _runtime(**kwargs) -> PersistentAgentRuntime:
+    return PersistentAgentRuntime(
+        dependencies=in_memory_audit_feedback_dependencies(),
+        **kwargs,
+    )
 
 
 @pytest.mark.asyncio
@@ -24,7 +32,7 @@ async def test_blocking_clarification_uses_therapeutic_clarifying_route(
     runner = FakeOpenAISDKRunner("Which would help more right now?")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -78,7 +86,7 @@ async def test_legacy_low_confidence_still_clarifies(
     runner = FakeOpenAISDKRunner("Could you say a little more about what you want?")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:
@@ -111,7 +119,7 @@ async def test_soft_clarification_preserves_primary_route(
     runner = FakeOpenAISDKRunner("grounded answer")
     monkeypatch.setattr(openai_runtime, "_DEFAULT_OPENAI_RUNNER", runner)
 
-    async with PersistentAgentRuntime(
+    async with _runtime(
         storage_paths=runtime_storage_paths(tmp_path),
         persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     ) as runtime:

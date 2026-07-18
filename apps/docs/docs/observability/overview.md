@@ -127,8 +127,7 @@ labels, classifier provenance, and structural metadata are kept.
 | `agent/audit/models.py` | `CrisisLogRecord`, classifier-path enums, and aggregate/summary models |
 | `agent/audit/capture.py` | Runtime-facing bounded/best-effort capture seam |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory / null backends; lower-level `write_crisis_log` helper |
-| `agent/audit/postgres_crisis_log.py` | Primary durable Postgres backend |
-| `agent/audit/sqlite_crisis_log.py` | Legacy SQLite backend pending removal |
+| `agent/audit/postgres_crisis_log.py` | Durable Postgres backend |
 | `agent/audit/summary.py` | Daily safety-summary aggregation over stored records |
 
 Retention is operator-driven (see

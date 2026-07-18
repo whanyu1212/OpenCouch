@@ -910,13 +910,9 @@ def _build_retention_record(
 
 
 class TestInMemoryCrisisLogRetentionPurge:
-    """Pin the v0.8.1 ``apurge_before`` behavior on the in-memory backend.
+    """Pin ``apurge_before`` behavior on the non-durable backend.
 
-    Symmetric tests for the SQLite backend live in
-    ``tests/integration/audit/test_sqlite_crisis_log.py``. Both backends MUST behave
-    identically — the runtime picks between them based on memory mode
-    and the operator-facing contract must not depend on which backend
-    is wired.
+    The durable Postgres contract is covered under integration/persistence.
     """
 
     @pytest.mark.asyncio

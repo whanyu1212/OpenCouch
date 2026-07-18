@@ -9,6 +9,11 @@ from typing import cast
 
 import pytest
 
+from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.feedback.session_feedback import (
+    InMemorySessionFeedbackBackend,
+    SessionFeedbackBackend,
+)
 from agent.memory.types import (
     EntityRef,
     ExtractionResult,
@@ -19,7 +24,13 @@ from agent.memory.types import (
     SummarizationResult,
 )
 from agent.memory.modes import MemoryMode
-from agent.runtime import RuntimePersistenceConfig, RuntimeStoragePaths
+from agent.memory.providers.embeddings import EmbeddingProvider
+from agent.memory.store import MemoryStore
+from agent.runtime import (
+    RuntimeDependencies,
+    RuntimePersistenceConfig,
+    RuntimeStoragePaths,
+)
 from llm.base import BaseLLMClient, StructuredResponseT
 
 _POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
@@ -250,6 +261,27 @@ def runtime_persistence_config(memory_mode: MemoryMode) -> RuntimePersistenceCon
     )
 
 
+def in_memory_audit_feedback_dependencies(
+    *,
+    default_llm_client: BaseLLMClient | None = None,
+    memory_store: MemoryStore | None = None,
+    crisis_log_backend: CrisisLogBackend | None = None,
+    session_feedback_backend: SessionFeedbackBackend | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
+) -> RuntimeDependencies:
+    """Return fresh non-durable audit and feedback dependencies for a test runtime."""
+
+    return RuntimeDependencies(
+        memory_store=memory_store,
+        crisis_log_backend=crisis_log_backend or InMemoryCrisisLogBackend(),
+        session_feedback_backend=(
+            session_feedback_backend or InMemorySessionFeedbackBackend()
+        ),
+        embedding_provider=embedding_provider,
+        default_llm_client=default_llm_client,
+    )
+
+
 def postgres_thread_persistence_config() -> RuntimePersistenceConfig:
     """Return local test settings with durable Postgres thread persistence."""
 
@@ -264,6 +296,10 @@ def postgres_thread_persistence_config() -> RuntimePersistenceConfig:
         memory_mode=MemoryMode.LOCAL,
         thread_persistence_backend="postgres",
         thread_database_url=dsn,
+        crisis_log_persistence_backend="postgres",
+        crisis_log_database_url=dsn,
+        session_feedback_persistence_backend="postgres",
+        session_feedback_database_url=dsn,
         allow_legacy_sqlite=True,
     )
 
@@ -274,8 +310,6 @@ def runtime_storage_paths(tmp_path: Path) -> RuntimeStoragePaths:
     return RuntimeStoragePaths(
         sqlite_path=tmp_path / "threads.sqlite3",
         memory_sqlite_path=tmp_path / "memory.sqlite3",
-        crisis_log_sqlite_path=tmp_path / "crisis.sqlite3",
-        feedback_sqlite_path=tmp_path / "feedback.sqlite3",
         text_session_sqlite_path=tmp_path / "text_sessions.sqlite3",
     )
 
@@ -286,8 +320,6 @@ def in_memory_runtime_storage_paths() -> RuntimeStoragePaths:
     return RuntimeStoragePaths(
         sqlite_path=":memory:",
         memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
     )
 
 

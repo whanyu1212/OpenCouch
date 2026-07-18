@@ -17,8 +17,7 @@ operator-facing rating signal, not therapeutic memory and not a safety audit log
 | --- | --- |
 | `models.py` | `FeedbackLabel`, `FeedbackSource`, `FeedbackModality`, and `SessionFeedbackRecord`. |
 | `session_feedback.py` | `SessionFeedbackBackend` plus in-memory and null implementations. |
-| `sqlite_session_feedback.py` | SQLite implementation for local durable feedback. |
-| `postgres_session_feedback.py` | Postgres implementation for production durable feedback. |
+| `postgres_session_feedback.py` | Direct Postgres implementation for durable feedback. |
 
 ## Collection Surfaces
 
@@ -67,5 +66,4 @@ operator review.
 
 Incognito runtimes use `InMemorySessionFeedbackBackend`, so records exist only
 for the runtime lifetime and always store `user_id_or_null=None`. Persistent
-modes use the configured durable backend. PostgreSQL is the production backend;
-SQLite remains only as explicit legacy fallback during migration.
+modes require Postgres for durable feedback.

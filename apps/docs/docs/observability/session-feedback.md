@@ -7,9 +7,8 @@ sidebar_position: 2
 
 An explicit end-of-session feedback collector that captures a thumbs
 rating when the user finishes a session. The data is stored in a
-dedicated persistence backend — Postgres for the recommended durable path,
-in-memory for incognito, and SQLite only as legacy compatibility pending
-removal — always-on, session-opaque, incognito-safe.
+dedicated persistence backend: Postgres for durable modes and in-memory
+for incognito. Collection is always-on, session-opaque, and incognito-safe.
 
 ---
 
@@ -37,13 +36,12 @@ privacy boundary — mirroring the crisis log's
 
 | Memory mode | Backend | Persistence |
 |---|---|---|
-| **LOCAL / SYNCED** | `PostgresSessionFeedbackBackend` for the supported durable path; `SqliteSessionFeedbackBackend` exists only for legacy compatibility pending removal | Survives CLI / server restarts when backed by Postgres |
+| **LOCAL / SYNCED** | `PostgresSessionFeedbackBackend` | Survives CLI / server restarts |
 | **INCOGNITO** | `InMemorySessionFeedbackBackend` | Dies at process exit |
 
-For the recommended local Docker setup and future managed deployment,
-feedback lives in the shared Postgres persistence layer. The
-`.store/session_feedback.sqlite3` file remains only for legacy SQLite
-compatibility until the backend is removed.
+For the recommended local Docker setup and managed deployments, feedback
+lives in the shared Postgres persistence layer. Existing legacy SQLite
+files are not read or migrated by the current runtime.
 
 Default retention: **180 days** (wider than crisis log's 90 because
 feedback analytics benefit from a longer lookback). Enforced via
@@ -135,7 +133,7 @@ records = await runtime.session_feedback_backend.alist_by_session(session_id_opa
 
 | Failure | Behavior |
 |---|---|
-| Backend write error (database outage, disk full) | `record_session_feedback()` returns `None`, logs WARNING, caller continues to summarization |
+| Backend write error (database outage) | `record_session_feedback()` returns `None`, logs WARNING, caller continues to summarization |
 | State lookup error (runtime state store failure) | Same — returns `None`, logs WARNING |
 | Invalid label via HTTP | 422 before any code runs |
 | CLI prompt interrupted (Ctrl-C, EOF) | No record, summarization proceeds |
@@ -164,8 +162,7 @@ constraint on the opaque `id`.
 |---|---|
 | `agent/feedback/models.py` | `FeedbackLabel`, `FeedbackSource`, `SessionFeedbackRecord` |
 | `agent/feedback/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory + null backends |
-| `agent/feedback/postgres_session_feedback.py` | Primary durable Postgres feedback backend |
-| `agent/feedback/sqlite_session_feedback.py` | Legacy SQLite backend with CHECK constraints and retention purge, pending removal |
+| `agent/feedback/postgres_session_feedback.py` | Durable Postgres feedback backend |
 | `agent/runtime/runtime.py` | `record_session_feedback()` method, backend selection, lifecycle |
 | `api/models.py` | `EndSessionRequest.feedback`, `MemoryStatusResponse.session_feedback_count` |
 | `api/routes/threads.py` | `POST /api/threads/{id}/end` body handling |

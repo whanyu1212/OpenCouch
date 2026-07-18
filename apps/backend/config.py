@@ -29,8 +29,9 @@ LEGACY_SQLITE_OPT_IN_ENV = "OPENCOUCH_ALLOW_LEGACY_SQLITE"
 LEGACY_SQLITE_REJECT_MESSAGE = (
     "OPENCOUCH_PERSISTENCE_BACKEND=sqlite is legacy and disabled by default. "
     "Use OPENCOUCH_PERSISTENCE_BACKEND=postgres with "
-    "OPENCOUCH_MEMORY_DATABASE_URL, or set OPENCOUCH_ALLOW_LEGACY_SQLITE=1 "
-    "to temporarily opt into durable SQLite while migrating."
+    "OPENCOUCH_MEMORY_DATABASE_URL. OPENCOUCH_ALLOW_LEGACY_SQLITE=1 only "
+    "retains temporary memory/SDK-session compatibility; crisis audit, feedback, "
+    "runtime state, and active sessions require Postgres."
 )
 
 # Shared, actionable error text raised by every postgres-without-URL guard
@@ -42,8 +43,8 @@ MISSING_MEMORY_DATABASE_URL_MESSAGE = (
     "local docker compose stack use "
     "postgresql://opencouch:opencouch@localhost:5432/opencouch "
     "(or @postgres:5432/opencouch from inside the compose network). "
-    "Durable SQLite is legacy; if you need it temporarily, set both "
-    "OPENCOUCH_PERSISTENCE_BACKEND=sqlite and OPENCOUCH_ALLOW_LEGACY_SQLITE=1."
+    "Application-owned durable persistence requires Postgres. Legacy SQLite "
+    "compatibility is limited to memory and SDK text sessions."
 )
 
 _DOTENV_LOADED = False
