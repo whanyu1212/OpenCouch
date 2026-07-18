@@ -1,4 +1,4 @@
-"""Backend-parity contract tests for runtime state stores."""
+"""Persistence contracts for runtime state stores."""
 
 from __future__ import annotations
 
@@ -44,10 +44,11 @@ async def test_runtime_state_store_round_trip_preserves_serialized_state(
     }
 
     async with open_runtime_state_store(backend, tmp_path=tmp_path) as store:
-        try:
-            assert await store.load_state(thread_id) is None
+        assert await store.load_state(thread_id) is None
+        await store.save_state(thread_id, state)
 
-            await store.save_state(thread_id, state)
+    async with open_runtime_state_store(backend, tmp_path=tmp_path) as store:
+        try:
             loaded = await store.load_state(thread_id)
 
             assert loaded is not None
@@ -84,11 +85,12 @@ async def test_runtime_state_store_overwrite_updates_latest_value_and_recency(
     thread_b = _thread_id(f"{backend}-state-b")
 
     async with open_runtime_state_store(backend, tmp_path=tmp_path) as store:
-        try:
-            await store.save_state(thread_a, {"session_progress": {"turn_count": 1}})
-            await store.save_state(thread_b, {"session_progress": {"turn_count": 2}})
-            await store.save_state(thread_a, {"session_progress": {"turn_count": 3}})
+        await store.save_state(thread_a, {"session_progress": {"turn_count": 1}})
+        await store.save_state(thread_b, {"session_progress": {"turn_count": 2}})
+        await store.save_state(thread_a, {"session_progress": {"turn_count": 3}})
 
+    async with open_runtime_state_store(backend, tmp_path=tmp_path) as store:
+        try:
             loaded_a = await store.load_state(thread_a)
             assert loaded_a is not None
             assert loaded_a["session_progress"] == {"turn_count": 3}
@@ -109,9 +111,9 @@ async def test_runtime_state_store_delete_is_idempotent(
 
     async with open_runtime_state_store(backend, tmp_path=tmp_path) as store:
         await store.save_state(thread_id, {"session_progress": {"turn_count": 1}})
-
         await store.delete_thread(thread_id)
-        assert await store.load_state(thread_id) is None
 
+    async with open_runtime_state_store(backend, tmp_path=tmp_path) as store:
+        assert await store.load_state(thread_id) is None
         await store.delete_thread(thread_id)
         assert await store.load_state(thread_id) is None

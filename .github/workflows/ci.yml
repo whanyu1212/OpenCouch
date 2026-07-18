@@ -10,6 +10,23 @@ env:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: opencouch
+          POSTGRES_USER: opencouch
+          POSTGRES_PASSWORD: opencouch
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U opencouch -d opencouch"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS: "1"
+      OPENCOUCH_TEST_POSTGRES_URL: postgresql://opencouch:opencouch@localhost:5432/opencouch
 
     steps:
       - name: Checkout repository

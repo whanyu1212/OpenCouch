@@ -1,4 +1,4 @@
-"""Backend-parity contract tests for active-session stores."""
+"""Persistence contracts for active-session stores."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ async def test_active_session_store_round_trip_list_and_delete(
     backend: str,
     tmp_path,
 ) -> None:
-    """Payload save/load/list/delete behavior should match across backends."""
+    """Payload save/load/list/delete behavior should persist across opens."""
 
     thread_a = f"a-{_thread_id(backend)}"
     thread_b = f"z-{_thread_id(backend)}"
@@ -34,37 +34,34 @@ async def test_active_session_store_round_trip_list_and_delete(
     )
 
     async with open_active_session_store(backend, tmp_path=tmp_path) as store:
-        try:
-            assert await store.load_row(thread_a) is None
+        assert await store.load_row(thread_a) is None
+        await store.save_payload(thread_b, payload_b)
+        await store.save_payload(thread_a, payload_a)
 
-            await store.save_payload(thread_b, payload_b)
-            await store.save_payload(thread_a, payload_a)
+    async with open_active_session_store(backend, tmp_path=tmp_path) as store:
+        assert await store.load_row(thread_a) == (
+            payload_a,
+            None,
+            None,
+            False,
+            None,
+        )
+        assert await store.load_row(thread_b) == (
+            payload_b,
+            None,
+            None,
+            False,
+            None,
+        )
 
-            assert await store.load_row(thread_a) == (
-                payload_a,
-                None,
-                None,
-                False,
-                None,
-            )
-            assert await store.load_row(thread_b) == (
-                payload_b,
-                None,
-                None,
-                False,
-                None,
-            )
+        listed_ids = await store.list_ids()
+        owned_ids = [
+            thread_id for thread_id in listed_ids if thread_id in {thread_a, thread_b}
+        ]
+        assert owned_ids == [thread_a, thread_b]
 
-            listed_ids = await store.list_ids()
-            owned_ids = [
-                thread_id
-                for thread_id in listed_ids
-                if thread_id in {thread_a, thread_b}
-            ]
-            assert owned_ids == [thread_a, thread_b]
-        finally:
-            await store.delete_session(thread_a)
-            await store.delete_session(thread_b)
+        await store.delete_session(thread_a)
+        await store.delete_session(thread_b)
 
     async with open_active_session_store(backend, tmp_path=tmp_path) as store:
         assert await store.load_row(thread_a) is None
@@ -109,7 +106,17 @@ async def test_active_session_store_mutation_rotation_and_delete(
             "interrupted",
         )
 
+    async with open_active_session_store(backend, tmp_path=tmp_path) as store:
+        assert await store.load_row(thread_id) == (
+            payload_json,
+            "token-1",
+            "turn",
+            False,
+            "interrupted",
+        )
         await store.clear_mutation(thread_id, "token-1")
+
+    async with open_active_session_store(backend, tmp_path=tmp_path) as store:
         assert await store.load_row(thread_id) == (
             payload_json,
             None,
@@ -117,8 +124,9 @@ async def test_active_session_store_mutation_rotation_and_delete(
             False,
             "interrupted",
         )
-
         await store.set_rotation_required(thread_id)
+
+    async with open_active_session_store(backend, tmp_path=tmp_path) as store:
         assert await store.load_row(thread_id) == (
             payload_json,
             None,
@@ -126,9 +134,9 @@ async def test_active_session_store_mutation_rotation_and_delete(
             True,
             "interrupted",
         )
-
         await store.delete_session(thread_id)
-        assert await store.load_row(thread_id) is None
 
+    async with open_active_session_store(backend, tmp_path=tmp_path) as store:
+        assert await store.load_row(thread_id) is None
         await store.delete_session(thread_id)
         assert await store.load_row(thread_id) is None
