@@ -7,6 +7,8 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from agent.memory.types import (
     EntityRef,
     ExtractionResult,
@@ -239,11 +241,30 @@ class FakeCrossRestartLLM(BaseLLMClient):
 
 
 def runtime_persistence_config(memory_mode: MemoryMode) -> RuntimePersistenceConfig:
-    """Return grouped persistence settings for a runtime test."""
+    """Return non-durable thread persistence settings for a runtime test."""
 
     return RuntimePersistenceConfig(
         memory_mode=memory_mode,
+        thread_persistence_backend="memory",
         allow_legacy_sqlite=memory_mode is MemoryMode.LOCAL,
+    )
+
+
+def postgres_thread_persistence_config() -> RuntimePersistenceConfig:
+    """Return local test settings with durable Postgres thread persistence."""
+
+    dsn = postgres_database_url()
+    if not dsn:
+        pytest.skip(
+            "Postgres integration tests are disabled; set "
+            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
+            "OPENCOUCH_TEST_POSTGRES_URL"
+        )
+    return RuntimePersistenceConfig(
+        memory_mode=MemoryMode.LOCAL,
+        thread_persistence_backend="postgres",
+        thread_database_url=dsn,
+        allow_legacy_sqlite=True,
     )
 
 

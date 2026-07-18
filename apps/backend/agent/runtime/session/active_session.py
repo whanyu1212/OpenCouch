@@ -8,8 +8,7 @@ the load:
 
 - ``manager``: the in-process owner of durable mutation coordination and
   active-session row mechanics.
-- ``store``: the persistence Protocol plus the Postgres backend.
-- ``sqlite_store``: the SQLite backend with its own runtime-owned connection.
+- ``store``: the persistence Protocol plus ephemeral and Postgres backends.
 
 The package is the public surface — callers should ``from
 agent.runtime.session.active_session import X`` rather than reaching into
@@ -24,11 +23,12 @@ from agent.runtime.session.manager import (
     PersistedActiveSessionState,
 )
 from agent.runtime.session.state import parse_iso_timestamp
-from agent.runtime.session.sqlite_store import SqliteActiveSessionStore
 from agent.runtime.session.store import (
     ACTIVE_SESSION_EXTRA_COLUMNS,
     ACTIVE_SESSION_STATE_DDL,
     ActiveSessionStore,
+    InMemoryActiveSessionStore,
+    NullActiveSessionStore,
     PostgresActiveSessionStore,
 )
 
@@ -37,9 +37,10 @@ __all__ = [
     "ACTIVE_SESSION_STATE_DDL",
     "ActiveSessionManager",
     "ActiveSessionStore",
+    "InMemoryActiveSessionStore",
+    "NullActiveSessionStore",
     "PersistedActiveSessionRow",
     "PersistedActiveSessionState",
     "PostgresActiveSessionStore",
-    "SqliteActiveSessionStore",
     "parse_iso_timestamp",
 ]

@@ -1083,6 +1083,7 @@ async def test_voice_crisis_lookup_does_not_bleed_into_a_later_turn() -> None:
 async def test_voice_tool_dispatcher_rejects_unknown_tool() -> None:
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
     )
     async with runtime:
         with pytest.raises(ValueError, match="Unsupported voice tool"):

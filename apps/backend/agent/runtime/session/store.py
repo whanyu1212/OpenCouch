@@ -70,6 +70,153 @@ class ActiveSessionStore(Protocol):
         """Close store resources."""
 
 
+class InMemoryActiveSessionStore:
+    """Process-local active-session store for explicit non-durable runtimes."""
+
+    def __init__(self) -> None:
+        self._rows: dict[
+            str,
+            tuple[str, str | None, str | None, bool, str | None],
+        ] = {}
+        self._lock = asyncio.Lock()
+        self._closed = False
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("InMemoryActiveSessionStore is closed.")
+
+    async def ensure_schema(self) -> None:
+        self._ensure_open()
+
+    async def load_row(
+        self,
+        thread_id: str,
+    ) -> tuple[str, str | None, str | None, bool, str | None] | None:
+        self._ensure_open()
+        return self._rows.get(thread_id)
+
+    async def list_ids(self) -> list[str]:
+        self._ensure_open()
+        return sorted(self._rows)
+
+    async def save_payload(self, thread_id: str, payload_json: str) -> None:
+        self._ensure_open()
+        async with self._lock:
+            self._ensure_open()
+            existing = self._rows.get(thread_id)
+            self._rows[thread_id] = (
+                payload_json,
+                existing[1] if existing else None,
+                existing[2] if existing else None,
+                existing[3] if existing else False,
+                existing[4] if existing else None,
+            )
+
+    async def set_mutation(
+        self,
+        thread_id: str,
+        *,
+        mutation_token: str,
+        mutation_kind: str,
+        finalize_required_reason: str | None = None,
+    ) -> None:
+        self._ensure_open()
+        async with self._lock:
+            self._ensure_open()
+            existing = self._rows.get(thread_id)
+            if existing is None:
+                return
+            self._rows[thread_id] = (
+                existing[0],
+                mutation_token,
+                mutation_kind,
+                existing[3],
+                finalize_required_reason
+                if finalize_required_reason is not None
+                else existing[4],
+            )
+
+    async def clear_mutation(self, thread_id: str, mutation_token: str) -> None:
+        self._ensure_open()
+        async with self._lock:
+            self._ensure_open()
+            existing = self._rows.get(thread_id)
+            if existing is None or existing[1] != mutation_token:
+                return
+            self._rows[thread_id] = (
+                existing[0],
+                None,
+                None,
+                existing[3],
+                existing[4],
+            )
+
+    async def set_rotation_required(self, thread_id: str) -> None:
+        self._ensure_open()
+        async with self._lock:
+            self._ensure_open()
+            existing = self._rows.get(thread_id)
+            if existing is None:
+                return
+            self._rows[thread_id] = (*existing[:3], True, existing[4])
+
+    async def delete_session(self, thread_id: str) -> None:
+        self._ensure_open()
+        async with self._lock:
+            self._ensure_open()
+            self._rows.pop(thread_id, None)
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        async with self._lock:
+            if self._closed:
+                return
+            self._rows.clear()
+            self._closed = True
+
+
+class NullActiveSessionStore:
+    """No-op active-session store for incognito runtimes."""
+
+    async def ensure_schema(self) -> None:
+        return None
+
+    async def load_row(
+        self,
+        thread_id: str,
+    ) -> tuple[str, str | None, str | None, bool, str | None] | None:
+        return None
+
+    async def list_ids(self) -> list[str]:
+        return []
+
+    async def save_payload(self, thread_id: str, payload_json: str) -> None:
+        return None
+
+    async def set_mutation(
+        self,
+        thread_id: str,
+        *,
+        mutation_token: str,
+        mutation_kind: str,
+        finalize_required_reason: str | None = None,
+    ) -> None:
+        return None
+
+    async def clear_mutation(self, thread_id: str, mutation_token: str) -> None:
+        return None
+
+    async def set_rotation_required(self, thread_id: str) -> None:
+        return None
+
+    async def delete_session(self, thread_id: str) -> None:
+        return None
+
+    async def aclose(self) -> None:
+        return None
+
+
 class PostgresActiveSessionStore:
     """Postgres-backed active-session store using a runtime-owned connection."""
 
@@ -302,5 +449,7 @@ __all__ = [
     "ACTIVE_SESSION_EXTRA_COLUMNS",
     "ACTIVE_SESSION_STATE_DDL",
     "ActiveSessionStore",
+    "InMemoryActiveSessionStore",
+    "NullActiveSessionStore",
     "PostgresActiveSessionStore",
 ]

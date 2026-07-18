@@ -61,14 +61,6 @@ def _resolve(**overrides: object):
     ("field", "overrides"),
     [
         (
-            "thread_persistence_backend",
-            {
-                "thread_persistence_backend": "sqlite",
-                "thread_database_url": None,
-                "sqlite_path": Path("threads.sqlite3"),
-            },
-        ),
-        (
             "crisis_log_persistence_backend",
             {
                 "crisis_log_persistence_backend": "sqlite",
@@ -98,6 +90,16 @@ def test_durable_sqlite_application_store_requires_legacy_opt_in(
     assert f"SQLite fields: {field}." in message
 
 
+def test_removed_thread_sqlite_is_rejected_even_with_legacy_opt_in() -> None:
+    with pytest.raises(ValueError, match="SQLite runtime-state and active-session"):
+        _resolve(
+            persistence_config=RuntimePersistenceConfig(allow_legacy_sqlite=True),
+            thread_persistence_backend="sqlite",
+            thread_database_url=None,
+            sqlite_path=Path("threads.sqlite3"),
+        )
+
+
 def test_thread_backend_is_the_single_selector_for_state_and_active_sessions() -> None:
     resolved = _resolve(
         thread_persistence_backend="postgres",
@@ -112,9 +114,8 @@ def test_thread_backend_is_the_single_selector_for_state_and_active_sessions() -
 def test_legacy_opt_in_temporarily_permits_durable_application_stores() -> None:
     resolved = _resolve(
         persistence_config=RuntimePersistenceConfig(allow_legacy_sqlite=True),
-        thread_persistence_backend="sqlite",
+        thread_persistence_backend="memory",
         thread_database_url=None,
-        sqlite_path=Path("threads.sqlite3"),
         crisis_log_persistence_backend="sqlite",
         crisis_log_database_url=None,
         crisis_log_sqlite_path=Path("crisis.sqlite3"),
@@ -123,16 +124,15 @@ def test_legacy_opt_in_temporarily_permits_durable_application_stores() -> None:
         feedback_sqlite_path=Path("feedback.sqlite3"),
     )
 
-    assert resolved.thread_persistence_backend == "sqlite"
+    assert resolved.thread_persistence_backend == "memory"
     assert resolved.crisis_log_persistence_backend == "sqlite"
     assert resolved.session_feedback_persistence_backend == "sqlite"
 
 
 def test_in_memory_sqlite_application_stores_are_not_durable() -> None:
     resolved = _resolve(
-        thread_persistence_backend="sqlite",
+        thread_persistence_backend="memory",
         thread_database_url=None,
-        sqlite_path=":memory:",
         crisis_log_persistence_backend="sqlite",
         crisis_log_database_url=None,
         crisis_log_sqlite_path=":memory:",
@@ -141,7 +141,7 @@ def test_in_memory_sqlite_application_stores_are_not_durable() -> None:
         feedback_sqlite_path=":memory:",
     )
 
-    assert resolved.thread_persistence_backend == "sqlite"
+    assert resolved.thread_persistence_backend == "memory"
     assert resolved.crisis_log_persistence_backend == "sqlite"
     assert resolved.session_feedback_persistence_backend == "sqlite"
 

@@ -21,7 +21,7 @@ from agent.runtime import (
 from tests.support.persistence import (
     FakeCrossRestartLLM,
     postgres_database_url,
-    runtime_persistence_config,
+    postgres_thread_persistence_config,
     runtime_storage_paths,
 )
 
@@ -43,7 +43,7 @@ class _FailingTextRuntime:
 async def test_soft_limit_marks_session_rotation_required(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -143,7 +143,7 @@ async def test_soft_limit_marks_session_rotation_required_in_postgres(
 async def test_reset_thread_refuses_active_sessions(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -166,7 +166,7 @@ async def test_reset_thread_refuses_active_sessions(tmp_path: Path) -> None:
 async def test_foreign_mutation_marker_reports_interrupted(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -204,7 +204,7 @@ async def test_failed_run_turn_leaves_interrupted_marker(
 ) -> None:
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        persistence_config=postgres_thread_persistence_config(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),

@@ -14,7 +14,7 @@ The inventory was produced by searching application runtime, audit, feedback, an
 
 | Subsystem | Legacy SQLite implementation | Supported durable implementation | Selection path | Current role | Target |
 |---|---|---|---|---|---|
-| Thread persistence: runtime state and active sessions | `SqliteRuntimeStateStore`; `SqliteActiveSessionStore` | `PostgresRuntimeStateStore`; `PostgresActiveSessionStore` | `thread_persistence_backend` is consumed by `create_runtime_state_store` and `build_runtime_resources`; active sessions have no independent selector | Coupled legacy durable compatibility and tests | Migrate both contract surfaces and remove their SQLite implementations and selection together |
+| Thread persistence: runtime state and active sessions | Removed in #247 | `PostgresRuntimeStateStore`; `PostgresActiveSessionStore` | Durable threads use `thread_persistence_backend="postgres"`; incognito and explicitly non-durable tests use `InMemoryRuntimeStateStore` with `NullActiveSessionStore` | Postgres-only durable persistence; legacy SQLite selection is rejected | Remove obsolete thread SQLite path/configuration compatibility during final cleanup |
 | Crisis audit | `SqliteCrisisLogBackend` | `PostgresCrisisLogBackend` | `create_crisis_log_backend` | Legacy durable compatibility and parity tests | Retain in-memory audit support; remove durable SQLite backend and selection |
 | Session feedback | `SqliteSessionFeedbackBackend` | `PostgresSessionFeedbackBackend` | `create_session_feedback_backend` | Legacy durable compatibility and parity tests | Retain in-memory/null support; remove durable SQLite backend and selection |
 
@@ -54,8 +54,8 @@ Cross-backend parity tests are temporary migration guards. Delete their SQLite c
 
 ## Planned removal order
 
-1. Migrate runtime-state and active-session SQL-sensitive tests to Postgres contracts.
-2. Remove durable SQLite runtime-state and active-session implementations in one coupled PR because both inherit `thread_persistence_backend`; do not leave one SQLite consumer behind.
+1. ~~Migrate runtime-state and active-session SQL-sensitive tests to Postgres contracts.~~ Completed.
+2. ~~Remove durable SQLite runtime-state and active-session implementations together because both inherit `thread_persistence_backend`.~~ Completed; incognito now uses explicit non-durable adapters.
 3. Migrate audit and feedback durable tests; retain in-memory/null implementations.
 4. Remove durable SQLite audit and feedback backends and selection paths.
 5. Remove obsolete application-store SQLite configuration, factories, migrations, exports, and compatibility tests.

@@ -68,7 +68,7 @@ async def test_runtime_resources_ensure_schema_calls_state_and_active_session() 
     active_session_manager = _CountingActiveSessionManager()
     resources = RuntimeResources(
         sqlite_path=Path(":memory:"),
-        thread_persistence_backend="sqlite",
+        thread_persistence_backend="memory",
         thread_database_url=None,
         state_store=state_store,  # type: ignore[arg-type]
         text_session_store=None,
@@ -93,7 +93,7 @@ async def test_runtime_resources_prewarm_initializes_text_runtime_and_embedding_
     embedding_provider = _WarmableEmbeddingProvider()
     resources = RuntimeResources(
         sqlite_path=Path(":memory:"),
-        thread_persistence_backend="sqlite",
+        thread_persistence_backend="memory",
         thread_database_url=None,
         state_store=_CountingStateStore(),  # type: ignore[arg-type]
         text_session_store=None,
@@ -130,7 +130,7 @@ async def test_runtime_resources_aclose_closes_owned_resources_in_order() -> Non
 
     resources = RuntimeResources(
         sqlite_path=Path(":memory:"),
-        thread_persistence_backend="sqlite",
+        thread_persistence_backend="memory",
         thread_database_url=None,
         state_store=_OrderedClosable("state_store"),  # type: ignore[arg-type]
         text_session_store=_OrderedClosable("text_session_store"),  # type: ignore[arg-type]

@@ -556,6 +556,7 @@ class TestSpeculativeMemoryPrefetch:
             ),
             persistence_config=RuntimePersistenceConfig(
                 memory_mode=MemoryMode.LOCAL,
+                thread_persistence_backend="memory",
                 allow_legacy_sqlite=True,
             ),
             dependencies=RuntimeDependencies(memory_store=OpenCouchMemoryStore()),

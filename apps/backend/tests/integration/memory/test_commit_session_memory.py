@@ -1599,6 +1599,7 @@ async def test_runtime_end_session_commits_buffered_semantic_candidates(
         ),
         persistence_config=RuntimePersistenceConfig(
             memory_mode=MemoryMode.LOCAL,
+            thread_persistence_backend="memory",
             allow_legacy_sqlite=True,
         ),
         dependencies=RuntimeDependencies(memory_store=store),
@@ -1675,6 +1676,7 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
         ),
         persistence_config=RuntimePersistenceConfig(
             memory_mode=MemoryMode.LOCAL,
+            thread_persistence_backend="memory",
             allow_legacy_sqlite=True,
         ),
         dependencies=RuntimeDependencies(memory_store=store),

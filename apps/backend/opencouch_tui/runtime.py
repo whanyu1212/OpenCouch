@@ -166,20 +166,34 @@ class ConsoleRuntime:
         is_guest_mode = runtime_memory_mode == MemoryMode.INCOGNITO
         effective_user_id = None if is_guest_mode else self.config.user_id
 
+        if settings.persistence_backend == "postgres":
+            persistence_config = RuntimePersistenceConfig.for_shared_backend(
+                memory_mode=runtime_memory_mode,
+                persistence_backend="postgres",
+                database_url=settings.memory_database_url,
+                text_session_backend=settings.text_session_backend,
+                text_session_database_url=settings.text_session_database_url,
+                allow_legacy_sqlite=settings.allow_legacy_sqlite,
+            )
+        else:
+            persistence_config = RuntimePersistenceConfig(
+                memory_mode=runtime_memory_mode,
+                memory_backend="sqlite",
+                thread_persistence_backend="memory",
+                crisis_log_persistence_backend="sqlite",
+                session_feedback_persistence_backend="sqlite",
+                text_session_backend=settings.text_session_backend,
+                text_session_database_url=settings.text_session_database_url,
+                allow_legacy_sqlite=settings.allow_legacy_sqlite,
+            )
+
         runtime = PersistentAgentRuntime(
             storage_paths=RuntimeStoragePaths(
                 sqlite_path=":memory:" if is_guest_mode else self.config.sqlite_path,
                 memory_sqlite_path=self.config.memory_sqlite_path,
                 crisis_log_sqlite_path=self.config.crisis_log_sqlite_path,
             ),
-            persistence_config=RuntimePersistenceConfig.for_shared_backend(
-                memory_mode=runtime_memory_mode,
-                persistence_backend=settings.persistence_backend,
-                database_url=settings.memory_database_url,
-                text_session_backend=settings.text_session_backend,
-                text_session_database_url=settings.text_session_database_url,
-                allow_legacy_sqlite=settings.allow_legacy_sqlite,
-            ),
+            persistence_config=persistence_config,
             dependencies=RuntimeDependencies(default_llm_client=llm_client),
             behavior_config=RuntimeBehaviorConfig(
                 finalize_active_sessions_on_close=False,

@@ -30,6 +30,7 @@ from agent.memory.operations.procedural_profile import (
     aget_procedural_profile,
     aput_procedural_profile,
 )
+from agent.memory.modes import MemoryMode
 from agent.models import AgentOutput, CrisisAssessment, ResponseCategory
 from agent.runtime import PersistentAgentRuntime, RuntimeDependencies
 from api.models import ApiMemoryMode
@@ -37,6 +38,7 @@ from llm.base import BaseLLMClient, StructuredResponseT
 from tests.support.api_selection import runtime_selection
 from tests.support.persistence import (
     in_memory_runtime_storage_paths,
+    postgres_thread_persistence_config,
     runtime_persistence_config,
 )
 
@@ -194,6 +196,21 @@ async def runtime():
     llm = _FakeAPILLM()
     rt = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=RuntimeDependencies(default_llm_client=llm),
+    )
+    async with rt:
+        yield rt
+
+
+@pytest.fixture
+async def durable_thread_runtime():
+    """Yield a runtime with durable Postgres thread coordination."""
+
+    llm = _FakeAPILLM()
+    rt = PersistentAgentRuntime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=postgres_thread_persistence_config(),
         dependencies=RuntimeDependencies(default_llm_client=llm),
     )
     async with rt:
@@ -425,7 +442,7 @@ class TestChat:
 
     @pytest.mark.asyncio
     async def test_chat_runtime_failure_returns_stable_error_detail(
-        self, runtime, monkeypatch: pytest.MonkeyPatch
+        self, durable_thread_runtime, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Runtime failures should surface without replacement assistant text."""
 
@@ -441,6 +458,7 @@ class TestChat:
 
         app = FastAPI()
         app.include_router(api_router, prefix="/api")
+        runtime = durable_thread_runtime
         llm = _FailingAPILLM()
         app.dependency_overrides[get_runtime] = lambda: runtime
         monkeypatch.setattr(
