@@ -1,14 +1,14 @@
 """Unified memory-store interface and shared record types.
 
 The :class:`MemoryStore` protocol is the async interface the agent's
-nodes use to read and write long-term memory. It is implemented by
-:class:`agent.memory.store.memory.OpenCouchMemoryStore` and by
-:class:`agent.memory.store.sqlite.SqliteMemoryStore`.
+nodes use to read and write long-term memory. Supported implementations are
+:class:`agent.memory.store.memory.OpenCouchMemoryStore` for ephemeral use and
+:class:`agent.memory.store.postgres.PostgresMemoryStore` for durable use.
 
 Records are grouped by namespace, usually ``(user_id, kind)`` where
 ``kind`` is ``"semantic"``, ``"episodic"``, or ``"procedural"``. The
-in-memory store keeps one dict-backed bucket per namespace. The SQLite
-store persists the same logical records in a single table.
+in-memory store keeps one dict-backed bucket per namespace. The Postgres store
+persists the same logical records in a single table.
 
 Search combines lexical token recall with optional embedding
 similarity. Lexical recall remains deterministic and cheap, while
@@ -169,17 +169,18 @@ def build_store_record(
 
 @runtime_checkable
 class MemoryStore(Protocol):
-    """The async memory-store interface both implementations satisfy.
+    """The async interface implemented by supported memory stores.
 
-    The runtime can swap in-memory and SQLite-backed implementations
-    without node code knowing which one it is holding.
+    The runtime can swap ephemeral in-memory and durable Postgres
+    implementations without node code knowing which one it is holding. The
+    legacy SQLite implementation remains only as guarded PR3 compatibility.
 
     Design notes:
     - **``@runtime_checkable``** so ``isinstance(store, MemoryStore)``
       works for debug tools and tests. The runtime cost is small and
       it makes the protocol more useful for assertion-style checks.
     - **No class-level state in the protocol** — concrete classes
-      manage their own lifecycle (in-memory dict vs SQLite connection).
+      manage their own lifecycle (in-memory dict vs database connection).
     - **Names match the concrete method names** rather than being
       renamed for protocol-style brevity (``put`` vs ``aput``), so
       callers can substitute the type annotation without having to
@@ -187,7 +188,7 @@ class MemoryStore(Protocol):
 
     Keep this protocol limited to methods used by nodes, runtime code,
     or CLI diagnostics. Any method added here must be implemented by
-    both concrete stores before callers depend on it.
+    all supported concrete stores before callers depend on it.
     """
 
     async def aput(

@@ -131,13 +131,17 @@ class PersistentAgentRuntime:
         crisis_log_backend: CrisisLogBackend | None = None,
         session_feedback_backend: SessionFeedbackBackend | None = None,
         memory_mode: MemoryMode = MemoryMode.LOCAL,
-        memory_backend: Literal["sqlite", "postgres"] = "sqlite",
+        memory_backend: Literal["sqlite", "postgres"] = "postgres",
         memory_database_url: str | None = None,
-        thread_persistence_backend: Literal["memory", "sqlite", "postgres"] = "sqlite",
+        thread_persistence_backend: Literal[
+            "memory", "sqlite", "postgres"
+        ] = "postgres",
         thread_database_url: str | None = None,
-        crisis_log_persistence_backend: Literal["sqlite", "postgres"] = "sqlite",
+        crisis_log_persistence_backend: Literal["sqlite", "postgres"] = "postgres",
         crisis_log_database_url: str | None = None,
-        session_feedback_persistence_backend: Literal["sqlite", "postgres"] = "sqlite",
+        session_feedback_persistence_backend: Literal[
+            "sqlite", "postgres"
+        ] = "postgres",
         session_feedback_database_url: str | None = None,
         memory_sqlite_path: str | Path | object = _UNSET,
         text_session_backend: TextSessionBackend = "auto",
@@ -158,11 +162,11 @@ class PersistentAgentRuntime:
         """Initialize the runtime.
 
         Args:
-            sqlite_path: Deprecated direct SQLite database path for runtime
-                thread state. Use ``storage_paths`` instead. Forced to
-                ``:memory:`` in incognito mode.
-            storage_paths: Optional grouped SQLite path overrides. When provided,
-                these values take precedence over the legacy path arguments.
+            sqlite_path: Deprecated compatibility path. It no longer backs
+                runtime thread state and remains only as the default parent for
+                SDK text-session SQLite. Forced to ``:memory:`` in incognito mode.
+            storage_paths: Optional grouped compatibility path overrides. When
+                provided, these values take precedence over legacy path arguments.
             persistence_config: Optional grouped backend and database URL
                 settings. When provided, these values take precedence over the
                 legacy persistence arguments.
@@ -203,10 +207,10 @@ class PersistentAgentRuntime:
             text_session_create_tables: Whether SQLAlchemy SDK sessions may
                 create their own tables when first used.
             text_session_history_limit: Optional SDK session item limit.
-            crisis_log_sqlite_path: Deprecated direct SQLite path for the
-                default crisis log. Use ``storage_paths`` instead.
-            feedback_sqlite_path: Deprecated direct SQLite path for the default
-                feedback store. Use ``storage_paths`` instead.
+            crisis_log_sqlite_path: Inert deprecated compatibility field; the
+                SQLite crisis-log backend has been removed.
+            feedback_sqlite_path: Inert deprecated compatibility field; the
+                SQLite feedback backend has been removed.
             embedding_provider: Optional explicit embedding provider override.
             default_llm_client: Optional fallback LLM client for shutdown and
                 timeout-driven finalization.

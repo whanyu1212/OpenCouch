@@ -35,6 +35,7 @@ from typing import cast
 
 import pytest
 
+from agent.memory.modes import MemoryMode
 from agent.models import (
     ChunkEvent,
     DoneEvent,
@@ -47,6 +48,7 @@ from llm.base import BaseLLMClient, StructuredResponseT
 from tests.support.persistence import (
     in_memory_audit_feedback_dependencies,
     in_memory_runtime_storage_paths,
+    runtime_persistence_config,
 )
 
 
@@ -180,6 +182,10 @@ async def _collect_stream(
 
 
 def _runtime(**kwargs) -> PersistentAgentRuntime:
+    kwargs.setdefault(
+        "persistence_config",
+        runtime_persistence_config(MemoryMode.LOCAL),
+    )
     return PersistentAgentRuntime(
         dependencies=in_memory_audit_feedback_dependencies(),
         **kwargs,
@@ -196,7 +202,10 @@ class TestRunTurnStreamStages:
         async with _runtime(
             storage_paths=in_memory_runtime_storage_paths(),
             persistence_config=RuntimePersistenceConfig(
-                text_session_backend="disabled"
+                memory_mode=MemoryMode.LOCAL,
+                memory_backend="postgres",
+                thread_persistence_backend="memory",
+                text_session_backend="disabled",
             ),
         ) as runtime:
             events: list[StreamEvent] = []

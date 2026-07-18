@@ -56,6 +56,8 @@ Summaries older than 30 days stop appearing in active context but remain
 stored for your review.
 
 **Can I export my data?**
-Durable memory lives in the configured backend you control. The supported durable
-path is Postgres, so back up or export that database. Legacy SQLite files may
-still exist for older local installs until the removal work lands.
+Durable long-term memory lives in Postgres, the only supported durable backend,
+so back up or export that database. OpenCouch does not import, copy, or delete an
+older `memory.sqlite3`; no importer is provided. Archive or discard the file as
+appropriate. Explicit migration-only inspection remains available until final
+removal. OpenAI SDK `text_sessions.sqlite3` storage is separate and unchanged.

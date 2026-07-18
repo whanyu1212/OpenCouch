@@ -2,17 +2,16 @@
 """Inspect the OpenCouch memory store for a given user.
 
 Usage:
-    python scripts/inspect_memory.py --user hy
-    python scripts/inspect_memory.py --user hy --namespace semantic
-    python scripts/inspect_memory.py --all-users
-    python scripts/inspect_memory.py --user hy --raw
+    python scripts/inspect_memory.py --database-url postgresql://opencouch:opencouch@localhost:5432/opencouch --user hy
+    python scripts/inspect_memory.py --database-url postgresql://opencouch:opencouch@localhost:5432/opencouch --all-users
     python scripts/inspect_memory.py --backend sqlite --sqlite-path apps/backend/.store/memory.sqlite3 --all-users
     python scripts/inspect_memory.py --backend postgres --database-url postgresql://opencouch:opencouch@localhost:5432/opencouch --all-users
 
-Run from the repo root or apps/backend/. The script supports both the
-SQLite fallback memory store and the Postgres-first memory store. Use
-``scripts/inspect_memory.sh`` when you want local Docker Postgres started
-before inspection.
+Run from the repo root or apps/backend/. Postgres is the supported durable
+memory store and is always selected by the automatic mode. Explicit SQLite
+access is migration-only and requires both ``--backend sqlite`` and
+``--sqlite-path``. Use ``scripts/inspect_memory.sh`` when you want local Docker
+Postgres started before inspection.
 """
 
 from __future__ import annotations
@@ -29,41 +28,23 @@ from typing import Any, Literal
 Backend = Literal["sqlite", "postgres"]
 
 
-def resolve_backend(
-    *,
-    requested_backend: str,
-    database_url: str | None,
-) -> Backend:
+def resolve_backend(*, requested_backend: str) -> Backend:
     """Resolve the effective memory backend for inspection."""
 
-    if requested_backend in {"sqlite", "postgres"}:
-        return requested_backend  # type: ignore[return-value]
-    if database_url:
+    if requested_backend == "sqlite":
+        return "sqlite"
+    if requested_backend in {"auto", "postgres"}:
         return "postgres"
-    configured = os.getenv("OPENCOUCH_PERSISTENCE_BACKEND", "").strip().lower()
-    if configured == "postgres":
-        return "postgres"
-    return "sqlite"
+    raise ValueError(f"Unsupported memory backend: {requested_backend}")
 
 
-def find_sqlite_db(sqlite_path: str | None = None) -> Path:
-    """Locate the local memory SQLite database."""
+def find_sqlite_db(sqlite_path: str) -> Path:
+    """Validate an explicitly selected legacy memory SQLite database."""
 
-    if sqlite_path is not None:
-        path = Path(sqlite_path).expanduser()
-        if path.exists():
-            return path
-        print(f"Could not find memory SQLite database at {path}", file=sys.stderr)
-        sys.exit(1)
-
-    candidates = [
-        Path("apps/backend/.store/memory.sqlite3"),
-        Path(".store/memory.sqlite3"),
-    ]
-    for path in candidates:
-        if path.exists():
-            return path
-    print("Could not find memory.sqlite3 in .store/", file=sys.stderr)
+    path = Path(sqlite_path).expanduser()
+    if path.exists():
+        return path
+    print(f"Could not find memory SQLite database at {path}", file=sys.stderr)
     sys.exit(1)
 
 
@@ -365,13 +346,16 @@ def main() -> None:
         choices=["auto", "sqlite", "postgres"],
         default="auto",
         help=(
-            "Memory backend to inspect. 'auto' uses --database-url or "
-            "OPENCOUCH_PERSISTENCE_BACKEND, falling back to SQLite."
+            "Memory backend to inspect. 'auto' always selects Postgres. "
+            "SQLite is migration-only and must be selected explicitly."
         ),
     )
     parser.add_argument(
         "--sqlite-path",
-        help="Explicit SQLite memory database path.",
+        help=(
+            "Legacy SQLite memory database path; requires --backend sqlite "
+            "for migration-only inspection."
+        ),
     )
     parser.add_argument(
         "--database-url",
@@ -379,16 +363,19 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    backend = resolve_backend(
-        requested_backend=args.backend,
-        database_url=args.database_url,
-    )
+    backend = resolve_backend(requested_backend=args.backend)
 
     sqlite_db: Path | None = None
     database_url: str | None = None
     if backend == "sqlite":
+        if not args.sqlite_path:
+            parser.error("--backend sqlite requires --sqlite-path")
+        if args.database_url:
+            parser.error("--database-url cannot be used with --backend sqlite")
         sqlite_db = find_sqlite_db(args.sqlite_path)
     else:
+        if args.sqlite_path:
+            parser.error("--sqlite-path requires --backend sqlite")
         database_url = resolve_database_url(args.database_url)
 
     if args.all_users:

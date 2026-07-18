@@ -1,8 +1,8 @@
 """End-to-end cross-restart persistence smoke tests (v0.8 Stage E).
 
-These tests validate the full v0.8 contract: data written by one
-``PersistentAgentRuntime`` instance survives the runtime's close
-and comes back when a second runtime opens the same SQLite files.
+These tests validate the full persistence contract: data written by one
+``PersistentAgentRuntime`` instance survives the runtime's close and comes back
+when a second runtime opens the same Postgres-backed stores.
 
 This is the test suite that proves "`/memory list` is not empty
 after CLI restart" — the user-visible fix v0.8 was scoped to deliver.
@@ -13,10 +13,8 @@ It exercises the entire stack:
   memory context and dispatches the therapeutic response path
 - ``end_session`` invoking the summarizer, which writes an episodic
   arc (Stage C writes)
-- Runtime close via ``__aexit__`` releasing the SQLite connections
-  without corrupting the data
-- A second runtime instance pointing at the same paths, re-opening
-  the SQLite files, and reading back every record
+- Runtime close via ``__aexit__`` releasing database connections
+- A second runtime instance pointing at the same DSN and reading back records
 
 What these tests DON'T cover (intentionally):
 - LLM quality — all tests use deterministic fake LLM decisions
@@ -29,8 +27,7 @@ What these tests DON'T cover (intentionally):
 Test strategy: build a fake LLM that dispatches on
 ``response_schema.__name__`` and returns canned results for every
 structured-output call the runtime makes (crisis classifier, triage,
-summarization). Use ``tmp_path`` fixtures so all three
-SQLite files are isolated per test and clean up automatically.
+summarization). Postgres-backed tests are isolated by the package fixture.
 """
 
 from __future__ import annotations
@@ -58,7 +55,6 @@ from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
 from agent.memory.policy.candidates import PolicyDecision, build_semantic_candidate
 from agent.memory.store import OpenCouchMemoryStore
-from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.models import Channel
 from agent.runtime import (
     PersistedActiveSessionState,
@@ -70,6 +66,7 @@ from agent.runtime import (
 from llm.base import StructuredResponseT
 from tests.support.persistence import (
     FakeCrossRestartLLM,
+    in_memory_audit_feedback_dependencies,
     postgres_database_url,
     postgres_thread_persistence_config,
     runtime_persistence_config,
@@ -312,67 +309,6 @@ def _trigger_supporting_summarization_result(
 
 
 # ─── Smoke tests ───────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_semantic_facts_survive_runtime_close_and_reopen(tmp_path: Path) -> None:
-    """The core persistence contract: write a fact in runtime A, close A,
-    open runtime B against the same SQLite files, and verify the fact
-    is still readable.
-
-    This is the test that would have caught the v0.4 asymmetric
-    persistence bug if it had existed. Now that SQLite backing is
-    wired in Stage D, this should pass on the first run."""
-
-    storage_paths = runtime_storage_paths(tmp_path)
-
-    # ── Runtime A: write a fact, then close ───────────────────────────
-    llm_a = FakeCrossRestartLLM()
-    async with PersistentAgentRuntime(
-        storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
-        behavior_config=RuntimeBehaviorConfig(
-            finalize_active_sessions_on_close=False,
-        ),
-    ) as runtime_a:
-        result = await runtime_a.run_turn(
-            thread_id="thread-a",
-            message="I have a sister named Sarah",
-            channel=Channel.TEST,
-            llm_client=llm_a,
-        )
-        # Sanity check: the turn ran end-to-end and produced output.
-        assert result.output.response_text
-        await _seed_semantic_fact(
-            runtime_a,
-            owner_id="thread-a",
-            key="fact-sarah",
-            write=_sarah_memory_write(thread_id="thread-a", user_id="thread-a"),
-        )
-        # The fact landed in the SQLite store
-        assert await runtime_a.memory_store.arecord_count() == 1
-
-    # Runtime A is now closed. The SQLite file still exists on disk.
-    assert cast(Path, storage_paths.memory_sqlite_path).exists()
-
-    # ── Runtime B: open the same files, verify the fact came back ─────
-    async with PersistentAgentRuntime(
-        storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
-    ) as runtime_b:
-        # Graceful shutdown now also writes an episodic summary, so
-        # assert directly on the semantic namespace rather than the
-        # total store count.
-        count = await runtime_b.memory_store.arecord_count(("thread-a", "semantic"))
-        assert count == 1, f"expected 1 record after restart, got {count}"
-
-        # And we can retrieve it via asearch with a paraphrased query
-        results = await runtime_b.memory_store.asearch(
-            ("thread-a", "semantic"),
-            query="tell me about Sarah",
-        )
-        assert len(results) == 1
-        assert "Sarah" in results[0].value["evidence_quote"]
 
 
 @pytest.mark.asyncio
@@ -678,7 +614,7 @@ async def test_all_three_layers_persist_across_full_lifecycle(
 
         # Run a new turn on thread-a through runtime B. This exercises
         # the full runtime path against the persisted data — turn memory
-        # context will query the SQLite store and should find the Sarah fact
+        # context will query the Postgres store and should find the Sarah fact
         # via token-recall retrieval.
         result = await runtime_b.run_turn(
             thread_id="thread-a",
@@ -850,6 +786,7 @@ async def test_feedback_layer_parity_in_postgres(
             allow_legacy_sqlite=True,
         ),
         dependencies=RuntimeDependencies(
+            memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
         ),
         behavior_config=RuntimeBehaviorConfig(
@@ -884,6 +821,7 @@ async def test_feedback_layer_parity_in_postgres(
             allow_legacy_sqlite=True,
         ),
         dependencies=RuntimeDependencies(
+            memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
         ),
     ) as runtime_b:
@@ -977,79 +915,6 @@ async def test_fresh_thread_after_restart_sees_prior_records_in_same_namespace(
             and "Emma" in entry.get("evidence_quote", "")
             for entry in working_memory
         ), f"expected working_memory to contain an Emma reference, got {working_memory}"
-
-
-@pytest.mark.asyncio
-async def test_held_session_buffer_survives_restart_until_end_session(
-    tmp_path: Path,
-) -> None:
-    """Held candidates should survive runtime restart until session end resolves them."""
-
-    storage_paths = runtime_storage_paths(tmp_path)
-    llm_a = FakeCrossRestartLLM(
-        extraction_result=_held_trigger_extraction_result(thread_id="thread-held"),
-        summarization_result=_trigger_supporting_summarization_result(
-            thread_id="thread-held"
-        ),
-    )
-
-    async with PersistentAgentRuntime(
-        storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
-        behavior_config=RuntimeBehaviorConfig(
-            finalize_active_sessions_on_close=False,
-        ),
-    ) as runtime_a:
-        await runtime_a.run_turn(
-            thread_id="thread-held",
-            message="Family conflict is a big trigger for panic.",
-            channel=Channel.TEST,
-            user_id="user-1",
-            llm_client=llm_a,
-        )
-        await _hold_trigger_candidate(
-            runtime_a,
-            thread_id="thread-held",
-            user_id="user-1",
-        )
-        assert await runtime_a.memory_store.arecord_count(("user-1", "semantic")) == 0
-        persisted = (
-            await runtime_a._active_session_manager.load_persisted_active_session(
-                "thread-held"
-            )
-        )
-        assert persisted is not None
-        assert len(persisted.session_buffer.held_semantic_candidates) == 1
-
-    llm_b = FakeCrossRestartLLM(
-        extraction_result=_empty_extraction_result(),
-        summarization_result=_trigger_supporting_summarization_result(
-            thread_id="thread-held"
-        ),
-    )
-    async with PersistentAgentRuntime(
-        storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
-    ) as runtime_b:
-        persisted = (
-            await runtime_b._active_session_manager.load_persisted_active_session(
-                "thread-held"
-            )
-        )
-        assert persisted is not None
-        assert len(persisted.session_buffer.held_semantic_candidates) == 1
-
-        stored_arc = await runtime_b.end_session("thread-held", llm_client=llm_b)
-
-        assert stored_arc is not None
-        assert await runtime_b.memory_store.arecord_count(("user-1", "episodic")) == 1
-        assert await runtime_b.memory_store.arecord_count(("user-1", "semantic")) == 1
-        assert (
-            await runtime_b._active_session_manager.load_persisted_active_session(
-                "thread-held"
-            )
-            is None
-        )
 
 
 @pytest.mark.asyncio
@@ -1176,7 +1041,8 @@ async def test_end_session_clears_session_continuity_from_runtime_state(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -1234,8 +1100,8 @@ async def test_inactivity_timeout_auto_ends_prior_session_before_new_turn(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
-        dependencies=RuntimeDependencies(default_llm_client=llm),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(default_llm_client=llm),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-timeout",
@@ -1320,6 +1186,7 @@ async def test_incognito_runtime_preserves_exercise_state_across_side_turns() ->
 
     async with PersistentAgentRuntime(
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
+        dependencies=in_memory_audit_feedback_dependencies(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -1405,8 +1272,8 @@ async def test_finalize_active_sessions_commits_pending_memory_on_shutdown(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
-        dependencies=RuntimeDependencies(default_llm_client=llm),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(default_llm_client=llm),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-shutdown",
@@ -1449,8 +1316,8 @@ async def test_background_timeout_sweeper_proactively_finalizes_expired_session(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
-        dependencies=RuntimeDependencies(default_llm_client=llm),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(default_llm_client=llm),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-sweeper",
@@ -1497,8 +1364,8 @@ async def test_background_timeout_sweeper_reports_not_expired_session(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
-        dependencies=RuntimeDependencies(default_llm_client=llm),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(default_llm_client=llm),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-not-expired",
@@ -1536,8 +1403,8 @@ async def test_background_timeout_sweeper_reports_excluded_session(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
-        dependencies=RuntimeDependencies(
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(
             default_llm_client=llm,
             auto_finalize_excluded=lambda thread_id: thread_id == "thread-excluded",
         ),
@@ -1585,7 +1452,8 @@ async def test_background_timeout_sweeper_reports_listing_failure(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -1624,8 +1492,8 @@ async def test_background_timeout_sweeper_continues_after_per_thread_failure(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
-        dependencies=RuntimeDependencies(default_llm_client=llm),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(default_llm_client=llm),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-fails",
@@ -1754,7 +1622,8 @@ async def test_end_transcript_session_writes_episodic_memory_only(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(),
     ) as runtime:
         stored_arc = await runtime.end_transcript_session(
             thread_id="voice-thread",
@@ -1790,6 +1659,7 @@ async def test_incognito_runtime_does_not_persist_to_disk(
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
+        dependencies=in_memory_audit_feedback_dependencies(),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-incognito",
@@ -1797,69 +1667,7 @@ async def test_incognito_runtime_does_not_persist_to_disk(
             channel=Channel.TEST,
             llm_client=llm,
         )
-        # In-memory store — the runtime is holding an OpenCouchMemoryStore
-        # instance, NOT a SqliteMemoryStore
-        assert not isinstance(runtime.memory_store, SqliteMemoryStore)
+        assert isinstance(runtime.memory_store, OpenCouchMemoryStore)
 
-    # After the runtime closes, the SQLite files should NOT exist.
-    # The runtime state store in incognito mode uses
-    # ``:memory:`` as its sqlite_path, so no file is created.
-    # The memory store and crisis log are in-memory only, so their
-    # files are never opened either.
-    assert not cast(Path, storage_paths.memory_sqlite_path).exists()
-
-
-@pytest.mark.asyncio
-async def test_schema_idempotent_across_multiple_opens(tmp_path: Path) -> None:
-    """Opening the same SQLite file repeatedly should be safe. The
-    ``CREATE TABLE IF NOT EXISTS`` DDL is idempotent by design, so
-    the second, third, fourth runtimes pointing at the same file
-    should all work without tripping constraint errors."""
-
-    storage_paths = runtime_storage_paths(tmp_path)
-    llm = FakeCrossRestartLLM()
-
-    # Open and close the runtime 3 times in a row, writing a different
-    # fact each time. Each reopen runs the schema DDL, which should
-    # be a no-op for the already-created table.
-    for i in range(3):
-        async with PersistentAgentRuntime(
-            storage_paths=storage_paths,
-            persistence_config=postgres_thread_persistence_config(),
-        ) as runtime:
-            # Use a unique thread_id per iteration so the runtime
-            # state store doesn't accumulate cross-thread state.
-            await runtime.run_turn(
-                thread_id=f"thread-{i}",
-                message=f"iteration {i} message",
-                channel=Channel.TEST,
-                llm_client=llm,
-            )
-            await _seed_semantic_fact(
-                runtime,
-                owner_id=f"thread-{i}",
-                key=f"fact-{i}",
-                write=_sarah_memory_write(
-                    thread_id=f"thread-{i}",
-                    user_id=f"thread-{i}",
-                    person=f"Person {i}",
-                    evidence_quote=f"iteration {i} message",
-                ),
-            )
-
-    # After 3 iterations, check the total record count via a fresh runtime
-    async with PersistentAgentRuntime(
-        storage_paths=storage_paths,
-        persistence_config=postgres_thread_persistence_config(),
-    ) as final_runtime:
-        total_semantic = sum(
-            [
-                await final_runtime.memory_store.arecord_count(
-                    (f"thread-{i}", "semantic")
-                )
-                for i in range(3)
-            ]
-        )
-        assert total_semantic == 3, (
-            f"expected 3 semantic records after 3 iterations, got {total_semantic}"
-        )
+    # Incognito forces the configured SDK text-session path to ``:memory:``.
+    assert not cast(Path, storage_paths.text_session_sqlite_path).exists()

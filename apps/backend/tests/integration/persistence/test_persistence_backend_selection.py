@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
@@ -17,10 +18,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.providers.embeddings import NullEmbeddingProvider
 from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.store.postgres import PostgresMemoryStore
-from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.runtime import (
-    DEFAULT_MEMORY_DB_PATH,
-    DEFAULT_THREAD_DB_PATH,
     PersistentAgentRuntime,
     RuntimeBehaviorConfig,
     RuntimeDependencies,
@@ -37,24 +35,30 @@ _POSTGRES_URL = "postgresql://opencouch:opencouch@postgres:5432/opencouch"
 
 
 def _local_ephemeral_runtime() -> PersistentAgentRuntime:
-    """Construct a local runtime with legacy memory and non-durable app stores."""
+    """Construct a local runtime with non-durable application stores."""
 
     return PersistentAgentRuntime(
         persistence_config=RuntimePersistenceConfig(
             memory_mode=MemoryMode.LOCAL,
+            memory_backend="postgres",
             thread_persistence_backend="memory",
-            allow_legacy_sqlite=True,
+            text_session_backend="disabled",
         ),
         dependencies=RuntimeDependencies(
+            memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
             session_feedback_backend=InMemorySessionFeedbackBackend(),
         ),
     )
 
 
-def test_default_memory_db_path_is_distinct_from_removed_thread_path() -> None:
-    assert DEFAULT_MEMORY_DB_PATH != DEFAULT_THREAD_DB_PATH
-    assert DEFAULT_MEMORY_DB_PATH.parent.name == ".store"
+def test_runtime_defaults_application_stores_to_postgres() -> None:
+    parameters = inspect.signature(PersistentAgentRuntime).parameters
+
+    assert parameters["memory_backend"].default == "postgres"
+    assert parameters["thread_persistence_backend"].default == "postgres"
+    assert parameters["crisis_log_persistence_backend"].default == "postgres"
+    assert parameters["session_feedback_persistence_backend"].default == "postgres"
 
 
 def test_incognito_mode_uses_only_non_durable_application_stores() -> None:
@@ -103,8 +107,7 @@ def test_removed_sqlite_application_stores_fail_even_with_legacy_opt_in(
 def test_explicit_in_memory_backends_preserve_local_credential_free_runtime() -> None:
     runtime = _local_ephemeral_runtime()
 
-    assert isinstance(runtime.memory_store, SqliteMemoryStore)
-    assert runtime.memory_store.sqlite_path == Path(DEFAULT_MEMORY_DB_PATH)
+    assert isinstance(runtime.memory_store, OpenCouchMemoryStore)
     assert isinstance(runtime._active_session_store, InMemoryActiveSessionStore)  # noqa: SLF001
     assert isinstance(runtime.crisis_log_backend, InMemoryCrisisLogBackend)
     assert isinstance(runtime.session_feedback_backend, InMemorySessionFeedbackBackend)
@@ -140,10 +143,10 @@ def test_shared_postgres_configuration_fans_out_database_url() -> None:
 
 
 def test_shared_backend_configuration_rejects_sqlite_with_opt_in() -> None:
-    with pytest.raises(ValueError, match="SQLite runtime-state and active-session"):
+    with pytest.raises(ValueError, match="Unsupported shared persistence backend"):
         RuntimePersistenceConfig.for_shared_backend(
             memory_mode=MemoryMode.LOCAL,
-            persistence_backend="sqlite",
+            persistence_backend="sqlite",  # type: ignore[arg-type]
             database_url=None,
             allow_legacy_sqlite=True,
         )
@@ -226,9 +229,11 @@ async def test_aexit_closes_feedback_backend() -> None:
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=RuntimePersistenceConfig(
-            thread_persistence_backend="memory"
+            memory_backend="postgres",
+            thread_persistence_backend="memory",
         ),
         dependencies=RuntimeDependencies(
+            memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
             session_feedback_backend=feedback_backend,
         ),
@@ -253,9 +258,11 @@ async def test_aenter_prewarms_embedding_provider_and_text_runtime() -> None:
     runtime = PersistentAgentRuntime(
         storage_paths=in_memory_runtime_storage_paths(),
         persistence_config=RuntimePersistenceConfig(
-            thread_persistence_backend="memory"
+            memory_backend="postgres",
+            thread_persistence_backend="memory",
         ),
         dependencies=RuntimeDependencies(
+            memory_store=OpenCouchMemoryStore(),
             crisis_log_backend=InMemoryCrisisLogBackend(),
             session_feedback_backend=InMemorySessionFeedbackBackend(),
             embedding_provider=embedding_provider,

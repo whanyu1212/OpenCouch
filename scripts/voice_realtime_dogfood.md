@@ -14,14 +14,6 @@ OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/op
 .venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-SQLite-backed local fallback:
-
-```bash
-cd /Volumes/ORICO/OpenCouch/apps/backend
-OPENCOUCH_PERSISTENCE_BACKEND=sqlite \
-.venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
-```
-
 ## Web
 
 Run from `apps/web`:

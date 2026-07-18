@@ -164,8 +164,13 @@ for the full breakdown.
 | `agent/audit/capture.py` | Bounded post-response safety-event capture seam |
 | `agent/audit/crisis_log.py` | Audit-log write helper, backend protocol, and in-memory implementations |
 | `agent/audit/postgres_crisis_log.py` | Primary durable crisis log with retention purge |
-| `agent/audit/sqlite_crisis_log.py` | Legacy SQLite crisis-log backend pending removal |
 | `agent/runtime/runtime.py` | `PersistentAgentRuntime` — configured persistent thread state |
+
+Postgres is the only supported durable backend for OpenCouch long-term memory
+and other application-owned persistence. OpenAI Agents SDK `SQLiteSession`
+storage is a separate model-visible short-term history surface, not long-term
+memory. The old SQLite runtime-state, active-session, crisis-log, and feedback
+implementations have been removed.
 
 ## Adding a new therapeutic response style
 

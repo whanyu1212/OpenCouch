@@ -8,7 +8,8 @@ Usage:
 
 Use ``scripts/clear_memory.sh`` when you want local Docker Postgres started
 before clearing. This script deletes rows from ``memory_records`` only; it
-preserves the database schema.
+preserves the database schema. Explicit SQLite clearing is migration-only and
+requires both ``--backend sqlite`` and ``--sqlite-path``.
 """
 
 from __future__ import annotations
@@ -23,41 +24,23 @@ from typing import Literal
 Backend = Literal["sqlite", "postgres"]
 
 
-def resolve_backend(
-    *,
-    requested_backend: str,
-    database_url: str | None,
-) -> Backend:
+def resolve_backend(*, requested_backend: str) -> Backend:
     """Resolve the effective memory backend for clearing."""
 
-    if requested_backend in {"sqlite", "postgres"}:
-        return requested_backend  # type: ignore[return-value]
-    if database_url:
+    if requested_backend == "sqlite":
+        return "sqlite"
+    if requested_backend in {"auto", "postgres"}:
         return "postgres"
-    configured = os.getenv("OPENCOUCH_PERSISTENCE_BACKEND", "").strip().lower()
-    if configured == "postgres":
-        return "postgres"
-    return "sqlite"
+    raise ValueError(f"Unsupported memory backend: {requested_backend}")
 
 
-def find_sqlite_db(sqlite_path: str | None = None) -> Path:
-    """Locate the local memory SQLite database."""
+def find_sqlite_db(sqlite_path: str) -> Path:
+    """Validate an explicitly selected legacy memory SQLite database."""
 
-    if sqlite_path is not None:
-        path = Path(sqlite_path).expanduser()
-        if path.exists():
-            return path
-        print(f"Could not find memory SQLite database at {path}", file=sys.stderr)
-        sys.exit(1)
-
-    candidates = [
-        Path("apps/backend/.store/memory.sqlite3"),
-        Path(".store/memory.sqlite3"),
-    ]
-    for path in candidates:
-        if path.exists():
-            return path
-    print("Could not find memory.sqlite3 in .store/", file=sys.stderr)
+    path = Path(sqlite_path).expanduser()
+    if path.exists():
+        return path
+    print(f"Could not find memory SQLite database at {path}", file=sys.stderr)
     sys.exit(1)
 
 
@@ -161,13 +144,16 @@ def main() -> None:
         choices=["auto", "sqlite", "postgres"],
         default="auto",
         help=(
-            "Memory backend to clear. 'auto' uses --database-url or "
-            "OPENCOUCH_PERSISTENCE_BACKEND, falling back to SQLite."
+            "Memory backend to clear. 'auto' always selects Postgres. "
+            "SQLite is migration-only and must be selected explicitly."
         ),
     )
     parser.add_argument(
         "--sqlite-path",
-        help="Explicit SQLite memory database path.",
+        help=(
+            "Legacy SQLite memory database path; requires --backend sqlite "
+            "for migration-only clearing."
+        ),
     )
     parser.add_argument(
         "--database-url",
@@ -180,24 +166,29 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    backend = resolve_backend(
-        requested_backend=args.backend,
-        database_url=args.database_url,
-    )
+    backend = resolve_backend(requested_backend=args.backend)
     owner_id = args.user if not args.all_users else None
+
+    sqlite_db: Path | None = None
+    database_url: str | None = None
+    if backend == "sqlite":
+        if not args.sqlite_path:
+            parser.error("--backend sqlite requires --sqlite-path")
+        if args.database_url:
+            parser.error("--database-url cannot be used with --backend sqlite")
+        sqlite_db = find_sqlite_db(args.sqlite_path)
+    else:
+        if args.sqlite_path:
+            parser.error("--sqlite-path requires --backend sqlite")
+        database_url = resolve_database_url(args.database_url)
 
     _confirm_or_exit(backend=backend, owner_id=owner_id, force=args.force)
 
-    if backend == "sqlite":
-        deleted = clear_sqlite_records(
-            find_sqlite_db(args.sqlite_path),
-            owner_id=owner_id,
-        )
-    else:
-        deleted = clear_postgres_records(
-            resolve_database_url(args.database_url),
-            owner_id=owner_id,
-        )
+    deleted = (
+        clear_sqlite_records(sqlite_db, owner_id=owner_id)
+        if backend == "sqlite" and sqlite_db is not None
+        else clear_postgres_records(database_url or "", owner_id=owner_id)
+    )
 
     target_label = f"user '{owner_id}'" if owner_id else "all users"
     print(f"Deleted {deleted} memory record(s) for {target_label} from {backend}.")

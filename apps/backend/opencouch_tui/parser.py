@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from agent.runtime import (
-    DEFAULT_MEMORY_DB_PATH,
-    DEFAULT_THREAD_DB_PATH,
-)
+from agent.runtime import DEFAULT_THREAD_DB_PATH
 
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
@@ -47,18 +44,8 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         "--sqlite-path",
         default=str(DEFAULT_THREAD_DB_PATH),
         help=(
-            "Legacy SQLite path for persisted session state. Deprecated "
-            "for normal local development; prefer "
-            "OPENCOUCH_PERSISTENCE_BACKEND=postgres."
-        ),
-    )
-    parser.add_argument(
-        "--memory-sqlite-path",
-        default=str(DEFAULT_MEMORY_DB_PATH),
-        help=(
-            "Legacy SQLite path for the memory store (semantic facts + "
-            "episodic arcs). Deprecated for normal local development; prefer "
-            "OPENCOUCH_PERSISTENCE_BACKEND=postgres."
+            "Legacy SQLite path for OpenAI SDK text-session compatibility. "
+            "Application persistence always uses Postgres."
         ),
     )
     parser.add_argument(

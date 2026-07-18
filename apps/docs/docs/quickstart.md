@@ -70,7 +70,8 @@ crisis classification and therapeutic generation.
 ### Full mode with persistent memory
 
 Real LLM with durable configured storage. Facts, session arcs, and style
-rules survive restart; Postgres is recommended for the local durable path.
+rules survive restart; Postgres is the only supported durable long-term
+memory backend.
 
 <TerminalWindow title="bash — persistent TUI">
 {`./scripts/text_tui.sh \\

@@ -43,7 +43,7 @@
 
 ## Overview
 
-OpenCouch is a chat companion for day-to-day emotional support, self-reflection, and practical coping. The text runtime uses the OpenAI Agents SDK behind a FastAPI server, with Postgres-first durable persistence, three-layer memory ([CoALA](https://arxiv.org/abs/2309.02427)-inspired), and safety routing on every turn.
+OpenCouch is a chat companion for day-to-day emotional support, self-reflection, and practical coping. The text runtime uses the OpenAI Agents SDK behind a FastAPI server, with Postgres durable persistence, three-layer memory ([CoALA](https://arxiv.org/abs/2309.02427)-inspired), and safety routing on every turn.
 
 **What sets it apart from a general AI assistant:**
 
@@ -59,7 +59,7 @@ Voice support is being rebuilt on the OpenAI Realtime path. The backend has acti
 - **Three-layer persistent memory.** Semantic facts, episodic arcs, and procedural rules persisted across sessions ([CoALA](https://arxiv.org/abs/2309.02427)-inspired), with per-turn extraction and session-end consolidation.
 - **Safety routing on every turn.** Pre-response safety classification with a durable crisis-audit log; specialist crisis agent takes over when triggered.
 - **13 state-tracked guided exercises.** Multi-turn flows for grounding, box breathing, thought work, values reflection, and related coping skills — with consent and step-state preserved across turns.
-- **Postgres-first persistence.** Thread state, long-term memory, active sessions, crisis log, and feedback all live in Postgres; guest/incognito runs remain ephemeral, while legacy SQLite is limited to memory and SDK-session compatibility.
+- **Postgres durable persistence.** Postgres is the only supported durable backend for thread state, long-term memory, active sessions, crisis log, and feedback; guest/incognito runs remain ephemeral. OpenAI SDK text-session SQLite is a separate compatibility surface.
 - **Multiple surfaces.** Web chat (Next.js) and text TUI (`scripts/text_tui.sh`), both backed by the same FastAPI runtime.
 - **1100+ backend tests + tracing.** Unit, integration, voice, audit, observability, and live-provider suites; vendor-neutral tracing supports state diagnostics, structured logging, and OpenTelemetry/OTLP export.
 
@@ -130,6 +130,23 @@ OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@postgres:5432/ope
 </details>
 
 Keep real `.env` files local and out of version control.
+
+Legacy `memory.sqlite3` files are not imported into Postgres, copied, or deleted
+by OpenCouch. There is no importer. Archive an old file if you need it for
+records, or discard it after verifying it is no longer needed. Until the final
+SQLite memory-store removal, explicit migration-only inspection remains
+available:
+
+```bash
+./apps/backend/.venv/bin/python scripts/inspect_memory.py \
+  --backend sqlite \
+  --sqlite-path apps/backend/.store/memory.sqlite3 \
+  --all-users
+```
+
+This applies only to long-term memory. The OpenAI Agents SDK
+`text_sessions.sqlite3` store is separate and unchanged by the memory-backend
+retirement.
 
 ### Local run commands
 

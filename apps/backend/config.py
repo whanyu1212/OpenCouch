@@ -15,23 +15,21 @@ from llm.openai_client import DEFAULT_OPENAI_MODEL
 
 LLMProvider = Literal["openai"]
 ResponseModelTier = Literal["fast", "quality"]
-PersistenceBackend = Literal["sqlite", "postgres"]
+PersistenceBackend = Literal["postgres"]
 TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
 
 # Single source of truth for the default provider when LLM_PROVIDER is unset.
 DEFAULT_LLM_PROVIDER: LLMProvider = "openai"
 DEFAULT_OPENAI_QUALITY_MODEL = "gpt-5.4"
-# Postgres is the default persistent backend (Docker compose ships it as the
-# primary persistence path). SQLite is a legacy durable backend and now requires
-# an explicit opt-in flag when selected through runtime configuration.
+# Postgres is the only application persistence backend. The legacy SQLite flag
+# remains available for direct runtime memory and SDK text-session compatibility.
 DEFAULT_PERSISTENCE_BACKEND: PersistenceBackend = "postgres"
 LEGACY_SQLITE_OPT_IN_ENV = "OPENCOUCH_ALLOW_LEGACY_SQLITE"
 LEGACY_SQLITE_REJECT_MESSAGE = (
-    "OPENCOUCH_PERSISTENCE_BACKEND=sqlite is legacy and disabled by default. "
+    "OPENCOUCH_PERSISTENCE_BACKEND=sqlite is no longer supported. "
     "Use OPENCOUCH_PERSISTENCE_BACKEND=postgres with "
-    "OPENCOUCH_MEMORY_DATABASE_URL. OPENCOUCH_ALLOW_LEGACY_SQLITE=1 only "
-    "retains temporary memory/SDK-session compatibility; crisis audit, feedback, "
-    "runtime state, and active sessions require Postgres."
+    "OPENCOUCH_MEMORY_DATABASE_URL. OPENCOUCH_ALLOW_LEGACY_SQLITE only retains "
+    "direct runtime memory and SDK text-session compatibility."
 )
 
 # Shared, actionable error text raised by every postgres-without-URL guard
@@ -117,9 +115,6 @@ def get_settings() -> Settings:
         DEFAULT_PERSISTENCE_BACKEND,
     )
     allow_legacy_sqlite = _read_bool_env(LEGACY_SQLITE_OPT_IN_ENV)
-    if persistence_backend == "sqlite" and not allow_legacy_sqlite:
-        raise ValueError(LEGACY_SQLITE_REJECT_MESSAGE)
-
     text_session_backend = _read_text_session_backend_env(
         "OPENCOUCH_TEXT_SESSION_BACKEND",
         "auto",
@@ -164,10 +159,10 @@ def _read_persistence_backend_env(
     """
 
     raw = os.getenv(name, fallback).strip().lower()
-    if raw == "sqlite":
-        return "sqlite"
     if raw == "postgres":
         return "postgres"
+    if raw == "sqlite":
+        raise ValueError(LEGACY_SQLITE_REJECT_MESSAGE)
     raise ValueError(f"Unsupported {name} value: {raw}")
 
 

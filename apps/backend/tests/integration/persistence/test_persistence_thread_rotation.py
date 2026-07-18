@@ -13,15 +13,15 @@ from agent.runtime import (
     ActiveSessionExists,
     PersistentAgentRuntime,
     RuntimeBehaviorConfig,
-    RuntimePersistenceConfig,
     SessionInterrupted,
     SessionLeaseExpired,
     SessionStatus,
 )
 from tests.support.persistence import (
     FakeCrossRestartLLM,
-    postgres_database_url,
+    in_memory_audit_feedback_dependencies,
     postgres_thread_persistence_config,
+    runtime_persistence_config,
     runtime_storage_paths,
 )
 
@@ -43,7 +43,8 @@ class _FailingTextRuntime:
 async def test_soft_limit_marks_session_rotation_required(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        persistence_config=postgres_thread_persistence_config(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -74,30 +75,11 @@ async def test_soft_limit_marks_session_rotation_required_in_postgres(
     tmp_path: Path,
 ) -> None:
     """Postgres-backed thread state should preserve rotation-required liveness."""
-    memory_database_url = postgres_database_url()
-    if not memory_database_url:
-        pytest.skip(
-            "Postgres integration tests are disabled; set "
-            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
-            "OPENCOUCH_TEST_POSTGRES_URL"
-        )
-
     storage_paths = runtime_storage_paths(tmp_path)
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=RuntimePersistenceConfig(
-            memory_mode=MemoryMode.LOCAL,
-            memory_backend="postgres",
-            memory_database_url=memory_database_url,
-            thread_persistence_backend="postgres",
-            thread_database_url=memory_database_url,
-            crisis_log_persistence_backend="postgres",
-            crisis_log_database_url=memory_database_url,
-            session_feedback_persistence_backend="postgres",
-            session_feedback_database_url=memory_database_url,
-            allow_legacy_sqlite=True,
-        ),
+        persistence_config=postgres_thread_persistence_config(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -115,18 +97,7 @@ async def test_soft_limit_marks_session_rotation_required_in_postgres(
 
     async with PersistentAgentRuntime(
         storage_paths=storage_paths,
-        persistence_config=RuntimePersistenceConfig(
-            memory_mode=MemoryMode.LOCAL,
-            memory_backend="postgres",
-            memory_database_url=memory_database_url,
-            thread_persistence_backend="postgres",
-            thread_database_url=memory_database_url,
-            crisis_log_persistence_backend="postgres",
-            crisis_log_database_url=memory_database_url,
-            session_feedback_persistence_backend="postgres",
-            session_feedback_database_url=memory_database_url,
-            allow_legacy_sqlite=True,
-        ),
+        persistence_config=postgres_thread_persistence_config(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -151,7 +122,8 @@ async def test_soft_limit_marks_session_rotation_required_in_postgres(
 async def test_reset_thread_refuses_active_sessions(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        persistence_config=postgres_thread_persistence_config(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -174,7 +146,8 @@ async def test_reset_thread_refuses_active_sessions(tmp_path: Path) -> None:
 async def test_foreign_mutation_marker_reports_interrupted(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        persistence_config=postgres_thread_persistence_config(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
@@ -212,7 +185,8 @@ async def test_failed_run_turn_leaves_interrupted_marker(
 ) -> None:
     async with PersistentAgentRuntime(
         storage_paths=runtime_storage_paths(tmp_path),
-        persistence_config=postgres_thread_persistence_config(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(),
         behavior_config=RuntimeBehaviorConfig(
             finalize_active_sessions_on_close=False,
         ),
