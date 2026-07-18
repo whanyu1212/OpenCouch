@@ -8,20 +8,22 @@ in :mod:`agent.memory.store.sqlite` and :mod:`agent.memory.store.postgres`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from agent.memory.retrieval.ranking import (
     IndexedRecord,
+    dense_candidate_limit,
     dense_rank,
     lexical_rank,
     rrf_fuse,
 )
 from agent.memory.store.base import (
     SEARCH_MATCH_THRESHOLD,
+    MemoryRecordFilter,
     Namespace,
     StoreRecord,
+    memory_record_matches_filter,
 )
 
 
@@ -217,7 +219,7 @@ class OpenCouchMemoryStore:
         embedding_model: str | None = None,
         limit: int = 10,
         max_age_days: int | None = None,
-        record_filter: Callable[[StoreRecord], bool] | None = None,
+        record_filter: MemoryRecordFilter | None = None,
     ) -> list[StoreRecord]:
         """Run hybrid retrieval over in-memory records.
 
@@ -228,8 +230,8 @@ class OpenCouchMemoryStore:
             embedding_model (str | None): Optional query embedding model identifier.
             limit (int): Maximum number of records to return.
             max_age_days (int | None): Optional age filter in days.
-            record_filter (Callable[[StoreRecord], bool] | None): Optional predicate
-                applied to candidate records before ranking and truncation.
+            record_filter (MemoryRecordFilter | None): Optional declarative filter
+                applied before ranking and truncation.
 
         Returns:
             list[StoreRecord]: Top fused retrieval results.
@@ -279,7 +281,7 @@ class OpenCouchMemoryStore:
             indexed_candidates = [
                 candidate
                 for candidate in indexed_candidates
-                if record_filter(candidate.record)
+                if memory_record_matches_filter(candidate.record, record_filter)
             ]
         lexical_scored = lexical_rank(
             indexed_candidates,
@@ -290,7 +292,7 @@ class OpenCouchMemoryStore:
             indexed_candidates,
             query_embedding=query_embedding,
             embedding_model=embedding_model,
-        )
+        )[: dense_candidate_limit(limit)]
 
         if not lexical_scored and not dense_scored:
             return []

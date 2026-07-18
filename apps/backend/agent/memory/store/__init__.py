@@ -9,16 +9,20 @@ from __future__ import annotations
 
 from agent.memory.store.base import (
     SEARCH_MATCH_THRESHOLD,
+    MemoryRecordFilter,
     MemoryStore,
     Namespace,
     StoreRecord,
+    memory_record_matches_filter,
 )
 from agent.memory.store.memory import OpenCouchMemoryStore
 
 __all__ = [
     "SEARCH_MATCH_THRESHOLD",
+    "MemoryRecordFilter",
     "MemoryStore",
     "Namespace",
     "OpenCouchMemoryStore",
     "StoreRecord",
+    "memory_record_matches_filter",
 ]

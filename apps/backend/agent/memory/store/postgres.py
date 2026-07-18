@@ -4,17 +4,16 @@
 :class:`agent.memory.store.sqlite.SqliteMemoryStore`, but persists
 records through a lazily opened psycopg async connection.
 
-This first-cut implementation intentionally keeps retrieval semantics in
-Python by reusing the shared lexical/dense ranking helpers. That keeps
-result ordering aligned with the in-memory and SQLite stores while the
-project migrates persistence off SQLite.
+Retrieval reuses the shared lexical and fusion helpers while pushing bounded
+canonical-vector ranking and declarative filters into SQL. This keeps result
+semantics aligned with the in-memory and SQLite stores without loading every
+embedding into Python.
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
 from typing import Any, cast
 
 import psycopg
@@ -25,11 +24,14 @@ from agent.memory.retrieval.ranking import (
     EMBEDDING_MATCH_THRESHOLD,
     IndexedRecord,
     ScoredRecord,
+    dense_candidate_limit,
+    dense_rank,
     lexical_rank,
     rrf_fuse,
 )
 from agent.memory.store.base import (
     SEARCH_MATCH_THRESHOLD,
+    MemoryRecordFilter,
     MemoryStore,
     Namespace,
     StoreRecord,
@@ -40,9 +42,9 @@ from agent.memory.store.base import (
 
 logger = logging.getLogger(__name__)
 
-DENSE_CANDIDATE_MULTIPLIER = 5
-MIN_DENSE_CANDIDATES = 50
 PGVECTOR_FIXED_DIMENSION = DEFAULT_OPENAI_EMBEDDING_DIMENSION
+MEMORY_SCHEMA_ADVISORY_LOCK_ID = 0x4F50434D454D
+MEMORY_BACKFILL_ADVISORY_LOCK_ID = MEMORY_SCHEMA_ADVISORY_LOCK_ID + 1
 
 MEMORY_RECORDS_DDL = """
 CREATE TABLE IF NOT EXISTS memory_records (
@@ -86,8 +88,8 @@ class PostgresMemoryStore:
     """PostgreSQL-backed implementation of :class:`MemoryStore`.
 
     Construction is cheap; the database connection opens on first use.
-    Retrieval semantics intentionally match the SQLite store by loading
-    namespace rows and applying the shared ranking helpers in Python.
+    Retrieval semantics intentionally match the SQLite store while canonical
+    vector ranking and declarative filters execute in PostgreSQL.
     """
 
     def __init__(self, dsn: str) -> None:
@@ -154,6 +156,12 @@ class PostgresMemoryStore:
 
         async with conn.transaction():
             async with conn.cursor() as cursor:
+                await cursor.execute("SET LOCAL lock_timeout = '10s'")
+                await cursor.execute("SET LOCAL statement_timeout = '30s'")
+                await cursor.execute(
+                    "SELECT pg_advisory_xact_lock(%s)",
+                    (MEMORY_SCHEMA_ADVISORY_LOCK_ID,),
+                )
                 await cursor.execute("CREATE EXTENSION IF NOT EXISTS vector")
                 for ddl in MEMORY_SCHEMA_DDL:
                     await cursor.execute(ddl)
@@ -163,7 +171,7 @@ class PostgresMemoryStore:
                     ADD COLUMN IF NOT EXISTS embedding_vector_3072 vector(3072)
                     """
                 )
-            await PostgresMemoryStore._backfill_embedding_vector_3072(conn)
+        await PostgresMemoryStore._backfill_embedding_vector_3072(conn)
 
     @staticmethod
     def _embedding_to_vector_literal(embedding: list[float] | None) -> str | None:
@@ -214,60 +222,24 @@ class PostgresMemoryStore:
             None: Backfills eligible rows in-place.
         """
 
-        async with conn.cursor() as cursor:
-            await cursor.execute(
-                """
-                SELECT insertion_order, embedding
-                FROM memory_records
-                WHERE embedding IS NOT NULL
-                    AND embedding_dim = %s
-                    AND embedding_vector_3072 IS NULL
-                """,
-                (PGVECTOR_FIXED_DIMENSION,),
-            )
-            rows = await cursor.fetchall()
-
-        if not rows:
-            return
-
         async with conn.transaction():
             async with conn.cursor() as cursor:
-                for row in rows:
-                    embedding = row.get("embedding")
-                    if embedding is None:
-                        continue
-                    embedding_vector_3072 = (
-                        PostgresMemoryStore._embedding_vector_3072_literal(
-                            list(embedding),
-                            PGVECTOR_FIXED_DIMENSION,
-                        )
-                    )
-                    if embedding_vector_3072 is None:
-                        continue
-                    await cursor.execute(
-                        """
-                        UPDATE memory_records
-                        SET embedding_vector_3072 = %s::vector(3072)
-                        WHERE insertion_order = %s
-                        """,
-                        (
-                            embedding_vector_3072,
-                            row["insertion_order"],
-                        ),
-                    )
-
-    @staticmethod
-    def _dense_candidate_limit(limit: int) -> int:
-        """Return the bounded dense candidate count for SQL retrieval.
-
-        Args:
-            limit (int): Final requested result count.
-
-        Returns:
-            int: Candidate pool size for dense SQL pruning.
-        """
-
-        return max(limit * DENSE_CANDIDATE_MULTIPLIER, MIN_DENSE_CANDIDATES)
+                await cursor.execute("SET LOCAL lock_timeout = '10s'")
+                await cursor.execute("SET LOCAL statement_timeout = '30s'")
+                await cursor.execute(
+                    "SELECT pg_advisory_xact_lock(%s)",
+                    (MEMORY_BACKFILL_ADVISORY_LOCK_ID,),
+                )
+                await cursor.execute(
+                    """
+                    UPDATE memory_records
+                    SET embedding_vector_3072 = embedding::vector(3072)
+                    WHERE embedding IS NOT NULL
+                        AND embedding_dim = %s
+                        AND embedding_vector_3072 IS NULL
+                    """,
+                    (PGVECTOR_FIXED_DIMENSION,),
+                )
 
     @staticmethod
     def _sql_dense_row_to_scored_record(
@@ -491,19 +463,20 @@ class PostgresMemoryStore:
             StoreRecord | None: Matching record, or ``None``.
         """
 
-        conn = await self._ensure_connection()
-        owner_id, namespace_kind = unpack_memory_namespace(namespace)
-        async with conn.cursor() as cursor:
-            await cursor.execute(
-                """
-                SELECT id, value, embedding, embedding_model
-                FROM memory_records
-                WHERE id = %s AND owner_id = %s AND namespace_kind = %s
-                LIMIT 1
-                """,
-                (key, owner_id, namespace_kind),
-            )
-            row = await cursor.fetchone()
+        async with self._write_lock:
+            conn = await self._ensure_connection()
+            owner_id, namespace_kind = unpack_memory_namespace(namespace)
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT id, value, embedding, embedding_model
+                    FROM memory_records
+                    WHERE id = %s AND owner_id = %s AND namespace_kind = %s
+                    LIMIT 1
+                    """,
+                    (key, owner_id, namespace_kind),
+                )
+                row = await cursor.fetchone()
         if row is None:
             return None
         return self._row_to_store_record(row, namespace)
@@ -526,34 +499,35 @@ class PostgresMemoryStore:
             list[StoreRecord]: Matching records in recall-score order.
         """
 
-        conn = await self._ensure_connection()
-        owner_id, namespace_kind = unpack_memory_namespace(namespace)
+        async with self._write_lock:
+            conn = await self._ensure_connection()
+            owner_id, namespace_kind = unpack_memory_namespace(namespace)
 
-        async with conn.cursor() as cursor:
-            if query is None:
+            async with conn.cursor() as cursor:
+                if query is None:
+                    await cursor.execute(
+                        """
+                        SELECT id, value, embedding, embedding_model
+                        FROM memory_records
+                        WHERE owner_id = %s AND namespace_kind = %s
+                        ORDER BY insertion_order ASC
+                        LIMIT %s
+                        """,
+                        (owner_id, namespace_kind, limit),
+                    )
+                    rows = await cursor.fetchall()
+                    return [self._row_to_store_record(row, namespace) for row in rows]
+
                 await cursor.execute(
                     """
                     SELECT id, value, embedding, embedding_model
                     FROM memory_records
                     WHERE owner_id = %s AND namespace_kind = %s
                     ORDER BY insertion_order ASC
-                    LIMIT %s
                     """,
-                    (owner_id, namespace_kind, limit),
+                    (owner_id, namespace_kind),
                 )
                 rows = await cursor.fetchall()
-                return [self._row_to_store_record(row, namespace) for row in rows]
-
-            await cursor.execute(
-                """
-                SELECT id, value, embedding, embedding_model
-                FROM memory_records
-                WHERE owner_id = %s AND namespace_kind = %s
-                ORDER BY insertion_order ASC
-                """,
-                (owner_id, namespace_kind),
-            )
-            rows = await cursor.fetchall()
 
         candidates = [
             IndexedRecord(
@@ -578,7 +552,39 @@ class PostgresMemoryStore:
         embedding_model: str | None = None,
         limit: int = 10,
         max_age_days: int | None = None,
-        record_filter: Callable[[StoreRecord], bool] | None = None,
+        record_filter: MemoryRecordFilter | None = None,
+    ) -> list[StoreRecord]:
+        """Run hybrid retrieval in one coherent PostgreSQL snapshot."""
+
+        async with self._write_lock:
+            conn = await self._ensure_connection()
+            async with conn.transaction():
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+                    )
+                return await self._asearch_similar_locked(
+                    conn,
+                    namespace,
+                    query_text=query_text,
+                    query_embedding=query_embedding,
+                    embedding_model=embedding_model,
+                    limit=limit,
+                    max_age_days=max_age_days,
+                    record_filter=record_filter,
+                )
+
+    async def _asearch_similar_locked(
+        self,
+        conn: psycopg.AsyncConnection[dict[str, Any]],
+        namespace: Namespace,
+        *,
+        query_text: str,
+        query_embedding: list[float] | None,
+        embedding_model: str | None = None,
+        limit: int = 10,
+        max_age_days: int | None = None,
+        record_filter: MemoryRecordFilter | None = None,
     ) -> list[StoreRecord]:
         """Run hybrid retrieval over PostgreSQL-backed records.
 
@@ -589,14 +595,13 @@ class PostgresMemoryStore:
             embedding_model (str | None): Optional query embedding model identifier.
             limit (int): Maximum number of records to return.
             max_age_days (int | None): Optional age filter in days.
-            record_filter (Callable[[StoreRecord], bool] | None): Optional predicate
-                applied to candidate records before ranking and truncation.
+            record_filter (MemoryRecordFilter | None): Optional declarative filter
+                applied before ranking and truncation.
 
         Returns:
             list[StoreRecord]: Top fused retrieval results.
         """
 
-        conn = await self._ensure_connection()
         owner_id, namespace_kind = unpack_memory_namespace(namespace)
 
         age_clause = ""
@@ -604,16 +609,36 @@ class PostgresMemoryStore:
         if max_age_days is not None:
             age_clause = (
                 " AND NULLIF(created_at, '')::timestamptz >= "
-                "(NOW() AT TIME ZONE 'UTC') - (%s * INTERVAL '1 day')"
+                "NOW() - (%s * INTERVAL '1 day')"
             )
             age_params.append(max_age_days)
 
+        record_filter_clause = ""
+        if record_filter == "active_semantic":
+            record_filter_clause = (
+                " AND user_visible = TRUE"
+                " AND NULLIF(dormant_at, '') IS NULL"
+                " AND NULLIF(value->>'superseded_by', '') IS NULL"
+            )
+        elif record_filter is not None:
+            raise ValueError(f"Unsupported memory record filter: {record_filter}")
+
+        needs_python_dense = (
+            query_embedding is not None
+            and len(query_embedding) != PGVECTOR_FIXED_DIMENSION
+        )
+        embedding_select = (
+            "embedding"
+            if needs_python_dense
+            else "NULL::double precision[] AS embedding"
+        )
         async with conn.cursor() as cursor:
             await cursor.execute(
                 f"""
-                SELECT id, value, embedding, embedding_model
+                SELECT id, value, {embedding_select}, embedding_model
                 FROM memory_records
-                WHERE owner_id = %s AND namespace_kind = %s{age_clause}
+                WHERE owner_id = %s AND namespace_kind = %s
+                    {age_clause}{record_filter_clause}
                 ORDER BY insertion_order ASC
                 """,
                 [owner_id, namespace_kind, *age_params],
@@ -627,12 +652,6 @@ class PostgresMemoryStore:
             )
             for insertion_index, row in enumerate(lexical_rows)
         ]
-        if record_filter is not None:
-            lexical_candidates = [
-                candidate
-                for candidate in lexical_candidates
-                if record_filter(candidate.record)
-            ]
         lexical_scored = lexical_rank(
             lexical_candidates,
             query_text=query_text,
@@ -641,57 +660,96 @@ class PostgresMemoryStore:
 
         dense_scored = []
         if query_embedding is not None:
-            dense_query_embedding = self._embedding_to_vector_literal(query_embedding)
-            dense_candidate_limit = self._dense_candidate_limit(limit)
-            embedding_model_clause = ""
-            dense_params: list[Any] = [dense_query_embedding, owner_id, namespace_kind]
-            dense_params.extend(age_params)
-            if embedding_model is not None:
-                embedding_model_clause = " AND embedding_model = %s"
-                dense_params.append(embedding_model)
-            dense_params.append(dense_candidate_limit)
-
-            async with conn.cursor() as cursor:
-                await cursor.execute(
-                    f"""
+            if needs_python_dense:
+                # Non-canonical configured providers remain supported through
+                # the stored array column; only the canonical cohort can use the
+                # fixed-dimension pgvector column.
+                dense_scored = dense_rank(
+                    lexical_candidates,
+                    query_embedding=query_embedding,
+                    embedding_model=embedding_model,
+                )[: dense_candidate_limit(limit)]
+            else:
+                dense_query_embedding = self._embedding_to_vector_literal(
+                    query_embedding
+                )
+                candidate_limit = dense_candidate_limit(limit)
+                embedding_model_clause = ""
+                dense_params: list[Any] = [owner_id, namespace_kind]
+                dense_params.extend(age_params)
+                dense_params.append(dense_query_embedding)
+                if embedding_model is not None:
+                    embedding_model_clause = " AND embedding_model = %s"
+                    dense_params.append(embedding_model)
+                dense_query = f"""
+                    WITH candidates AS (
+                        SELECT
+                            id,
+                            value,
+                            embedding_model,
+                            embedding_vector_3072,
+                            insertion_order,
+                            ROW_NUMBER() OVER (ORDER BY insertion_order ASC) - 1
+                                AS candidate_index
+                        FROM memory_records
+                        WHERE owner_id = %s AND namespace_kind = %s
+                            {age_clause}{record_filter_clause}
+                    )
                     SELECT
                         id,
                         value,
-                        embedding,
+                        NULL::double precision[] AS embedding,
                         embedding_model,
                         insertion_order,
+                        candidate_index,
                         embedding_vector_3072 <=> %s::vector(3072) AS cosine_distance
-                    FROM memory_records
-                    WHERE owner_id = %s AND namespace_kind = %s
-                        AND embedding_vector_3072 IS NOT NULL{age_clause}{embedding_model_clause}
+                    FROM candidates
+                    WHERE embedding_vector_3072 IS NOT NULL{embedding_model_clause}
                     ORDER BY cosine_distance ASC, insertion_order ASC
                     LIMIT %s
-                    """,
-                    dense_params,
-                )
-                dense_rows = await cursor.fetchall()
+                """
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        dense_query,
+                        [*dense_params, candidate_limit],
+                    )
+                    dense_rows = await cursor.fetchall()
 
-            dense_scored = []
-            for insertion_index, row in enumerate(dense_rows):
-                record = self._row_to_store_record(row, namespace)
-                if record_filter is not None and not record_filter(record):
-                    continue
-                scored = self._sql_dense_row_to_scored_record(
-                    row,
-                    namespace=namespace,
-                    insertion_index=insertion_index,
-                )
-                if scored is not None:
-                    dense_scored.append(scored)
+                for row in dense_rows:
+                    scored = self._sql_dense_row_to_scored_record(
+                        row,
+                        namespace=namespace,
+                        insertion_index=int(row["candidate_index"]),
+                    )
+                    if scored is not None:
+                        dense_scored.append(scored)
 
         if not lexical_scored and not dense_scored:
             return []
 
-        return rrf_fuse(
+        fused = rrf_fuse(
             lexical_ranked=lexical_scored,
             dense_ranked=dense_scored,
             limit=limit,
         )
+        if not fused:
+            return []
+        keys = [record.key for record in fused]
+        async with conn.cursor() as cursor:
+            await cursor.execute(
+                """
+                SELECT id, value, embedding, embedding_model
+                FROM memory_records
+                WHERE owner_id = %s AND namespace_kind = %s AND id = ANY(%s)
+                """,
+                (owner_id, namespace_kind, keys),
+            )
+            hydrated_rows = await cursor.fetchall()
+        hydrated = {
+            row["id"]: self._row_to_store_record(row, namespace)
+            for row in hydrated_rows
+        }
+        return [hydrated[key] for key in keys if key in hydrated]
 
     async def adelete(
         self,
@@ -759,23 +817,24 @@ class PostgresMemoryStore:
             int: Total record count for the store or namespace.
         """
 
-        if self._closed:
-            return 0
-        conn = await self._ensure_connection()
-        async with conn.cursor() as cursor:
-            if namespace is None:
-                await cursor.execute("SELECT COUNT(*) AS count FROM memory_records")
-            else:
-                owner_id, namespace_kind = unpack_memory_namespace(namespace)
-                await cursor.execute(
-                    """
-                    SELECT COUNT(*) AS count
-                    FROM memory_records
-                    WHERE owner_id = %s AND namespace_kind = %s
-                    """,
-                    (owner_id, namespace_kind),
-                )
-            row = await cursor.fetchone()
+        async with self._write_lock:
+            if self._closed:
+                return 0
+            conn = await self._ensure_connection()
+            async with conn.cursor() as cursor:
+                if namespace is None:
+                    await cursor.execute("SELECT COUNT(*) AS count FROM memory_records")
+                else:
+                    owner_id, namespace_kind = unpack_memory_namespace(namespace)
+                    await cursor.execute(
+                        """
+                        SELECT COUNT(*) AS count
+                        FROM memory_records
+                        WHERE owner_id = %s AND namespace_kind = %s
+                        """,
+                        (owner_id, namespace_kind),
+                    )
+                row = await cursor.fetchone()
         return int(row["count"]) if row else 0
 
     async def anamespaces(self) -> list[Namespace]:
@@ -785,17 +844,18 @@ class PostgresMemoryStore:
             list[Namespace]: Namespaces that currently contain records.
         """
 
-        if self._closed:
-            return []
-        conn = await self._ensure_connection()
-        async with conn.cursor() as cursor:
-            await cursor.execute(
-                """
-                SELECT DISTINCT owner_id, namespace_kind
-                FROM memory_records
-                """
-            )
-            rows = await cursor.fetchall()
+        async with self._write_lock:
+            if self._closed:
+                return []
+            conn = await self._ensure_connection()
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT DISTINCT owner_id, namespace_kind
+                    FROM memory_records
+                    """
+                )
+                rows = await cursor.fetchall()
         return [(str(row["owner_id"]), str(row["namespace_kind"])) for row in rows]
 
     async def alatest(self, namespace: Namespace) -> StoreRecord | None:
@@ -808,22 +868,23 @@ class PostgresMemoryStore:
             StoreRecord | None: Most recent record, or ``None``.
         """
 
-        if self._closed:
-            return None
-        conn = await self._ensure_connection()
-        owner_id, namespace_kind = unpack_memory_namespace(namespace)
-        async with conn.cursor() as cursor:
-            await cursor.execute(
-                """
-                SELECT id, value, embedding, embedding_model
-                FROM memory_records
-                WHERE owner_id = %s AND namespace_kind = %s
-                ORDER BY insertion_order DESC
-                LIMIT 1
-                """,
-                (owner_id, namespace_kind),
-            )
-            row = await cursor.fetchone()
+        async with self._write_lock:
+            if self._closed:
+                return None
+            conn = await self._ensure_connection()
+            owner_id, namespace_kind = unpack_memory_namespace(namespace)
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    SELECT id, value, embedding, embedding_model
+                    FROM memory_records
+                    WHERE owner_id = %s AND namespace_kind = %s
+                    ORDER BY insertion_order DESC
+                    LIMIT 1
+                    """,
+                    (owner_id, namespace_kind),
+                )
+                row = await cursor.fetchone()
         if row is None:
             return None
         return self._row_to_store_record(row, namespace)
@@ -834,6 +895,7 @@ _: type[MemoryStore] = PostgresMemoryStore
 
 __all__ = [
     "PostgresMemoryStore",
+    "MEMORY_BACKFILL_ADVISORY_LOCK_ID",
     "MEMORY_SCHEMA_DDL",
     "MEMORY_RECORDS_DDL",
     "MEMORY_RECORDS_INDEX_OWNER_KIND_DDL",

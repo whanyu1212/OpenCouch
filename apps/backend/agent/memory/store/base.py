@@ -19,14 +19,14 @@ provider is configured.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Literal, Protocol, cast, runtime_checkable
 
 # A namespace is typically ``(user_id, kind)`` where kind is one of
 # "semantic", "episodic", or "procedural". The tuple shape mirrors common
 # key-value memory store conventions.
 Namespace = tuple[str, ...]
+MemoryRecordFilter = Literal["active_semantic"]
 
 # Minimum query-token recall ratio for a record to count as a search hit.
 # Recall is ``|query_tokens ∩ haystack_tokens| / |query_tokens|`` after
@@ -90,6 +90,24 @@ class StoreRecord:
     value: dict[str, Any]
     embedding: list[float] | None = None
     embedding_model: str | None = None
+
+
+def memory_record_matches_filter(
+    record: StoreRecord,
+    record_filter: MemoryRecordFilter | None,
+) -> bool:
+    """Return whether a record satisfies a supported declarative filter."""
+
+    if record_filter is None:
+        return True
+    if record_filter == "active_semantic":
+        value = record.value
+        return bool(
+            value.get("user_visible", True)
+            and not value.get("dormant_at")
+            and not value.get("superseded_by")
+        )
+    raise ValueError(f"Unsupported memory record filter: {record_filter}")
 
 
 def unpack_memory_namespace(namespace: Namespace) -> tuple[str, str]:
@@ -262,7 +280,7 @@ class MemoryStore(Protocol):
         embedding_model: str | None = None,
         limit: int = 10,
         max_age_days: int | None = None,
-        record_filter: Callable[[StoreRecord], bool] | None = None,
+        record_filter: MemoryRecordFilter | None = None,
     ) -> list[StoreRecord]:
         """Run hybrid lexical-plus-dense retrieval in a namespace.
 
@@ -273,8 +291,8 @@ class MemoryStore(Protocol):
             embedding_model (str | None): Optional query embedding model identifier.
             limit (int): Maximum number of records to return.
             max_age_days (int | None): Optional age filter in days.
-            record_filter (Callable[[StoreRecord], bool] | None): Optional predicate
-                applied to candidate records before ranking and truncation.
+            record_filter (MemoryRecordFilter | None): Optional declarative filter
+                applied before ranking and truncation.
 
         Returns:
             list[StoreRecord]: Top fused retrieval results.

@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import struct
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -28,16 +27,19 @@ import aiosqlite
 
 from agent.memory.retrieval.ranking import (
     IndexedRecord,
+    dense_candidate_limit,
     dense_rank,
     lexical_rank,
     rrf_fuse,
 )
 from agent.memory.store.base import (
     SEARCH_MATCH_THRESHOLD,
+    MemoryRecordFilter,
     MemoryStore,
     Namespace,
     StoreRecord,
     build_store_record,
+    memory_record_matches_filter,
     prepare_memory_record_fields,
     unpack_memory_namespace,
 )
@@ -755,7 +757,7 @@ class SqliteMemoryStore:
         embedding_model: str | None = None,
         limit: int = 10,
         max_age_days: int | None = None,
-        record_filter: Callable[[StoreRecord], bool] | None = None,
+        record_filter: MemoryRecordFilter | None = None,
     ) -> list[StoreRecord]:
         """Run hybrid retrieval over SQLite-backed records.
 
@@ -766,8 +768,8 @@ class SqliteMemoryStore:
             embedding_model (str | None): Optional query embedding model identifier.
             limit (int): Maximum number of records to return.
             max_age_days (int | None): Optional age filter in days.
-            record_filter (Callable[[StoreRecord], bool] | None): Optional predicate
-                applied to candidate records before ranking and truncation.
+            record_filter (MemoryRecordFilter | None): Optional declarative filter
+                applied before ranking and truncation.
 
         Returns:
             list[StoreRecord]: Top fused retrieval results.
@@ -806,7 +808,7 @@ class SqliteMemoryStore:
             lexical_candidates = [
                 candidate
                 for candidate in lexical_candidates
-                if record_filter(candidate.record)
+                if memory_record_matches_filter(candidate.record, record_filter)
             ]
         lexical_scored = lexical_rank(
             lexical_candidates,
@@ -841,13 +843,13 @@ class SqliteMemoryStore:
                 dense_candidates = [
                     candidate
                     for candidate in dense_candidates
-                    if record_filter(candidate.record)
+                    if memory_record_matches_filter(candidate.record, record_filter)
                 ]
             dense_scored = dense_rank(
                 dense_candidates,
                 query_embedding=query_embedding,
                 embedding_model=embedding_model,
-            )
+            )[: dense_candidate_limit(limit)]
 
         if not lexical_scored and not dense_scored:
             return []
