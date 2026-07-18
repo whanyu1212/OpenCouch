@@ -224,8 +224,9 @@ class PostgresMemoryStore:
 
         async with conn.transaction():
             async with conn.cursor() as cursor:
-                await cursor.execute("SET LOCAL lock_timeout = '10s'")
-                await cursor.execute("SET LOCAL statement_timeout = '30s'")
+                # A legacy table may take longer than startup-oriented DDL timeouts.
+                await cursor.execute("SET LOCAL lock_timeout = '0'")
+                await cursor.execute("SET LOCAL statement_timeout = '0'")
                 await cursor.execute(
                     "SELECT pg_advisory_xact_lock(%s)",
                     (MEMORY_BACKFILL_ADVISORY_LOCK_ID,),
