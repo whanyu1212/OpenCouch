@@ -12,9 +12,9 @@ Single Python backend. OpenAI Agents SDK text runtime with app-owned state and
 deterministic routing stages. OpenAI Realtime powers browser voice through the
 same app-owned memory, policy, and tool boundaries. Three memory layers are
 backed by Postgres, the only supported durable long-term memory backend;
-in-memory stores cover incognito/tests. Legacy SQLite memory access is retained
-temporarily only for explicit migration inspection. Shared runtime for CLI,
-API, web text, and voice persistence.
+in-memory stores cover incognito/tests. The legacy SQLite memory backend and
+built-in SQLite memory tools have been removed. Shared runtime for CLI, API, web
+text, and voice persistence.
 
 ---
 
@@ -40,7 +40,7 @@ memory retrieval and all operational gates are skipped entirely.
 | LLM | `BaseLLMClient` protocol | OpenAI client behind a thin protocol; `WorkflowContext` exposes both control LLM and optional response LLM |
 | Embedding | `EmbeddingProvider` protocol | OpenAI `text-embedding-3-large` when an API key is present; null provider when no API key |
 | Storage | Postgres durable application persistence | Dockerized Postgres is the supported local/runtime path and the managed-database cloud path |
-| Memory | `MemoryStore` protocol | In-memory for incognito/tests; Postgres is the only supported durable long-term memory backend; SQLite access is migration-only pending removal |
+| Memory | `MemoryStore` protocol | In-memory for incognito/tests; Postgres is the only supported durable long-term memory backend; the legacy SQLite backend is removed |
 | Retrieval | Hybrid RRF (k=60) | Embedding cosine + token-recall fused via Reciprocal Rank Fusion; degrades gracefully to token-recall on embedding failure |
 | Prompt sources | `agent/prompts/sources/*.md` files | Reviewed prompt fragments; composed at runtime via `compose_sources()` |
 | Context | `WorkflowContext` frozen dataclass | Attribute access, type-safe, immutable per turn; carries `session_memory_buffer` for session-end candidate promotion |
@@ -58,21 +58,22 @@ Postgres is the only supported durable application backend for thread state
 snapshots, active-session state, long-term memory, crisis audit, session
 feedback, and voice finalization status. In-memory implementations serve
 incognito mode and tests. The SQLite runtime-state, active-session, crisis-log,
-and feedback implementations have been removed.
+feedback, and long-term-memory implementations have been removed, along with
+the built-in SQLite memory tools.
 
 Old `memory.sqlite3` files are not imported, copied, or deleted during cutover;
-no importer is provided. They may be archived or discarded, and the operator
-script retains explicit migration-only inspection until final removal. OpenAI
+no importer is provided. Archive or discard them as appropriate. Inspection
+requires an older OpenCouch release or an external read-only SQLite tool. OpenAI
 Agents SDK text sessions are a separate model-visible short-term history
-surface: SDK `SQLiteSession` may use `text_sessions.sqlite3`, but it is not a
-durable long-term-memory backend.
+surface: SDK `SQLiteSession` may use `text_sessions.sqlite3`; that store is
+preserved and is not a durable long-term-memory backend.
 :::
 
 | Store | Supported implementation | Other mode or separate surface | What it persists |
 |---|---|---|---|
 | Runtime thread state | `PostgresRuntimeStateStore` | `InMemoryRuntimeStateStore` for incognito/tests | App-owned conversation state snapshots |
 | Active sessions | `PostgresActiveSessionStore` | In-memory/null stores for non-durable runtimes | Timeout/finalization recovery metadata |
-| Memory | `PostgresMemoryStore` | In-memory for incognito/tests; `SqliteMemoryStore` only for explicit migration inspection | Semantic facts, episodic arcs, procedural profiles |
+| Memory | `PostgresMemoryStore` | In-memory for incognito/tests | Semantic facts, episodic arcs, procedural profiles |
 | Crisis log | `PostgresCrisisLogBackend` | In-memory for incognito/tests | Crisis event audit trail |
 | Session feedback | `PostgresSessionFeedbackBackend` | In-memory for incognito/tests | End-of-session thumbs ratings |
 | SDK text sessions | SDK SQLAlchemy session with Postgres | Separate SDK `SQLiteSession` option | Model-visible short-term message history, not long-term memory |
@@ -143,7 +144,7 @@ composition logic.
 | `agent/specialists/` | Triage, therapeutic, crisis, and guided-exercise specialist agent definitions |
 | `agent/tools/` | SDK tool surfaces and fallback deltas for memory control, crisis, guided exercise, and grounded lookup |
 | `agent/skills/` | Guided-exercise catalog, lifecycle, and prompt-local rendering; see `agent/skills/README.md` for package boundaries |
-| `agent/memory/` | Store protocol, Postgres durable backend, temporarily retained SQLite migration/removal code, embeddings, retrieval, dedup, LLM-primary write policy, reconciliation, procedural profile, and service-backed memory logic |
+| `agent/memory/` | Store protocol, Postgres durable backend, embeddings, retrieval, dedup, LLM-primary write policy, reconciliation, procedural profile, and service-backed memory logic |
 | `agent/audit/` | Minimal safety-event capture plus operator-facing crisis ledger backends |
 | `agent/feedback/` | Session feedback records plus in-memory and Postgres backends |
 | `agent/memory/control/` | User-facing memory-control actions and operations |

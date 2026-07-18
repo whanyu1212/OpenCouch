@@ -443,8 +443,8 @@ async def test_memory_store_observability_helpers_degrade_after_close() -> None:
 
     Mutating ops (aput/aget) raise RuntimeError once closed, but the
     read-only observability helpers (alatest/arecord_count/anamespaces)
-    return empty results. This matches SqliteMemoryStore so callers can
-    treat any backend interchangeably through the MemoryStore protocol.
+    return empty results so callers can treat supported backends interchangeably
+    through the MemoryStore protocol.
     """
 
     store = OpenCouchMemoryStore()

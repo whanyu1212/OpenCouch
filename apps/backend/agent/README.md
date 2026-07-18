@@ -29,13 +29,15 @@ from both runtime state and SDK session history.
 Postgres is the only supported durable backend for application-owned runtime
 state, long-term memory, crisis audit, session feedback, and active-session
 recovery. In-memory stores remain the incognito/test path. The old SQLite
-runtime-state, active-session, crisis-log, and feedback implementations have
-been removed. `SqliteMemoryStore` remains only for explicit migration
-inspection of old long-term-memory files.
+runtime-state, active-session, crisis-log, feedback, and long-term-memory
+implementations have been removed, along with the built-in SQLite memory tools.
+Old `memory.sqlite3` files require an older release or an external read-only
+SQLite tool for inspection; OpenCouch does not import, copy, or delete them.
 
 OpenAI Agents SDK text sessions are a separate, model-visible short-term
 history surface. Their SDK `SQLiteSession` option, including
-`text_sessions.sqlite3`, is not an OpenCouch long-term-memory backend.
+`text_sessions.sqlite3`, is not an OpenCouch long-term-memory backend and is
+preserved.
 
 ## Agent Shape
 

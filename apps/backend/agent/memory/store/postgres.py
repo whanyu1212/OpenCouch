@@ -88,7 +88,7 @@ class PostgresMemoryStore:
     """PostgreSQL-backed implementation of :class:`MemoryStore`.
 
     Construction is cheap; the database connection opens on first use.
-    Retrieval semantics intentionally match the SQLite store while canonical
+    Retrieval semantics follow the shared memory-store contract while canonical
     vector ranking and declarative filters execute in PostgreSQL.
     """
 

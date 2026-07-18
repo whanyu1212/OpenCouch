@@ -44,9 +44,8 @@ Design decisions:
    they need to.
 
 4. **Embeddings are plain ``list[float]``, not numpy arrays.** Each
-   concrete store owns its database serialization; the legacy SQLite
-   implementation packs vectors in :mod:`agent.memory.store.sqlite`.
-   Keeping plain lists at the protocol boundary avoids a numpy dependency.
+   concrete store owns its representation. Keeping plain lists at the protocol
+   boundary avoids a numpy dependency.
    Shared cosine scoring lives in :mod:`agent.memory.retrieval.ranking`.
 
 5. **Failures degrade to None, not exceptions.** ``aembed`` catches

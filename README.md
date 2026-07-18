@@ -133,19 +133,13 @@ Keep real `.env` files local and out of version control.
 
 Legacy `memory.sqlite3` files are not imported into Postgres, copied, or deleted
 by OpenCouch. There is no importer. Archive an old file if you need it for
-records, or discard it after verifying it is no longer needed. Until the final
-SQLite memory-store removal, explicit migration-only inspection remains
-available:
-
-```bash
-./apps/backend/.venv/bin/python scripts/inspect_memory.py \
-  --backend sqlite \
-  --sqlite-path apps/backend/.store/memory.sqlite3 \
-  --all-users
-```
+records, or discard it after verifying it is no longer needed. The legacy
+`SqliteMemoryStore` and built-in SQLite memory inspection and clear paths have
+been removed. Inspect an archived file with an older OpenCouch release or an
+external read-only SQLite tool.
 
 This applies only to long-term memory. The OpenAI Agents SDK
-`text_sessions.sqlite3` store is separate and unchanged by the memory-backend
+`text_sessions.sqlite3` store is separate and preserved by the memory-backend
 retirement.
 
 ### Local run commands

@@ -14,6 +14,7 @@ from agent.memory.modes import MemoryMode
 from agent.memory.providers.embeddings import EmbeddingProvider
 from agent.memory.store import MemoryStore
 from agent.runtime.backends import (
+    MemoryPersistenceBackend,
     PersistenceBackend,
     RuntimeStoreBackend,
     create_crisis_log_backend,
@@ -104,9 +105,8 @@ def build_runtime_resources(
     text_session_create_tables: bool,
     text_session_history_limit: int | None,
     memory_store: MemoryStore | None,
-    memory_backend: PersistenceBackend,
+    memory_backend: MemoryPersistenceBackend,
     memory_database_url: str | None,
-    memory_sqlite_path: str | Path,
     crisis_log_backend: CrisisLogBackend | None,
     crisis_log_persistence_backend: PersistenceBackend,
     crisis_log_database_url: str | None,
@@ -161,7 +161,6 @@ def build_runtime_resources(
         memory_store=memory_store,
         memory_backend=backend_selection.memory_store_backend,
         memory_database_url=memory_database_url,
-        memory_sqlite_path=memory_sqlite_path,
     )
     resolved_crisis_log_backend = create_crisis_log_backend(
         crisis_log_backend=crisis_log_backend,

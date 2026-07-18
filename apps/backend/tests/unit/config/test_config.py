@@ -52,10 +52,10 @@ def test_get_settings_rejects_sqlite_backend_even_with_legacy_opt_in(
         config.get_settings()
 
 
-def test_get_settings_retains_legacy_opt_in_for_direct_compatibility(
+def test_get_settings_retains_legacy_opt_in_for_sdk_sqlite_compatibility(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The legacy flag remains independent of application backend selection."""
+    """The legacy flag remains available for SDK-session SQLite selection."""
 
     monkeypatch.setattr(config, "_DOTENV_LOADED", True)
     monkeypatch.setenv("OPENCOUCH_PERSISTENCE_BACKEND", "postgres")
