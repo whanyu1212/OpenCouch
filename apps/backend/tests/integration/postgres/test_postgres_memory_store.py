@@ -2,40 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-import psycopg
 import pytest
+import psycopg
 
 from agent.memory.store import MemoryStore, StoreRecord
-from agent.memory.store.postgres import PostgresMemoryStore
-from tests.support.persistence import postgres_database_url
-
-
-def _require_postgres_database_url() -> str:
-    """Return the enabled Postgres DSN or skip the test."""
-
-    dsn = postgres_database_url()
-    if not dsn:
-        pytest.skip(
-            "Postgres integration tests are disabled; set "
-            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
-            "OPENCOUCH_TEST_POSTGRES_URL"
-        )
-    return dsn
-
-
-async def _delete_records_for_owners(dsn: str, owner_ids: list[str]) -> None:
-    """Delete test-owned memory rows from the shared Postgres table."""
-
-    if not owner_ids:
-        return
-    async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
-        async with conn.cursor() as cursor:
-            await cursor.execute(
-                "DELETE FROM memory_records WHERE owner_id = ANY(%s)",
-                (owner_ids,),
-            )
+from agent.memory.store.postgres import (
+    MEMORY_BACKFILL_ADVISORY_LOCK_ID,
+    MEMORY_SCHEMA_ADVISORY_LOCK_ID,
+    PostgresMemoryStore,
+)
+from tests.support.persistence_contracts import (
+    delete_postgres_memory_records_for_owners as _delete_records_for_owners,
+    require_postgres_database_url as _require_postgres_database_url,
+)
 
 
 def _owner_id() -> str:
@@ -50,6 +33,42 @@ def _embedding_at(index: int, dimension: int = 3072) -> list[float]:
     embedding = [0.0] * dimension
     embedding[index] = 1.0
     return embedding
+
+
+async def _wait_for_advisory_lock_waiter(
+    blocker: psycopg.AsyncConnection,
+    blocker_pid: int,
+    waiter_pid: int,
+) -> None:
+    """Wait until another backend is blocked on a lock held by ``blocker``."""
+
+    deadline = asyncio.get_running_loop().time() + 2
+    while asyncio.get_running_loop().time() < deadline:
+        cursor = await blocker.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM pg_locks AS held
+                JOIN pg_locks AS waiting
+                    ON waiting.locktype = held.locktype
+                    AND waiting.database IS NOT DISTINCT FROM held.database
+                    AND waiting.classid IS NOT DISTINCT FROM held.classid
+                    AND waiting.objid IS NOT DISTINCT FROM held.objid
+                    AND waiting.objsubid IS NOT DISTINCT FROM held.objsubid
+                    AND waiting.pid <> held.pid
+                WHERE held.pid = %s
+                    AND waiting.pid = %s
+                    AND held.granted
+                    AND NOT waiting.granted
+            )
+            """,
+            (blocker_pid, waiter_pid),
+        )
+        row = await cursor.fetchone()
+        if row and row[0]:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("No advisory-lock waiter appeared")
 
 
 @pytest.mark.asyncio
@@ -183,6 +202,8 @@ async def test_batch_rollback_discards_partial_writes() -> None:
             )
 
         assert await store.aget(namespace, "batch-first") is None
+        await store.aput(namespace, "after-rollback", {"v": "connection reusable"})
+        assert await store.aget(namespace, "after-rollback") is not None
     finally:
         await store.aclose()
         await _delete_records_for_owners(dsn, [owner_id])
@@ -507,6 +528,393 @@ async def test_hybrid_search_returns_dense_match_when_lexical_query_is_weak() ->
 
 
 @pytest.mark.asyncio
+async def test_dense_search_filters_candidates_before_limit_truncation() -> None:
+    """The declarative filter must run before the bounded dense result limit."""
+
+    dsn = _require_postgres_database_url()
+    owner_id = _owner_id()
+    namespace = (owner_id, "semantic")
+    store = PostgresMemoryStore(dsn)
+    embedding = _embedding_at(0)
+
+    try:
+        await store.aput_batch(
+            [
+                (
+                    namespace,
+                    f"inactive-{index}",
+                    {"evidence_quote": "dense candidate", "user_visible": False},
+                    embedding,
+                    "text-embedding-3-large",
+                )
+                for index in range(50)
+            ]
+            + [
+                (
+                    namespace,
+                    "active-after-candidate-window",
+                    {"evidence_quote": "dense candidate", "user_visible": True},
+                    embedding,
+                    "text-embedding-3-large",
+                )
+            ]
+        )
+
+        results = await store.asearch_similar(
+            namespace,
+            query_text="unrelated lexical query",
+            query_embedding=embedding,
+            embedding_model="text-embedding-3-large",
+            limit=1,
+            record_filter="active_semantic",
+        )
+
+        assert [record.key for record in results] == ["active-after-candidate-window"]
+    finally:
+        await store.aclose()
+        await _delete_records_for_owners(dsn, [owner_id])
+
+
+@pytest.mark.asyncio
+async def test_dense_search_filters_by_embedding_model() -> None:
+    """Dense retrieval must not mix embeddings produced by different models."""
+
+    dsn = _require_postgres_database_url()
+    owner_id = _owner_id()
+    namespace = (owner_id, "semantic")
+    store = PostgresMemoryStore(dsn)
+    embedding = _embedding_at(0)
+
+    try:
+        await store.aput(
+            namespace,
+            "old-model",
+            {"evidence_quote": "old model candidate"},
+            embedding=embedding,
+            embedding_model="embedding-v1",
+        )
+        await store.aput(
+            namespace,
+            "current-model",
+            {"evidence_quote": "current model candidate"},
+            embedding=embedding,
+            embedding_model="embedding-v2",
+        )
+        await store.aput(
+            namespace,
+            "unknown-model",
+            {"evidence_quote": "unknown model candidate"},
+            embedding=embedding,
+            embedding_model=None,
+        )
+
+        unfiltered = await store.asearch_similar(
+            namespace,
+            query_text="unrelated lexical query",
+            query_embedding=embedding,
+            embedding_model="embedding-v2",
+            limit=10,
+        )
+        filtered = await store.asearch_similar(
+            namespace,
+            query_text="unrelated lexical query",
+            query_embedding=embedding,
+            embedding_model="embedding-v2",
+            limit=10,
+            record_filter="active_semantic",
+        )
+
+        assert [record.key for record in unfiltered] == ["current-model"]
+        assert [record.key for record in filtered] == ["current-model"]
+    finally:
+        await store.aclose()
+        await _delete_records_for_owners(dsn, [owner_id])
+
+
+@pytest.mark.asyncio
+async def test_dense_search_supports_configured_noncanonical_dimension() -> None:
+    """Non-3072 providers use stored arrays instead of the fixed vector column."""
+
+    dsn = _require_postgres_database_url()
+    owner_id = _owner_id()
+    namespace = (owner_id, "semantic")
+    store = PostgresMemoryStore(dsn)
+
+    try:
+        await store.aput(
+            namespace,
+            "custom-dimension",
+            {"evidence_quote": "dense candidate"},
+            embedding=[1.0, 0.0],
+            embedding_model="custom-provider",
+        )
+
+        unfiltered = await store.asearch_similar(
+            namespace,
+            query_text="unrelated lexical query",
+            query_embedding=[1.0, 0.0],
+            embedding_model="custom-provider",
+        )
+        filtered = await store.asearch_similar(
+            namespace,
+            query_text="unrelated lexical query",
+            query_embedding=[1.0, 0.0],
+            embedding_model="custom-provider",
+            record_filter="active_semantic",
+        )
+
+        assert [record.key for record in unfiltered] == ["custom-dimension"]
+        assert [record.key for record in filtered] == ["custom-dimension"]
+    finally:
+        await store.aclose()
+        await _delete_records_for_owners(dsn, [owner_id])
+
+
+@pytest.mark.asyncio
+async def test_dense_search_respects_age_filter() -> None:
+    """Dense retrieval excludes records older than the requested age window."""
+
+    dsn = _require_postgres_database_url()
+    owner_id = _owner_id()
+    namespace = (owner_id, "semantic")
+    store = PostgresMemoryStore(dsn)
+    embedding = _embedding_at(0)
+    now = datetime.now(UTC)
+
+    try:
+        await store.aput(
+            namespace,
+            "old",
+            {
+                "evidence_quote": "dense candidate",
+                "created_at": (now - timedelta(days=30)).isoformat(),
+            },
+            embedding=embedding,
+            embedding_model="text-embedding-3-large",
+        )
+        await store.aput(
+            namespace,
+            "recent",
+            {
+                "evidence_quote": "dense candidate",
+                "created_at": (now - timedelta(days=1)).isoformat(),
+            },
+            embedding=embedding,
+            embedding_model="text-embedding-3-large",
+        )
+
+        results = await store.asearch_similar(
+            namespace,
+            query_text="unrelated lexical query",
+            query_embedding=embedding,
+            embedding_model="text-embedding-3-large",
+            limit=10,
+            max_age_days=7,
+        )
+
+        assert [record.key for record in results] == ["recent"]
+    finally:
+        await store.aclose()
+        await _delete_records_for_owners(dsn, [owner_id])
+
+
+@pytest.mark.asyncio
+async def test_embedding_clears_on_overwrite_and_dense_search_survives_reopen() -> None:
+    """Vector metadata persists across reopen and clears on an embedding-free update."""
+
+    dsn = _require_postgres_database_url()
+    owner_id = _owner_id()
+    namespace = (owner_id, "semantic")
+    embedding = _embedding_at(0)
+    first_store = PostgresMemoryStore(dsn)
+
+    try:
+        await first_store.aput(
+            namespace,
+            "fact",
+            {"evidence_quote": "dense candidate"},
+            embedding=embedding,
+            embedding_model="text-embedding-3-large",
+        )
+        await first_store.aclose()
+
+        second_store = PostgresMemoryStore(dsn)
+        try:
+            results = await second_store.asearch_similar(
+                namespace,
+                query_text="unrelated lexical query",
+                query_embedding=embedding,
+                embedding_model="text-embedding-3-large",
+            )
+            assert [record.key for record in results] == ["fact"]
+
+            await second_store.aput(
+                namespace,
+                "fact",
+                {"evidence_quote": "updated without embedding"},
+            )
+            record = await second_store.aget(namespace, "fact")
+            assert record is not None
+            assert record.embedding is None
+            assert record.embedding_model is None
+            assert (
+                await second_store.asearch_similar(
+                    namespace,
+                    query_text="unrelated lexical query",
+                    query_embedding=embedding,
+                    embedding_model="text-embedding-3-large",
+                )
+                == []
+            )
+        finally:
+            await second_store.aclose()
+    finally:
+        await first_store.aclose()
+        await _delete_records_for_owners(dsn, [owner_id])
+
+
+@pytest.mark.asyncio
+async def test_schema_initialization_bulk_backfills_pgvector_column() -> None:
+    """A legacy canonical array is cast into pgvector during initialization."""
+
+    dsn = _require_postgres_database_url()
+    owner_id = _owner_id()
+    namespace = (owner_id, "semantic")
+    embedding = _embedding_at(0)
+    first_store = PostgresMemoryStore(dsn)
+
+    try:
+        await first_store.aput(
+            namespace,
+            "legacy-vector",
+            {"evidence_quote": "dense candidate"},
+            embedding=embedding,
+            embedding_model="text-embedding-3-large",
+        )
+        conn = first_store._connection  # noqa: SLF001
+        assert conn is not None
+        await conn.execute(
+            """
+            UPDATE memory_records
+            SET embedding_vector_3072 = NULL
+            WHERE owner_id = %s AND namespace_kind = %s AND id = %s
+            """,
+            (owner_id, "semantic", "legacy-vector"),
+        )
+        await first_store.aclose()
+
+        second_store = PostgresMemoryStore(dsn)
+        try:
+            results = await second_store.asearch_similar(
+                namespace,
+                query_text="unrelated lexical query",
+                query_embedding=embedding,
+                embedding_model="text-embedding-3-large",
+            )
+            assert [record.key for record in results] == ["legacy-vector"]
+
+            second_conn = second_store._connection  # noqa: SLF001
+            assert second_conn is not None
+            cursor = await second_conn.execute(
+                """
+                SELECT embedding_vector_3072 IS NOT NULL AS backfilled
+                FROM memory_records
+                WHERE owner_id = %s AND namespace_kind = %s AND id = %s
+                """,
+                (owner_id, "semantic", "legacy-vector"),
+            )
+            row = await cursor.fetchone()
+            assert row is not None
+            assert row["backfilled"] is True
+        finally:
+            await second_store.aclose()
+    finally:
+        await first_store.aclose()
+        await _delete_records_for_owners(dsn, [owner_id])
+
+
+@pytest.mark.asyncio
+async def test_writes_are_visible_across_live_connections() -> None:
+    """Autocommitted writes are immediately visible to another store instance."""
+
+    dsn = _require_postgres_database_url()
+    owner_id = _owner_id()
+    namespace = (owner_id, "semantic")
+    writer = PostgresMemoryStore(dsn)
+    reader = PostgresMemoryStore(dsn)
+
+    try:
+        await writer.aput(namespace, "fact", {"evidence_quote": "visible"})
+        record = await reader.aget(namespace, "fact")
+        assert record is not None
+        assert record.value["evidence_quote"] == "visible"
+    finally:
+        await writer.aclose()
+        await reader.aclose()
+        await _delete_records_for_owners(dsn, [owner_id])
+
+
+@pytest.mark.asyncio
+async def test_read_waits_for_same_connection_transaction_lock() -> None:
+    """Reads cannot enter another task's transaction on the shared connection."""
+
+    dsn = _require_postgres_database_url()
+    owner_id = _owner_id()
+    namespace = (owner_id, "semantic")
+    store = PostgresMemoryStore(dsn)
+    read_task: asyncio.Task[StoreRecord | None] | None = None
+    manual_lock_held = False
+
+    try:
+        await store.aput(namespace, "fact", {"value": "committed"})
+        await store._write_lock.acquire()  # noqa: SLF001
+        manual_lock_held = True
+        read_task = asyncio.create_task(store.aget(namespace, "fact"))
+        await asyncio.sleep(0)
+        assert read_task.done() is False
+
+        store._write_lock.release()  # noqa: SLF001
+        manual_lock_held = False
+        record = await asyncio.wait_for(read_task, timeout=5)
+        assert record is not None
+        assert record.value == {"value": "committed"}
+    finally:
+        if manual_lock_held:
+            store._write_lock.release()  # noqa: SLF001
+        if read_task is not None and not read_task.done():
+            read_task.cancel()
+            await asyncio.gather(read_task, return_exceptions=True)
+        await store.aclose()
+        await _delete_records_for_owners(dsn, [owner_id])
+
+
+@pytest.mark.asyncio
+async def test_concurrent_writes_across_connections_all_persist() -> None:
+    """Independent store connections cannot lose successful writes."""
+
+    dsn = _require_postgres_database_url()
+    owner_id = _owner_id()
+    namespace = (owner_id, "semantic")
+    stores = [PostgresMemoryStore(dsn), PostgresMemoryStore(dsn)]
+
+    try:
+        await asyncio.gather(
+            *(
+                stores[index % len(stores)].aput(
+                    namespace,
+                    f"fact-{index}",
+                    {"value": index},
+                )
+                for index in range(10)
+            )
+        )
+        assert await stores[0].arecord_count(namespace) == 10
+    finally:
+        await asyncio.gather(*(store.aclose() for store in stores))
+        await _delete_records_for_owners(dsn, [owner_id])
+
+
+@pytest.mark.asyncio
 async def test_close_makes_store_unusable() -> None:
     """After aclose, mutating and fetch methods should raise RuntimeError."""
 
@@ -683,3 +1091,123 @@ async def test_unpack_namespace_rejects_wrong_tuple_length() -> None:
             )
     finally:
         await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_schema_failure_is_retryable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed post-schema backfill leaves initialization retryable."""
+
+    store = PostgresMemoryStore(_require_postgres_database_url())
+    original_backfill = PostgresMemoryStore._backfill_embedding_vector_3072  # noqa: SLF001
+    calls = 0
+
+    async def fail_once(conn) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("forced schema failure")
+        await original_backfill(conn)
+
+    monkeypatch.setattr(
+        PostgresMemoryStore,
+        "_backfill_embedding_vector_3072",
+        staticmethod(fail_once),
+    )
+    try:
+        with pytest.raises(RuntimeError, match="forced schema failure"):
+            await store.arecord_count()
+        assert store._connection is None  # noqa: SLF001
+        assert await store.arecord_count() >= 0
+        assert calls == 2
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_close_before_first_use_does_not_connect() -> None:
+    """Closing a lazy store must not create a database connection."""
+
+    store = PostgresMemoryStore(_require_postgres_database_url())
+    assert store._connection is None  # noqa: SLF001
+    await store.aclose()
+    assert store._connection is None  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_store_initialization_waits_for_schema_advisory_lock() -> None:
+    """Schema setup directly contends on the process-wide advisory lock."""
+
+    dsn = _require_postgres_database_url()
+    warmup = PostgresMemoryStore(dsn)
+    await warmup.arecord_count()
+    await warmup.aclose()
+
+    blocker = await psycopg.AsyncConnection.connect(dsn)
+    worker = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
+    pid_cursor = await blocker.execute("SELECT pg_backend_pid()")
+    pid_row = await pid_cursor.fetchone()
+    assert pid_row is not None
+    blocker_pid = int(pid_row[0])
+    worker_pid_cursor = await worker.execute("SELECT pg_backend_pid()")
+    worker_pid_row = await worker_pid_cursor.fetchone()
+    assert worker_pid_row is not None
+    worker_pid = int(worker_pid_row[0])
+    await blocker.execute(
+        "SELECT pg_advisory_xact_lock(%s)",
+        (MEMORY_SCHEMA_ADVISORY_LOCK_ID,),
+    )
+    initialization = asyncio.create_task(PostgresMemoryStore._ensure_schema(worker))  # noqa: SLF001
+    try:
+        await _wait_for_advisory_lock_waiter(blocker, blocker_pid, worker_pid)
+        assert initialization.done() is False
+
+        await blocker.commit()
+        await asyncio.wait_for(initialization, timeout=5)
+    finally:
+        if not initialization.done():
+            initialization.cancel()
+            await asyncio.gather(initialization, return_exceptions=True)
+        await blocker.rollback()
+        await blocker.close()
+        await worker.close()
+
+
+@pytest.mark.asyncio
+async def test_bulk_backfill_uses_separate_advisory_lock() -> None:
+    """Concurrent cold starts cannot run the full-table backfill together."""
+
+    dsn = _require_postgres_database_url()
+    warmup = PostgresMemoryStore(dsn)
+    await warmup.arecord_count()
+    await warmup.aclose()
+
+    blocker = await psycopg.AsyncConnection.connect(dsn)
+    worker = await psycopg.AsyncConnection.connect(dsn, autocommit=True)
+    pid_cursor = await blocker.execute("SELECT pg_backend_pid()")
+    pid_row = await pid_cursor.fetchone()
+    assert pid_row is not None
+    blocker_pid = int(pid_row[0])
+    worker_pid_cursor = await worker.execute("SELECT pg_backend_pid()")
+    worker_pid_row = await worker_pid_cursor.fetchone()
+    assert worker_pid_row is not None
+    worker_pid = int(worker_pid_row[0])
+    await blocker.execute(
+        "SELECT pg_advisory_xact_lock(%s)",
+        (MEMORY_BACKFILL_ADVISORY_LOCK_ID,),
+    )
+    backfill = asyncio.create_task(
+        PostgresMemoryStore._backfill_embedding_vector_3072(worker)  # noqa: SLF001
+    )
+    try:
+        await _wait_for_advisory_lock_waiter(blocker, blocker_pid, worker_pid)
+        assert backfill.done() is False
+
+        await blocker.commit()
+        await asyncio.wait_for(backfill, timeout=5)
+    finally:
+        if not backfill.done():
+            backfill.cancel()
+            await asyncio.gather(backfill, return_exceptions=True)
+        await blocker.rollback()
+        await blocker.close()
+        await worker.close()

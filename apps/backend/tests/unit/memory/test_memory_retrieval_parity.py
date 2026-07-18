@@ -1,16 +1,16 @@
-"""Parity tests for shared memory retrieval behavior across store backends."""
+"""Fast contracts for backend-neutral memory retrieval behavior."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from agent.memory.operations.procedural_profile import aget_procedural_profile
-from agent.memory.operations.reconciliation import is_active_semantic_record_value
-from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
+from agent.memory.store.sqlite import SqliteMemoryStore
 from tests.support.memory_fixtures import (
     episodic_namespace,
     seed_episodic_arc,
@@ -20,31 +20,33 @@ from tests.support.memory_fixtures import (
 )
 
 
-def _make_memory_store() -> MemoryStore:
-    return OpenCouchMemoryStore()
-
-
-def _make_sqlite_store() -> MemoryStore:
-    return SqliteMemoryStore(":memory:")
-
-
 def _to_utc_z(dt: datetime) -> str:
     return dt.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-StoreFactory = Callable[[], MemoryStore]
+@pytest.fixture(params=["memory", "sqlite"])
+async def retrieval_store(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> AsyncIterator[MemoryStore]:
+    """Yield each local store behind the backend-neutral retrieval contract."""
+
+    store: MemoryStore
+    if request.param == "memory":
+        store = OpenCouchMemoryStore()
+    else:
+        store = SqliteMemoryStore(tmp_path / "retrieval-parity.sqlite3")
+    try:
+        yield store
+    finally:
+        await store.aclose()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "store_factory",
-    [_make_memory_store, _make_sqlite_store],
-    ids=["memory", "sqlite"],
-)
 async def test_asearch_similar_degrades_to_lexical_when_no_query_embedding(
-    store_factory: StoreFactory,
+    retrieval_store: MemoryStore,
 ) -> None:
-    store = store_factory()
+    store = retrieval_store
     namespace = ("user-1", "semantic")
 
     try:
@@ -72,15 +74,10 @@ async def test_asearch_similar_degrades_to_lexical_when_no_query_embedding(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "store_factory",
-    [_make_memory_store, _make_sqlite_store],
-    ids=["memory", "sqlite"],
-)
 async def test_asearch_similar_recalls_short_record_from_wordy_query(
-    store_factory: StoreFactory,
+    retrieval_store: MemoryStore,
 ) -> None:
-    store = store_factory()
+    store = retrieval_store
     namespace = ("user-1", "semantic")
 
     try:
@@ -122,15 +119,10 @@ async def test_asearch_similar_recalls_short_record_from_wordy_query(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "store_factory",
-    [_make_memory_store, _make_sqlite_store],
-    ids=["memory", "sqlite"],
-)
 async def test_asearch_similar_recalls_episodic_summary_from_reminder_query(
-    store_factory: StoreFactory,
+    retrieval_store: MemoryStore,
 ) -> None:
-    store = store_factory()
+    store = retrieval_store
     namespace = ("user-1", "episodic")
 
     try:
@@ -182,15 +174,10 @@ async def test_asearch_similar_recalls_episodic_summary_from_reminder_query(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "store_factory",
-    [_make_memory_store, _make_sqlite_store],
-    ids=["memory", "sqlite"],
-)
 async def test_asearch_similar_returns_dense_hits_when_lexical_path_misses(
-    store_factory: StoreFactory,
+    retrieval_store: MemoryStore,
 ) -> None:
-    store = store_factory()
+    store = retrieval_store
     namespace = ("user-1", "semantic")
 
     try:
@@ -223,15 +210,46 @@ async def test_asearch_similar_returns_dense_hits_when_lexical_path_misses(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "store_factory",
-    [_make_memory_store, _make_sqlite_store],
-    ids=["memory", "sqlite"],
-)
-async def test_asearch_similar_prefers_record_ranked_by_both_scorers(
-    store_factory: StoreFactory,
+async def test_asearch_similar_excludes_unknown_model_when_query_model_is_set(
+    retrieval_store: MemoryStore,
 ) -> None:
-    store = store_factory()
+    """A model-scoped query cannot compare vectors with unknown provenance."""
+
+    store = retrieval_store
+    namespace = ("user-1", "semantic")
+    try:
+        await store.aput(
+            namespace,
+            "known-model",
+            {"evidence_quote": "coffee mug"},
+            embedding=[1.0, 0.0],
+            embedding_model="test-embed",
+        )
+        await store.aput(
+            namespace,
+            "unknown-model",
+            {"evidence_quote": "desk lamp"},
+            embedding=[1.0, 0.0],
+            embedding_model=None,
+        )
+
+        results = await store.asearch_similar(
+            namespace,
+            query_text="galaxy orbit",
+            query_embedding=[1.0, 0.0],
+            embedding_model="test-embed",
+        )
+
+        assert [record.key for record in results] == ["known-model"]
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_asearch_similar_prefers_record_ranked_by_both_scorers(
+    retrieval_store: MemoryStore,
+) -> None:
+    store = retrieval_store
     namespace = ("user-1", "semantic")
 
     try:
@@ -267,15 +285,10 @@ async def test_asearch_similar_prefers_record_ranked_by_both_scorers(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "store_factory",
-    [_make_memory_store, _make_sqlite_store],
-    ids=["memory", "sqlite"],
-)
 async def test_asearch_similar_respects_max_age_days(
-    store_factory: StoreFactory,
+    retrieval_store: MemoryStore,
 ) -> None:
-    store = store_factory()
+    store = retrieval_store
     namespace = ("user-1", "semantic")
     now = datetime.now(UTC)
 
@@ -311,15 +324,10 @@ async def test_asearch_similar_respects_max_age_days(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "store_factory",
-    [_make_memory_store, _make_sqlite_store],
-    ids=["memory", "sqlite"],
-)
 async def test_asearch_similar_filters_candidates_before_limit_truncation(
-    store_factory: StoreFactory,
+    retrieval_store: MemoryStore,
 ) -> None:
-    store = store_factory()
+    store = retrieval_store
     namespace = ("user-1", "semantic")
 
     try:
@@ -340,7 +348,7 @@ async def test_asearch_similar_filters_candidates_before_limit_truncation(
             query_text="sister moved",
             query_embedding=None,
             limit=5,
-            record_filter=lambda record: is_active_semantic_record_value(record.value),
+            record_filter="active_semantic",
         )
 
         assert [record.key for record in results] == [
@@ -355,15 +363,10 @@ async def test_asearch_similar_filters_candidates_before_limit_truncation(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "store_factory",
-    [_make_memory_store, _make_sqlite_store],
-    ids=["memory", "sqlite"],
-)
-async def test_memory_fixture_seeds_semantic_fact_for_retrieval_parity(
-    store_factory: StoreFactory,
+async def test_memory_fixture_seeds_semantic_fact_for_retrieval_contract(
+    retrieval_store: MemoryStore,
 ) -> None:
-    store = store_factory()
+    store = retrieval_store
     user_id = "user-fixture"
 
     try:
@@ -391,15 +394,10 @@ async def test_memory_fixture_seeds_semantic_fact_for_retrieval_parity(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "store_factory",
-    [_make_memory_store, _make_sqlite_store],
-    ids=["memory", "sqlite"],
-)
-async def test_memory_fixture_seeds_episodic_arc_for_retrieval_parity(
-    store_factory: StoreFactory,
+async def test_memory_fixture_seeds_episodic_arc_for_retrieval_contract(
+    retrieval_store: MemoryStore,
 ) -> None:
-    store = store_factory()
+    store = retrieval_store
     user_id = "user-fixture"
 
     try:
@@ -436,15 +434,10 @@ async def test_memory_fixture_seeds_episodic_arc_for_retrieval_parity(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "store_factory",
-    [_make_memory_store, _make_sqlite_store],
-    ids=["memory", "sqlite"],
-)
-async def test_memory_fixture_seeds_procedural_profile_parity(
-    store_factory: StoreFactory,
+async def test_memory_fixture_seeds_procedural_profile_contract(
+    retrieval_store: MemoryStore,
 ) -> None:
-    store = store_factory()
+    store = retrieval_store
     user_id = "user-fixture"
 
     try:

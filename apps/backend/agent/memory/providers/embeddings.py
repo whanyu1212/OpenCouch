@@ -68,7 +68,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -302,10 +302,13 @@ class OpenAIEmbeddingProvider:
         sanitized = [t if t else " " for t in texts]
 
         try:
-            response = await self._client.embeddings.create(
+            request: dict[str, Any] = dict(
                 model=self._model,
                 input=sanitized,
             )
+            if self._model.startswith("text-embedding-3"):
+                request["dimensions"] = self._dimension
+            response = await self._client.embeddings.create(**request)
         except Exception:
             logger.warning(
                 "OpenAIEmbeddingProvider: embeddings.create failed for batch of %d; "

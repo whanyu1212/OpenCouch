@@ -87,6 +87,8 @@ RRF_K = 60
 # — same asymmetry as the token-recall threshold discussion in
 # store.py.
 EMBEDDING_MATCH_THRESHOLD = 0.5
+DENSE_CANDIDATE_MULTIPLIER = 5
+MIN_DENSE_CANDIDATES = 50
 
 # Secondary lexical path for wordy queries against compact records.
 #
@@ -139,6 +141,12 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
         return 0.0
 
     return dot / (math.sqrt(norm_a_sq) * math.sqrt(norm_b_sq))
+
+
+def dense_candidate_limit(limit: int) -> int:
+    """Return the shared pre-fusion dense candidate bound."""
+
+    return max(limit * DENSE_CANDIDATE_MULTIPLIER, MIN_DENSE_CANDIDATES)
 
 
 @dataclass(slots=True)
@@ -288,11 +296,7 @@ def dense_rank(
         record = candidate.record
         if record.embedding is None:
             continue
-        if (
-            embedding_model is not None
-            and record.embedding_model is not None
-            and record.embedding_model != embedding_model
-        ):
+        if embedding_model is not None and record.embedding_model != embedding_model:
             continue
         if len(record.embedding) != len(query_embedding):
             continue

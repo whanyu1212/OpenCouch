@@ -48,7 +48,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from agent.memory.operations.procedural_profile import aget_procedural_profile
-from agent.memory.operations.reconciliation import is_active_semantic_record_value
 from agent.memory.store import MemoryStore
 from agent.memory.text_tokens import tokenize_meaningful
 from agent.memory.entries import (
@@ -114,7 +113,7 @@ async def _retrieve_semantic_working_memory(
         query_embedding=query_embedding,
         embedding_model=embedding_model,
         limit=SEMANTIC_SEARCH_LIMIT,
-        record_filter=lambda record: is_active_semantic_record_value(record.value),
+        record_filter="active_semantic",
     )
     entries: list[WorkingMemoryEntry] = []
     for record in records:

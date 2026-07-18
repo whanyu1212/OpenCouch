@@ -1,4 +1,4 @@
-"""Cross-dialect regression tests for semantic reconciliation behavior."""
+"""Durable-backend parity tests for semantic reconciliation behavior."""
 
 from __future__ import annotations
 
@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-import psycopg
 import pytest
 
 from agent.memory.operations.semantic_writes import (
@@ -22,7 +21,10 @@ from agent.memory.store.postgres import PostgresMemoryStore
 from agent.memory.store.sqlite import SqliteMemoryStore
 from agent.memory.types import EntityRef, MemoryWrite
 from llm.base import BaseLLMClient, StructuredResponseT
-from tests.support.persistence import postgres_database_url
+from tests.support.persistence_contracts import (
+    delete_postgres_memory_records_for_owners,
+    require_postgres_database_url,
+)
 
 
 class _CoexistReconciliationLLM(BaseLLMClient):
@@ -79,74 +81,74 @@ def _sarah_write(
     )
 
 
-async def _delete_postgres_memory_records_for_owner(dsn: str, owner_id: str) -> None:
-    async with await psycopg.AsyncConnection.connect(dsn, autocommit=True) as conn:
-        async with conn.cursor() as cursor:
-            await cursor.execute(
-                "DELETE FROM memory_records WHERE owner_id = %s",
-                (owner_id,),
-            )
+@pytest.fixture(params=["sqlite", "postgres"])
+async def reconciliation_store(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> AsyncIterator[tuple[MemoryStore, str]]:
+    """Yield each durable memory backend with isolated records."""
+
+    owner_id = f"semantic-reconciliation-{uuid4()}"
+    if request.param == "sqlite":
+        store = SqliteMemoryStore(tmp_path / "semantic-reconciliation.sqlite3")
+        try:
+            yield store, owner_id
+        finally:
+            await store.aclose()
+        return
+
+    dsn = require_postgres_database_url()
+    store = PostgresMemoryStore(dsn)
+    try:
+        yield store, owner_id
+    finally:
+        await store.aclose()
+        await delete_postgres_memory_records_for_owners(dsn, [owner_id])
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
 async def test_session_end_semantic_reconciliation_dedups_user_subject_aliases(
-    tmp_path: Path,
-    backend: str,
+    reconciliation_store: tuple[MemoryStore, str],
 ) -> None:
-    """Seeded Sarah fact plus session-end Sarah extraction collapses on both stores."""
+    """A seeded fact plus session-end alias extraction collapses durably."""
 
-    owner_id = f"semantic-reconciliation-{uuid4()}"
+    store, owner_id = reconciliation_store
     session_id = f"thread-{uuid4()}"
-    dsn: str | None = None
-    if backend == "sqlite":
-        store: MemoryStore = SqliteMemoryStore(tmp_path / f"memory-{uuid4()}.sqlite3")
-    else:
-        dsn = postgres_database_url()
-        if not dsn:
-            pytest.skip("Postgres integration tests disabled")
-        store = PostgresMemoryStore(dsn)
+    seeded_fact = memory_write_to_semantic_fact(
+        _sarah_write(subject_identifier=owner_id, session_id=session_id),
+        write_timing="immediate",
+        write_reason="seeded test fact",
+        policy_version="test_v1",
+    )
+    await write_new_semantic_fact(store, owner_id=owner_id, fact=seeded_fact)
 
-    try:
-        seeded_fact = memory_write_to_semantic_fact(
-            _sarah_write(subject_identifier=owner_id, session_id=session_id),
-            write_timing="immediate",
-            write_reason="seeded test fact",
-            policy_version="test_v1",
-        )
-        await write_new_semantic_fact(store, owner_id=owner_id, fact=seeded_fact)
+    extracted_alias_write = _sarah_write(
+        subject_identifier="test-user",
+        session_id=session_id,
+    )
+    outcome = await apply_semantic_writes_batch(
+        store,
+        owner_id=owner_id,
+        items=[
+            BatchWriteItem(
+                candidate=build_semantic_candidate(
+                    extracted_alias_write,
+                    message="I have a sister named Sarah",
+                ),
+                write_timing="session_end",
+                write_reason="session-end extraction",
+                policy_version="test_v1",
+            )
+        ],
+        llm_client=_CoexistReconciliationLLM(),
+        log_context="semantic_reconciliation_parity_test",
+    )
 
-        extracted_alias_write = _sarah_write(
-            subject_identifier="test-user",
-            session_id=session_id,
-        )
-        outcome = await apply_semantic_writes_batch(
-            store,
-            owner_id=owner_id,
-            items=[
-                BatchWriteItem(
-                    candidate=build_semantic_candidate(
-                        extracted_alias_write,
-                        message="I have a sister named Sarah",
-                    ),
-                    write_timing="session_end",
-                    write_reason="session-end extraction",
-                    policy_version="test_v1",
-                )
-            ],
-            llm_client=_CoexistReconciliationLLM(),
-            log_context="semantic_reconciliation_parity_test",
-        )
+    assert outcome.written == 0
+    assert outcome.bumped == 1
+    assert outcome.skipped == 0
+    assert await store.arecord_count((owner_id, "semantic")) == 1
 
-        assert outcome.written == 0
-        assert outcome.bumped == 1
-        assert outcome.skipped == 0
-        assert await store.arecord_count((owner_id, "semantic")) == 1
-
-        [record] = await store.asearch((owner_id, "semantic"), query=None, limit=10)
-        assert record.value["subject"]["identifier"] == owner_id
-        assert record.value["object"]["identifier"] == "Sarah"
-    finally:
-        await store.aclose()
-        if dsn is not None:
-            await _delete_postgres_memory_records_for_owner(dsn, owner_id)
+    [record] = await store.asearch((owner_id, "semantic"), query=None, limit=10)
+    assert record.value["subject"]["identifier"] == owner_id
+    assert record.value["object"]["identifier"] == "Sarah"
