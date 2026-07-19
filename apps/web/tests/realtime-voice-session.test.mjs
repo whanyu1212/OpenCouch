@@ -17,8 +17,13 @@ import {
 } from "../src/lib/realtime-voice-finalization.ts";
 import {
   buildRealtimeVoiceTurnRecordInput,
-  restoreRealtimeVoiceRecordedToolCalls,
+  RealtimeVoiceTurnTracker,
 } from "../src/lib/realtime-voice-turn-record.ts";
+
+function createTurnTracker() {
+  let nextId = 1;
+  return new RealtimeVoiceTurnTracker(() => `client-turn-${nextId++}`);
+}
 
 test("waits for pending turn recording before finalizing", async () => {
   let releaseRecording;
@@ -142,16 +147,6 @@ test("keeps the disconnect handle when finalization fails", async () => {
   assert.equal(cleared, true);
 });
 
-test("restores failed turn tool calls ahead of newer queued calls", () => {
-  const failedTurn = [{ tool_name: "answer_grounded_lookup", status: "completed" }];
-  const queued = [{ tool_name: "lookup_crisis_resources", status: "completed" }];
-
-  assert.deepEqual(restoreRealtimeVoiceRecordedToolCalls(failedTurn, queued), [
-    ...failedTurn,
-    ...queued,
-  ]);
-});
-
 test("builds voice turn record input from completed tool calls only", () => {
   const input = buildRealtimeVoiceTurnRecordInput({
     threadId: "voice-thread",
@@ -192,6 +187,244 @@ test("builds voice turn record input from completed tool calls only", () => {
       },
     ],
   });
+});
+
+test("correlates response-created before and after final user transcripts", () => {
+  const tracker = createTurnTracker();
+
+  const firstUser = tracker.addFinalUserTranscript({
+    itemId: "user-1",
+    text: "first question",
+  });
+  tracker.responseCreated("response-1");
+  tracker.responseCreated("response-2");
+  const secondUser = tracker.addFinalUserTranscript({
+    itemId: "user-2",
+    text: "second question",
+  });
+
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-2",
+    text: "second answer",
+  });
+  tracker.responseFinished("response-2");
+  assert.equal(tracker.markNextRecordableTurn(), null);
+
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-1",
+    text: "first answer",
+  });
+  tracker.responseFinished("response-1");
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: firstUser.clientTurnId,
+    userText: "first question",
+    assistantText: "first answer",
+    toolCalls: [],
+  });
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: secondUser.clientTurnId,
+    userText: "second question",
+    assistantText: "second answer",
+    toolCalls: [],
+  });
+});
+
+test("uses committed item IDs when user transcripts finish out of order", () => {
+  const tracker = createTurnTracker();
+  const firstTurnId = tracker.userInputCommitted("user-1");
+  tracker.responseCreated("response-1");
+  const secondTurnId = tracker.userInputCommitted("user-2");
+  tracker.responseCreated("response-2");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-1",
+    text: "first answer",
+  });
+  tracker.responseFinished("response-1");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-2",
+    text: "second answer",
+  });
+  tracker.responseFinished("response-2");
+
+  const secondUser = tracker.addFinalUserTranscript({
+    itemId: "user-2",
+    text: "second question",
+  });
+  assert.equal(tracker.markNextRecordableTurn(), null);
+  const firstUser = tracker.addFinalUserTranscript({
+    itemId: "user-1",
+    text: "first question",
+  });
+
+  assert.equal(firstUser.clientTurnId, firstTurnId);
+  assert.equal(secondUser.clientTurnId, secondTurnId);
+  assert.deepEqual(tracker.priorTranscriptForTurn(secondTurnId), [
+    { role: "user", content: "first question" },
+    { role: "assistant", content: "first answer" },
+  ]);
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: firstTurnId,
+    userText: "first question",
+    assistantText: "first answer",
+    toolCalls: [],
+  });
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: secondTurnId,
+    userText: "second question",
+    assistantText: "second answer",
+    toolCalls: [],
+  });
+});
+
+test("keeps one client turn ID for duplicate final user items", () => {
+  const tracker = createTurnTracker();
+  const first = tracker.addFinalUserTranscript({
+    itemId: "user-1",
+    text: "same final transcript",
+  });
+  const duplicate = tracker.addFinalUserTranscript({
+    itemId: "user-1",
+    text: "same final transcript",
+  });
+
+  assert.equal(first.clientTurnId, "client-turn-1");
+  assert.deepEqual(duplicate, { ...first, isNew: false });
+});
+
+test("maps tool follow-up responses and results to the original turn", () => {
+  const tracker = createTurnTracker();
+  const user = tracker.addFinalUserTranscript({
+    itemId: "user-1",
+    text: "look this up",
+  });
+  tracker.responseCreated("response-tool-call");
+  const correlatedTurnId = tracker.correlateToolCall("response-tool-call");
+  tracker.toolCallStarted(correlatedTurnId);
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-tool-call",
+    text: "Let me check that.",
+  });
+  tracker.addToolResult(correlatedTurnId, {
+    tool_name: "answer_grounded_lookup",
+    status: "completed",
+    output: { answer: "verified" },
+  });
+  tracker.expectNextResponseForTurn(correlatedTurnId);
+  tracker.toolCallFinished(correlatedTurnId);
+  tracker.responseFinished("response-tool-call");
+  assert.equal(tracker.markNextRecordableTurn(), null);
+  tracker.responseCreated("response-tool-follow-up");
+  const followUpTurnId = tracker.correlateToolCall("response-tool-follow-up");
+  tracker.toolCallStarted(followUpTurnId);
+  tracker.addToolResult(followUpTurnId, {
+    tool_name: "save_response_preference",
+    status: "completed",
+    output: { saved: true },
+  });
+  tracker.expectNextResponseForTurn(followUpTurnId);
+  tracker.toolCallFinished(followUpTurnId);
+  tracker.responseFinished("response-tool-follow-up");
+  tracker.responseCreated("response-final-follow-up");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-final-follow-up",
+    text: "Here is the verified answer.",
+  });
+  tracker.responseFinished("response-final-follow-up");
+
+  assert.equal(correlatedTurnId, user.clientTurnId);
+  assert.equal(followUpTurnId, user.clientTurnId);
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: user.clientTurnId,
+    userText: "look this up",
+    assistantText: "Let me check that. Here is the verified answer.",
+    toolCalls: [
+      {
+        tool_name: "answer_grounded_lookup",
+        status: "completed",
+        output: { answer: "verified" },
+      },
+      {
+        tool_name: "save_response_preference",
+        status: "completed",
+        output: { saved: true },
+      },
+    ],
+  });
+});
+
+test("uses the latest compatible turn when response IDs are absent", () => {
+  const tracker = createTurnTracker();
+  tracker.addFinalUserTranscript({ itemId: "user-1", text: "first" });
+  tracker.responseCreated("response-1");
+  tracker.responseFinished("response-1");
+  const latest = tracker.addFinalUserTranscript({
+    itemId: "user-2",
+    text: "latest",
+  });
+
+  assert.equal(tracker.correlateToolCall(), latest.clientTurnId);
+  tracker.addFinalAssistantTranscript({ text: "latest answer" });
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: latest.clientTurnId,
+    userText: "latest",
+    assistantText: "latest answer",
+    toolCalls: [],
+  });
+});
+
+test("removes only successful recordings and retains failed recordings", () => {
+  const tracker = createTurnTracker();
+  const first = tracker.addFinalUserTranscript({
+    itemId: "user-1",
+    text: "first",
+  });
+  tracker.responseCreated("response-1");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-1",
+    text: "first answer",
+  });
+  tracker.responseFinished("response-1");
+  const second = tracker.addFinalUserTranscript({
+    itemId: "user-2",
+    text: "second",
+  });
+  tracker.responseCreated("response-2");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-2",
+    text: "second answer",
+  });
+  tracker.responseFinished("response-2");
+
+  assert.equal(tracker.markNextRecordableTurn().clientTurnId, first.clientTurnId);
+  assert.equal(tracker.markNextRecordableTurn().clientTurnId, second.clientTurnId);
+  tracker.recordingSucceeded(second.clientTurnId);
+  tracker.recordingFailed(first.clientTurnId);
+
+  assert.equal(tracker.markNextRecordableTurn().clientTurnId, first.clientTurnId);
+  tracker.recordingSucceeded(first.clientTurnId);
+  assert.equal(tracker.markNextRecordableTurn(), null);
+});
+
+test("does not let an incomplete wait-for-user turn block a later turn", () => {
+  const tracker = createTurnTracker();
+  tracker.addFinalUserTranscript({ itemId: "user-1", text: "pause here" });
+  tracker.responseCreated("response-wait");
+  tracker.correlateToolCall("response-wait");
+  tracker.responseFinished("response-wait");
+
+  const later = tracker.addFinalUserTranscript({
+    itemId: "user-2",
+    text: "continue now",
+  });
+  tracker.responseCreated("response-later");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-later",
+    text: "continuing",
+  });
+  tracker.responseFinished("response-later");
+
+  assert.equal(tracker.markNextRecordableTurn().clientTurnId, later.clientTurnId);
+  assert.deepEqual(tracker.priorTranscriptForTurn(later.clientTurnId), []);
 });
 
 test("creates follow-up responses after actionable tools only", () => {

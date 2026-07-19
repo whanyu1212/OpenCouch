@@ -1,10 +1,10 @@
 import {
+  checkRealtimeVoiceSafety,
   createRealtimeVoiceSession,
   endRealtimeVoiceSession,
   executeRealtimeVoiceTool,
   recordRealtimeVoiceTurn,
   type RealtimeVoiceEndSessionResponse,
-  type RealtimeVoiceRecordedToolCall,
   type RealtimeVoiceSessionResponse,
   type RealtimeVoiceTurnRecordResponse,
   type AssistantVoiceOption,
@@ -21,7 +21,8 @@ import {
 } from "./realtime-voice-events";
 import {
   buildRealtimeVoiceTurnRecordInput,
-  restoreRealtimeVoiceRecordedToolCalls,
+  RealtimeVoiceTurnTracker,
+  type RealtimeVoiceTrackedTurn,
 } from "./realtime-voice-turn-record";
 import {
   finalizeAfterPendingRealtimeVoiceTurn,
@@ -105,12 +106,11 @@ export async function connectRealtimeVoiceSession(
 
   const handledCallIds = new Set<string>();
   const transcriptLog: TranscriptLogEntry[] = [];
-  const completedToolCalls: RealtimeVoiceRecordedToolCall[] = [];
+  const turnTracker = new RealtimeVoiceTurnTracker();
   const userTranscriptDrafts = new Map<string, string>();
   const userTranscriptEvidenceWaiters: UserTranscriptEvidenceWaiter[] = [];
-  let pendingUserText = "";
-  let pendingAssistantText = "";
   let latestUserTranscriptDraft = "";
+  let priorMessageCount = 0;
   let pendingTurnRecording: Promise<void> | null = null;
 
   const setStatus = (status: RealtimeVoiceConnectionStatus) => {
@@ -162,6 +162,7 @@ export async function connectRealtimeVoiceSession(
       memoryMode: options.memoryMode,
       assistantVoice: options.assistantVoice,
     });
+    priorMessageCount = session.message_count;
     options.onSession?.(session);
 
     setStatus("requesting_microphone");
@@ -265,6 +266,13 @@ export async function connectRealtimeVoiceSession(
     const parsed = parseRealtimeServerEvent(rawEvent);
     options.onParsedEvent?.(parsed);
 
+    if (parsed.type === "input_audio_buffer.committed" && parsed.userItemId) {
+      turnTracker.userInputCommitted(parsed.userItemId);
+    }
+    if (parsed.type === "response.created" && parsed.responseId) {
+      turnTracker.responseCreated(parsed.responseId);
+    }
+
     if (parsed.agentSpeaking !== undefined) {
       options.onAgentSpeaking?.(parsed.agentSpeaking);
     }
@@ -281,6 +289,10 @@ export async function connectRealtimeVoiceSession(
 
     for (const call of parsed.functionCalls) {
       await executeToolCall(call);
+    }
+    if (parsed.type === "response.done" && parsed.responseId) {
+      turnTracker.responseFinished(parsed.responseId);
+      void maybeRecordTurn().catch(() => undefined);
     }
   }
 
@@ -309,10 +321,29 @@ export async function connectRealtimeVoiceSession(
     if (update.role === "user") {
       if (update.itemId) userTranscriptDrafts.delete(update.itemId);
       latestUserTranscriptDraft = "";
-      pendingUserText = text;
+      const turn = turnTracker.addFinalUserTranscript({
+        itemId: update.itemId,
+        text,
+      });
+      if (turn.isNew) {
+        void checkRealtimeVoiceSafety({
+          threadId: options.threadId,
+          userId: options.userId,
+          memoryMode: options.memoryMode,
+          clientTurnId: turn.clientTurnId,
+          userText: turn.userText,
+          priorMessageCount,
+          pendingPriorTranscript: turnTracker.priorTranscriptForTurn(
+            turn.clientTurnId
+          ),
+        }).catch(() => undefined);
+      }
       resolveUserTranscriptEvidenceWaiters({ final: true });
     } else {
-      pendingAssistantText = text;
+      turnTracker.addFinalAssistantTranscript({
+        responseId: update.responseId,
+        text,
+      });
     }
 
     void maybeRecordTurn().catch(() => undefined);
@@ -320,38 +351,29 @@ export async function connectRealtimeVoiceSession(
 
   function maybeRecordTurn(): Promise<void> {
     if (pendingTurnRecording) return pendingTurnRecording;
-    if (!pendingUserText.trim() || !pendingAssistantText.trim()) {
+    const firstTurn = turnTracker.markNextRecordableTurn();
+    if (!firstTurn) {
       return Promise.resolve();
     }
 
     const recording = (async () => {
-      while (pendingUserText.trim() && pendingAssistantText.trim()) {
-        const userText = pendingUserText;
-        const assistantText = pendingAssistantText;
-        pendingUserText = "";
-        pendingAssistantText = "";
-
-        const toolCalls = completedToolCalls.splice(0);
+      let turn: RealtimeVoiceTrackedTurn | null = firstTurn;
+      while (turn) {
+        let response: RealtimeVoiceTurnRecordResponse;
         try {
-          const response = await recordRealtimeVoiceTurn(
+          response = await recordRealtimeVoiceTurn(
             buildRealtimeVoiceTurnRecordInput({
               threadId: options.threadId,
               userId: options.userId,
-              userText,
-              assistantText,
+              clientTurnId: turn.clientTurnId,
+              userText: turn.userText,
+              assistantText: turn.assistantText,
               memoryMode: options.memoryMode,
-              toolCalls,
+              toolCalls: turn.toolCalls,
             })
           );
-          options.onTurnRecorded?.(response);
         } catch (error) {
-          pendingUserText = userText;
-          pendingAssistantText = assistantText;
-          completedToolCalls.splice(
-            0,
-            completedToolCalls.length,
-            ...restoreRealtimeVoiceRecordedToolCalls(toolCalls, completedToolCalls)
-          );
+          turnTracker.recordingFailed(turn.clientTurnId);
           const normalized =
             error instanceof Error
               ? error
@@ -359,6 +381,10 @@ export async function connectRealtimeVoiceSession(
           options.onError?.(normalized);
           throw normalized;
         }
+        turnTracker.recordingSucceeded(turn.clientTurnId);
+        priorMessageCount = response.message_count;
+        options.onTurnRecorded?.(response);
+        turn = turnTracker.markNextRecordableTurn();
       }
     })();
     pendingTurnRecording = recording;
@@ -374,6 +400,8 @@ export async function connectRealtimeVoiceSession(
     if (!dataChannel || dataChannel.readyState !== "open") return;
     if (handledCallIds.has(call.callId)) return;
     handledCallIds.add(call.callId);
+    const clientTurnId = turnTracker.correlateToolCall(call.responseId);
+    turnTracker.toolCallStarted(clientTurnId);
 
     options.onToolEvent?.({
       callId: call.callId,
@@ -382,7 +410,10 @@ export async function connectRealtimeVoiceSession(
     });
 
     try {
-      const currentUserMessage = await currentUserMessageForToolCall(call);
+      const currentUserMessage = await currentUserMessageForToolCall(
+        call,
+        clientTurnId
+      );
       const result = await executeRealtimeVoiceTool({
         threadId: options.threadId,
         userId: options.userId,
@@ -393,7 +424,7 @@ export async function connectRealtimeVoiceSession(
         arguments: call.arguments,
       });
       if (shouldRecordRealtimeVoiceToolCall(call.name)) {
-        completedToolCalls.push({
+        turnTracker.addToolResult(clientTurnId, {
           tool_name: call.name,
           status: "completed",
           output: result.output,
@@ -404,6 +435,7 @@ export async function connectRealtimeVoiceSession(
       );
       if (shouldCreateResponseAfterRealtimeVoiceTool(call.name)) {
         dataChannel.send(serializeRealtimeEvent(buildResponseCreateEvent()));
+        turnTracker.expectNextResponseForTurn(clientTurnId);
       }
       options.onToolEvent?.({
         callId: call.callId,
@@ -415,7 +447,7 @@ export async function connectRealtimeVoiceSession(
       const message =
         error instanceof Error ? error.message : "Realtime voice tool failed.";
       if (shouldRecordRealtimeVoiceToolCall(call.name)) {
-        completedToolCalls.push({
+        turnTracker.addToolResult(clientTurnId, {
           tool_name: call.name,
           status: "failed",
           output: {},
@@ -429,6 +461,7 @@ export async function connectRealtimeVoiceSession(
       );
       if (shouldCreateResponseAfterRealtimeVoiceTool(call.name)) {
         dataChannel.send(serializeRealtimeEvent(buildResponseCreateEvent()));
+        turnTracker.expectNextResponseForTurn(clientTurnId);
       }
       options.onToolEvent?.({
         callId: call.callId,
@@ -437,26 +470,32 @@ export async function connectRealtimeVoiceSession(
         detail: message,
       });
       options.onError?.(new Error(message));
+    } finally {
+      turnTracker.toolCallFinished(clientTurnId);
+      void maybeRecordTurn().catch(() => undefined);
     }
   }
 
   function latestUserTranscriptEvidence(): string {
-    return pendingUserText.trim() || latestUserTranscriptDraft.trim();
+    return turnTracker.latestUserText().trim() || latestUserTranscriptDraft.trim();
   }
 
   async function currentUserMessageForToolCall(
-    call: RealtimeFunctionCall
+    call: RealtimeFunctionCall,
+    clientTurnId?: string
   ): Promise<string> {
+    const correlatedUserText = turnTracker.userTextForTurn(clientTurnId).trim();
     if (!shouldWaitForRealtimeVoiceTranscriptEvidence(call.name)) {
-      return pendingUserText;
+      return correlatedUserText || latestUserTranscriptEvidence();
     }
 
     const quote = readRealtimeVoiceUserQuote(call.arguments);
-    const evidence = latestUserTranscriptEvidence();
+    const evidence = correlatedUserText || latestUserTranscriptEvidence();
     if (!quote || realtimeVoiceEvidenceMatchesUserQuote({ evidence, userQuote: quote })) {
       return evidence;
     }
-    if (pendingUserText.trim()) return pendingUserText;
+    if (correlatedUserText) return correlatedUserText;
+    if (turnTracker.latestUserText().trim()) return turnTracker.latestUserText();
     return waitForUserTranscriptEvidence(quote);
   }
 

@@ -14,9 +14,12 @@ and ``active_session_mutation`` nests inside it.
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import logging
+import time
 from collections.abc import Callable, Mapping
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
 from agent.audit.models import CrisisResourceLookupStatus
@@ -30,6 +33,7 @@ from agent.observability.events import (
     VOICE_CRISIS_RESOURCE_LOOKUP_PERSISTED,
     VOICE_RESPONSE_FINALIZED,
 )
+from agent.observability.timing import elapsed_ms
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.session import turn_count_from_state
 from agent.runtime.session.active_session import ActiveSessionManager
@@ -37,6 +41,10 @@ from agent.runtime.session.service import SessionLifecycleService
 from agent.runtime.state_ops import apply_state_delta
 from agent.runtime.state_store import RuntimeStateStore
 from agent.state import AgentState, resolve_owner_id
+from agent.voice.concurrent_safety import (
+    VoiceConcurrentSafetyResult,
+    VoiceConcurrentSafetyService,
+)
 from agent.voice.post_turn_safety import (
     VoicePostTurnSafetyAuditor,
     VoicePostTurnSafetyCheck,
@@ -48,6 +56,8 @@ if TYPE_CHECKING:
     from agent.runtime.runtime import PersistentAgentRuntime
 
 logger = logging.getLogger(__name__)
+
+_CONCURRENT_SAFETY_SNAPSHOT_TIMEOUT_SECONDS = 1.0
 
 
 # ── Module-level helpers (moved from runtime.py) ─────────────────
@@ -152,6 +162,7 @@ class VoiceRuntimeFacade:
         self._session_lifecycle = session_lifecycle
         self._lock_for = lock_for
         self._memory_mode = memory_mode
+        self._concurrent_safety_service = VoiceConcurrentSafetyService()
         self._post_turn_safety_auditor = VoicePostTurnSafetyAuditor()
 
     @property
@@ -172,6 +183,54 @@ class VoiceRuntimeFacade:
         """Close voice-owned background resources."""
 
         await self._post_turn_safety_auditor.aclose()
+
+    async def assess_voice_turn_safety(
+        self,
+        *,
+        thread_id: str,
+        user_id: str | None,
+        user_text: str,
+        prior_message_count: int,
+        pending_prior_transcript: list[dict[str, Any]],
+        llm_client: BaseLLMClient | None,
+    ) -> VoiceConcurrentSafetyResult:
+        """Assess a voice turn against an isolated prior-transcript snapshot."""
+
+        started_at = time.monotonic()
+        try:
+            async with asyncio.timeout(_CONCURRENT_SAFETY_SNAPSHOT_TIMEOUT_SECONDS):
+                async with self._lock_for(thread_id):
+                    prior_state = await self._state_store.load_state(thread_id)
+                    transcript = (
+                        list(prior_state.get("transcript", []) or [])
+                        if prior_state is not None
+                        else []
+                    )
+                    prior_transcript = copy.deepcopy(transcript[:prior_message_count])
+                    prior_transcript.extend(copy.deepcopy(pending_prior_transcript))
+        except TimeoutError:
+            return VoiceConcurrentSafetyResult(
+                status="timeout",
+                reason="timeout",
+                assessment=None,
+                duration_ms=round(elapsed_ms(started_at), 2),
+            )
+        except Exception:
+            return VoiceConcurrentSafetyResult(
+                status="failed",
+                reason="state_snapshot_failed",
+                assessment=None,
+                duration_ms=round(elapsed_ms(started_at), 2),
+            )
+
+        result = await self._concurrent_safety_service.assess_turn(
+            thread_id=thread_id,
+            user_id=user_id,
+            user_text=user_text,
+            prior_transcript=prior_transcript,
+            llm_client=llm_client,
+        )
+        return replace(result, duration_ms=round(elapsed_ms(started_at), 2))
 
     # ── build_voice_tool_context ─────────────────────────────────
 
@@ -521,6 +580,13 @@ class VoiceRuntimeFacade:
             },
         }
         return _compact_voice_memory_context(delta)
+
+    async def voice_session_message_count(self, *, thread_id: str) -> int:
+        """Return the persisted transcript watermark for a new voice session."""
+
+        async with self._lock_for(thread_id):
+            state = await self._state_store.load_state(thread_id)
+            return len(state.get("transcript", []) or []) if state is not None else 0
 
     # ── record_voice_turn ────────────────────────────────────────
 

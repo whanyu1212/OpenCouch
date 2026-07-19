@@ -160,6 +160,7 @@ class VoiceTurnRecordRequest(BaseModel):
     user_text: str = ""
     assistant_text: str = ""
     memory_mode: ApiMemoryMode | None = None
+    client_turn_id: str | None = Field(default=None, min_length=1, max_length=128)
     route: str | None = None
     response_style: str | None = None
     tool_calls: list[VoiceRecordedToolCall] = Field(default_factory=list)
@@ -179,6 +180,21 @@ class VoiceEndSessionRequest(BaseModel):
             "no feedback record is created and summarization proceeds "
             "as usual."
         ),
+    )
+
+
+class VoiceConcurrentSafetyRequest(BaseModel):
+    """POST /api/voice/realtime/safety/check request body."""
+
+    thread_id: str = Field(min_length=1)
+    user_id: str | None = None
+    memory_mode: ApiMemoryMode | None = None
+    client_turn_id: str = Field(min_length=1, max_length=128)
+    user_text: str = Field(min_length=1)
+    prior_message_count: int = Field(ge=0)
+    pending_prior_transcript: list[dict[str, object]] = Field(
+        default_factory=list,
+        max_length=20,
     )
 
 
@@ -288,6 +304,7 @@ class VoiceRealtimeSessionResponse(BaseModel):
     thread_id: str
     user_id: str | None = None
     memory_mode: Literal["incognito", "persistent"]
+    message_count: int = Field(ge=0)
     session_config: dict[str, object]
 
 
@@ -304,6 +321,23 @@ class VoicePostTurnSafetyResponse(BaseModel):
     status: Literal["scheduled", "skipped"]
     reason: str | None = None
     pending_count: int = Field(default=0, ge=0)
+
+
+class VoiceConcurrentSafetyResponse(BaseModel):
+    """Observation-only concurrent voice safety status."""
+
+    client_turn_id: str
+    status: Literal["completed", "skipped", "timeout", "failed"]
+    reason: (
+        Literal[
+            "no_llm_client",
+            "empty_user_text",
+            "timeout",
+            "exception",
+            "state_snapshot_failed",
+        ]
+        | None
+    ) = None
 
 
 class VoiceTurnRecordResponse(BaseModel):
