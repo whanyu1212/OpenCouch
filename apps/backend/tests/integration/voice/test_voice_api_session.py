@@ -21,6 +21,10 @@ class _FakeVoiceFacade:
     ) -> str:
         return ""
 
+    async def voice_session_message_count(self, *, thread_id: str) -> int:
+        assert thread_id == "voice-thread"
+        return 0
+
 
 class _FakeRuntime:
     voice = _FakeVoiceFacade()
@@ -81,6 +85,7 @@ async def test_create_voice_realtime_session_returns_client_secret(
     assert body["thread_id"] == "voice-thread"
     assert body["user_id"] == "user-1"
     assert body["memory_mode"] == "persistent"
+    assert body["message_count"] == 0
     assert body["session_config"]["model"] == "gpt-realtime-2"
     assert body["session_config"]["audio"]["output"]["voice"] == "cedar"
     assert captured["session_config"]["model"] == "gpt-realtime-2"

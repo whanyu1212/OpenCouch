@@ -203,6 +203,7 @@ test("creates realtime voice sessions with the selected assistant voice", async 
         thread_id: "voice-thread",
         user_id: "user-1",
         memory_mode: "persistent",
+        message_count: 0,
         session_config: {
           type: "realtime",
           audio: { output: { voice: "cedar" } },
@@ -286,6 +287,117 @@ test("records realtime voice turns with tool metadata", async () => {
       },
     ],
   });
+});
+
+test("forwards abort signals to realtime voice tool requests", async () => {
+  let capturedSignal;
+  globalThis.fetch = async (_url, init) => {
+    capturedSignal = init.signal;
+    return new Response(JSON.stringify({ output: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const controller = new AbortController();
+
+  await api.executeRealtimeVoiceTool({
+    threadId: "voice-thread",
+    memoryMode: "incognito",
+    toolName: "show_memory_status",
+    signal: controller.signal,
+  });
+
+  assert.equal(capturedSignal, controller.signal);
+});
+
+test("checks realtime voice safety with the exact correlated turn payload", async () => {
+  let capturedUrl = "";
+  let capturedBody = {};
+  globalThis.fetch = async (url, init) => {
+    capturedUrl = String(url);
+    capturedBody = JSON.parse(String(init.body));
+    return new Response(
+      JSON.stringify({
+        client_turn_id: "client-turn-1",
+        status: "completed",
+        reason: null,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  };
+
+  const response = await api.checkRealtimeVoiceSafety({
+    threadId: "voice-thread",
+    userId: "user-1",
+    memoryMode: "persistent",
+    clientTurnId: "client-turn-1",
+    userText: "I feel overwhelmed.",
+    priorMessageCount: 4,
+  });
+
+  assert.equal(
+    capturedUrl,
+    "http://backend.test/api/voice/realtime/safety/check"
+  );
+  assert.deepEqual(capturedBody, {
+    thread_id: "voice-thread",
+    user_id: "user-1",
+    memory_mode: "persistent",
+    client_turn_id: "client-turn-1",
+    user_text: "I feel overwhelmed.",
+    prior_message_count: 4,
+    pending_prior_transcript: [],
+  });
+  assert.deepEqual(response, {
+    client_turn_id: "client-turn-1",
+    status: "completed",
+    reason: null,
+  });
+});
+
+test("adds a client turn ID to turn recording only when provided", async () => {
+  const capturedBodies = [];
+  globalThis.fetch = async (_url, init) => {
+    capturedBodies.push(JSON.parse(String(init.body)));
+    return new Response(
+      JSON.stringify({
+        recorded: true,
+        thread_id: "voice-thread",
+        message_count: 2,
+      }),
+      { status: 200, headers: { "content-type": "application/json" } }
+    );
+  };
+
+  const baseTurn = {
+    threadId: "voice-thread",
+    userText: "hello",
+    assistantText: "hi",
+    memoryMode: "incognito",
+  };
+  await api.recordRealtimeVoiceTurn(baseTurn);
+  await api.recordRealtimeVoiceTurn({
+    ...baseTurn,
+    clientTurnId: "client-turn-1",
+  });
+
+  assert.deepEqual(capturedBodies, [
+    {
+      thread_id: "voice-thread",
+      user_text: "hello",
+      assistant_text: "hi",
+      memory_mode: "incognito",
+      tool_calls: [],
+    },
+    {
+      thread_id: "voice-thread",
+      client_turn_id: "client-turn-1",
+      user_text: "hello",
+      assistant_text: "hi",
+      memory_mode: "incognito",
+      tool_calls: [],
+    },
+  ]);
 });
 
 test("ends realtime voice sessions with the requested memory mode", async () => {
