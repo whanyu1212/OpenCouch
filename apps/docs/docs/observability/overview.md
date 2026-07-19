@@ -10,65 +10,56 @@ OpenCouch uses two complementary surfaces for trace-driven development:
 1. **Opik** for primary external trace-level observability and run search.
 2. **CLI inspection commands + live status** for local visibility into execution, state, and memory.
 
-LangSmith remains supported as an optional secondary LangChain tracing
-integration, but Opik is the default external surface to use when
-reviewing graph behavior.
-
 The CLI intentionally keeps the normal chat loop lightweight now:
 the reply renders as soon as the response is ready, a live spinner
 shows node progress while post-response work finishes, and deeper
 inspection is available on demand through commands like `/status`,
 `/context`, `/memory status`, and `/debug state`.
 
+Voice has a different observability shape because OpenAI Realtime owns
+the live speech loop. The backend still records app-owned tools,
+transcript persistence, inferred turn metadata, and finalization state, but there is no
+per-turn text-runtime route trace for a spoken exchange.
+
 ---
 
 ## How diagnostics flow
 
-Each node writes its own keys into `state["diagnostics"]` via the
-`_merge_dicts` reducer. Nodes return only their own keys — the
-reducer handles merging automatically. No manual dict spreading.
+Each runtime stage writes its own keys into `state["diagnostics"]`. Dict-shaped
+state channels are shallow-merged by explicit runtime helpers when stages return
+partial updates, and some flows locally aggregate diagnostics before applying a
+single state delta.
 
 ```text
 crisis_gate                load_memory
   · crisis_gate_ms           · load_memory_ms
   · crisis_level             · semantic_hits / episodic_hits
-  · classifier_path          · retrieval_path
+  · crisis_classifier_path   · retrieval_path
          │                          │
          └──────────┬───────────────┘
                     ▼
              finalize_turn
                     │
-                 graph END
+              response ready
                     │
-             runtime extraction
-          ┌─────────┴─────────┐
-          ▼                   ▼
-    semantic policy     procedural policy
-    · extract_facts_ms  · extract_procedural_ms
-    · semantic_writes   · procedural_writes
-    · extract_facts_    · extract_procedural_
-      reason              reason
-          └─────────┬─────────┘
-                    ▼
             AgentOutput.diagnostics
               + turn_total_ms (stamped by runtime)
 ```
 
-:::info Runtime extraction, merged diagnostics
-Semantic and procedural extraction run after the graph response path.
-Because `diagnostics` uses a `_merge_dicts` reducer, their keys merge
-with graph-node timings without either side knowing what the other wrote.
+:::info Runtime diagnostics
+Runtime stages and side-effect services use the same structured diagnostics channel, so
+turn-level timings and retrieval counters land in one `AgentOutput`.
 :::
 
 ---
 
-## Observability & evaluation
+## Observability
 
-For text runs, Opik captures the LangGraph execution trace, including
-the top-level run plus child spans for graph nodes and subgraphs. In
+For text runs, Opik captures the runtime execution trace, including
+the top-level run plus child spans for runtime stages and SDK calls. In
 OpenCouch, Opik is the primary external surface for:
 
-- inspecting graph execution paths
+- inspecting runtime execution paths
 - filtering runs by thread and runtime metadata
 - reviewing failures from tests and manual trace runs
 - comparing behavior across prompt, model, or routing changes
@@ -86,12 +77,64 @@ OPIK_WORKSPACE=...
 OPIK_PROJECT_NAME=opencouch-dev
 ```
 
-`OPIK_PROJECT_NAME` is optional; the graph wrapper defaults to
-`opencouch-dev` when it is unset.
+`OPIK_PROJECT_NAME` is optional; runs are grouped under the default
+Opik project when it is unset.
 
-LangSmith can be enabled alongside Opik through the standard
-`LANGSMITH_*` and `LANGCHAIN_*` environment variables when a secondary
-trace backend is useful.
+## Voice observability
+
+Realtime voice debugging combines browser events and backend state:
+
+| Surface | What it shows |
+|---|---|
+| `/voice` | Product-level connection, transcript, tool activity, error, and finalization status. |
+| `/voice/realtime-dev` | Raw Realtime server events, parsed transcript updates, tool calls, and end-session response. |
+| `/api/voice/realtime/tools` | Backend execution result for one Realtime function call. |
+| `/api/voice/realtime/turn` | Whether the finalized voice turn was recorded and the resulting message count. Inferred route/style metadata is written into runtime state. |
+| `/api/voice/realtime/end` | Whether persistent session finalization produced a summary. |
+
+Recorded voice turns stamp `diagnostics.voice_runtime=openai_realtime`
+and `diagnostics.voice_tool_calls=[...]` in runtime state. Grounded
+lookup tool output also merges into `state.grounded_lookup` when present.
+
+Use Opik for text-runtime traces. Use the Realtime dogfood route and
+voice API responses when debugging audio, tool-call, or finalization
+issues.
+
+---
+
+## Safety audit ledger
+
+Distinct from diagnostics and tracing, the **safety audit ledger**
+(`agent/audit/`) is a durable, operator-facing record of crisis-response
+behavior. It is deliberately **not** therapeutic memory, prompt context, or a
+general observability bucket — audit rows are never loaded into
+`working_memory` or used by normal response generation. The separation is the
+point: safety records can be reviewed after the fact without leaking back into
+the assistant's replies.
+
+The crisis path captures safety events in one direction only. After the
+response is finalized and conversation state is persisted,
+`capture_crisis_outcome` gets a small best-effort timeout window to call
+`write_crisis_log`, which builds a single `CrisisLogRecord` for the configured
+`CrisisLogBackend`. Records answer operator questions — did the classifier fire,
+at what level, through which classifier path; did resource lookup run, find
+resources, or fall back; did the runtime use the SDK, the SDK tool-fallback, or
+a response-LLM override — **without storing raw user text**. Only classification
+labels, classifier provenance, and structural metadata are kept.
+
+| File | Purpose |
+|---|---|
+| `agent/audit/models.py` | `CrisisLogRecord`, classifier-path enums, and aggregate/summary models |
+| `agent/audit/capture.py` | Runtime-facing bounded/best-effort capture seam |
+| `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory / null backends; lower-level `write_crisis_log` helper |
+| `agent/audit/postgres_crisis_log.py` | Durable Postgres backend |
+| `agent/audit/summary.py` | Daily safety-summary aggregation over stored records |
+
+Retention is operator-driven (see
+[Memory privacy](/docs/memory/privacy)) — backends expose a
+purge-before-cutoff path, the TUI adds a manual `/memory purge-crisis [days]`
+command, and `scripts/audit_crisis_ledger.py` provides ad hoc summary/export/purge
+commands outside the conversation runtime. No automatic expiry ships.
 
 ---
 
@@ -110,21 +153,17 @@ Green border for therapeutic, red for crisis.
 
 ### 2. Live execution status
 
-`run_turn_stream` emits one `StatusEvent` per node via LangGraph's
-multi-mode streaming. The CLI renders a progress spinner while the
-graph is still running:
+`run_turn_stream` emits one `StatusEvent` per pipeline stage as the
+turn executes. The CLI renders a progress spinner while the runtime
+is still working:
 
 ```text
-  ⠋ crisis_gate → turn_dispatch → load_memory → therapeutic → finalize
-    → runtime extraction
+  ⠋ crisis_gate → load_memory → therapeutic → finalize
 ```
 
 The stream now also has a non-terminal `response_ready` event. That
 means the CLI can render the finished reply as soon as
-`finalize_turn_node` seals it, while the post-response memory tail
-continues in the background. The next user turn still waits for that
-tail before it is processed, so turn ordering and memory consistency
-stay intact.
+turn finalization seals it.
 
 ### 3. On-demand inspection commands
 
@@ -134,11 +173,11 @@ stay intact.
 | `/history [n]` | Recent transcript with `mode` column per assistant turn |
 | `/context` | Structured session context snapshot, including working memory and procedural rules |
 | `/memory status` | Owner-scoped semantic / episodic / procedural counts, recall toggle, and store totals |
-| `/debug state` | Raw graph state as pretty-printed JSON |
+| `/debug state` | Raw runtime state as pretty-printed JSON |
 
 The old auto-rendered Turn Diagnostics, Stage Timings, and Session
 Context panels are no longer part of the default chat loop. Their
-underlying diagnostics still exist in graph state and traces; the CLI
+underlying diagnostics still exist in runtime state and traces; the CLI
 just no longer prints those panels automatically after every turn.
 
 ---
@@ -157,14 +196,13 @@ consistent text:
 | `grounded_lookup` | looking up factual answer |
 | `crisis_resource_lookup` | looking up crisis resources |
 | `crisis_response` | generating crisis reply |
-| `crisis_log` | writing crisis log |
 | `load_memory` | loading memory |
 | `memory_profile_load` | loading profile memory |
 | `memory_graph_load` | querying graph memory |
 | `memory_profile_save` | saving profile memory |
 | `memory_graph_save` | writing graph memory |
 | `therapeutic` | generating therapeutic reply |
-| `runtime_extraction` | extracting facts and style rules after graph END |
+| `runtime_extraction` | extracting facts and style rules after response finalization |
 | `finalize` | finalizing turn |
 | `session_stage` | reading context |
 | `response_generation` | generating |
@@ -181,11 +219,10 @@ render without a mapping update.
 | `crisis_gate_ms` | crisis_gate | Assessment wall-clock time |
 | `crisis_classifier_path` | crisis_gate | `llm_primary` |
 | `crisis_level` | crisis_gate | Normalized level (0–3) |
-| `crisis_resource_lookup_ms` | crisis_resource_lookup | Resource lookup wall-clock time (crisis branch only) |
 | `resource_lookup_status` | crisis_resource_lookup | `found` / `no_location` / `location_refused` / `no_verified_results` / `not_attempted` |
-| `turn_dispatch_ms` | turn_dispatch | Safe-turn routing wall-clock time |
 | `memory_control.action` | turn_dispatch | Detected command kind (or empty when none) |
-| `grounded_lookup.status` | grounded_answer | `answered` / `no_verified_answer` / `not_attempted` |
+| `grounded_lookup_ms` | grounded_lookup | Grounded lookup wall-clock time |
+| `grounded_lookup.status` | grounded_lookup | `answered` / `no_verified_answer` / `not_attempted` |
 | `load_memory_ms` | load_memory | Retrieval wall-clock time |
 | `semantic_hits` | load_memory | Semantic entries retrieved |
 | `semantic_store_size` | load_memory | Total semantic records in store |
@@ -194,25 +231,7 @@ render without a mapping update.
 | `procedural_count` | load_memory | Rules loaded from profile |
 | `proactive_recall` | load_memory | Recall toggle state |
 | `retrieval_path` | load_memory | `hybrid_rrf` / `token_recall` / `token_recall_after_embed_error` |
-| `extract_facts_ms` | runtime extraction | Semantic extraction wall-clock time |
-| `semantic_writes` | runtime extraction | Immediate semantic writes that actually committed on this turn |
-| `semantic_candidates` | runtime extraction | Total candidates returned by the LLM |
-| `semantic_commit_now_candidates` | runtime extraction | Candidates the policy classified as commit-now |
-| `semantic_session_end_holds` | runtime extraction | Semantic candidates held for session-end review |
-| `semantic_repeat_required` | runtime extraction | Semantic candidates blocked pending stronger repetition evidence |
-| `semantic_policy_drops` | runtime extraction | Semantic candidates dropped by LLM-primary write policy or hard local guards |
-| `semantic_policy_errors` | runtime extraction | Semantic candidates skipped because the write-policy classifier failed |
-| `semantic_bumps` | runtime extraction | Existing facts bumped by exact duplicate handling |
-| `extract_facts_reason` | runtime extraction | Skip reason or extraction outcome |
-| `extract_procedural_ms` | runtime extraction | Procedural extraction wall-clock time |
-| `procedural_writes` | runtime extraction | Immediate procedural rules written |
-| `procedural_candidates` | runtime extraction | Total candidates returned by the LLM |
-| `procedural_commit_now_candidates` | runtime extraction | Candidates the policy classified as commit-now |
-| `procedural_session_end_holds` | runtime extraction | Procedural candidates buffered for session-end promotion |
-| `procedural_policy_drops` | runtime extraction | Procedural candidates dropped by LLM-primary write policy or hard local guards |
-| `procedural_policy_errors` | runtime extraction | Procedural candidates skipped because the write-policy classifier failed |
-| `extract_procedural_reason` | runtime extraction | Skip reason or extraction outcome |
-| `turn_total_ms` | runtime | Total turn wall-clock (stamped outside the graph) |
+| `turn_total_ms` | runtime | Total turn wall-clock (stamped outside the route flow) |
 
 ---
 
@@ -233,8 +252,9 @@ return {
 }
 ```
 
-:::tip No spreading needed
-The `diagnostics` field uses a `_merge_dicts` reducer — return only
-your own keys and the reducer handles merging with other nodes'
-diagnostics automatically. Never `**state.get("diagnostics", {})`.
+:::tip Prefer narrow diagnostics deltas
+Return only the diagnostics keys your stage owns when using
+`apply_state_delta`; the runtime's dict-channel merge preserves sibling keys.
+If a flow needs multiple intermediate writes, aggregate them locally and apply
+one diagnostics delta at the boundary.
 :::

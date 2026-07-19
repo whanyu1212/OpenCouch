@@ -7,14 +7,15 @@ import CrisisGateFlow from '@site/src/components/CrisisGateFlow';
 
 # Crisis Gate
 
-First node in the graph. Every message passes through it before
-memory loads, before routing, before response generation. Cannot
-be skipped.
+First check in every turn. Every message passes through it before
+memory loads, before routing, before response generation. Wired as
+an SDK input guardrail on the Runner, so the runtime cannot reach
+response generation without it.
 
 The classifier is **LLM-only**: a structured-output call decides the
 level for every message, then local normalization enforces the
-level-to-route truth table. Provider failures are handled by graph
-retries and surfaced as errors instead of silently degrading to regex.
+level-to-route truth table. Provider failures surface as errors with
+retry handling instead of silently degrading to regex.
 
 ---
 
@@ -40,19 +41,20 @@ delta on the right, and where the turn ends up routing.
 
 | Final level | Route | Pipeline |
 |---|---|---|
-| 0 / 1 | `therapeutic` | `turn_dispatch_node → load_memory_node → therapeutic_subgraph` |
-| 2 / 3 | `crisis` | `crisis_resource_lookup_node → crisis_response_node → crisis_log_node` |
+| 0 / 1 | `therapeutic` | triage → load_memory → selected specialist (usually `TherapeuticAgent`) |
+| 2 / 3 | `crisis` | `run_crisis_turn`: resource lookup → CrisisAgent reply → audit log write |
 
 **Level 1 stays therapeutic.** `needs_clarification=true` is set in
-state but doesn't trigger the crisis branch — the therapeutic
-dispatcher picks `clarifying` or `supportive` based on the
-message.
+state but doesn't trigger the crisis branch. The triage agent
+returns the route, and the TherapeuticAgent layers the
+`safety_check.md` overlay on top of the active style (usually
+`clarifying`) to force one safety probe before ordinary support.
 
-The crisis branch leads with `crisis_resource_lookup_node` so any
-verified hotlines for the user's region land in the same crisis
-reply. `crisis_log_node` is always-on regardless of memory mode —
-even in incognito the event is recorded with `user_id` scrubbed
-and `session_id` opaqued.
+The crisis branch leads with crisis-resource lookup so any verified
+hotlines for the user's region land in the same crisis reply.
+Crisis logging is always-on regardless of memory mode — even in
+incognito the event is recorded with `user_id` set to NULL and
+`session_id` stored as a one-way hash.
 
 ---
 
@@ -98,14 +100,18 @@ window (exclusive boundary — the cutoff date itself is preserved).
 
 | File | Purpose |
 |---|---|
-| `agent/nodes/crisis_gate.py` | Crisis gate orchestration, truth-table normalization, graph routing |
-| `agent/gates/safety/service.py` | LLM-only crisis classifier service and structured output schema |
-| `agent/gates/safety/prompts.py` | Crisis classifier prompt and system instruction |
-| `agent/nodes/crisis_resource_lookup.py` | Location-aware hotline lookup (runs first on the crisis branch) |
-| `agent/nodes/crisis_response.py` | Crisis reply with optional resource overlay |
-| `agent/nodes/crisis_log.py` | Always-on audit record writer (graph node) |
-| `agent/audit/crisis_log.py` | Backend protocol + in-memory + null implementations |
+| `agent/guardrails/assessment.py` | Crisis gate orchestration and truth-table normalization |
+| `agent/guardrails/service.py` | LLM-only crisis classifier service and structured output schema |
+| `agent/guardrails/prompts.py` | Crisis classifier prompt and system instruction |
+| `agent/guardrails/crisis.py` | OpenAI Agents SDK input guardrail wrapper |
+| `agent/tools/crisis.py` | Crisis resource lookup tool and crisis response delta |
+| `agent/audit/crisis_log.py` | Audit-log write helper, backend protocol, and in-memory/null implementations |
 | `agent/audit/postgres_crisis_log.py` | Primary durable backend with retention purge |
-| `agent/audit/sqlite_crisis_log.py` | SQLite fallback backend with retention purge |
 | `agent/audit/models.py` | `CrisisLogRecord`, `CrisisOverrideOutcome`, `CrisisClassifierPath` |
-| `agent/tools/grounded_search.py` | `find_crisis_resources` (called by `crisis_resource_lookup_node`) |
+| `agent/tools/grounded_search.py` | `find_crisis_resources` for crisis-resource surfacing |
+
+`PostgresCrisisLogBackend` is the only durable crisis-ledger implementation;
+incognito and tests use the in-memory backend. The former SQLite crisis-log
+implementation has been removed. OpenAI Agents SDK text-session SQLite is a
+separate short-term conversation-history surface and does not store crisis
+audit records or long-term memory.

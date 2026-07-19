@@ -2,7 +2,7 @@
 
 These tests cover the new ``_format_procedural_rules_block`` and
 ``_format_recall_toggle_constraint`` helpers in
-``agent/therapeutic/prompts.py``, plus verification that the 6 public
+``agent.specialists.therapeutic_response.prompts``, plus verification that public
 system-prompt builders correctly weave the dynamic blocks into their
 output based on state.
 
@@ -35,21 +35,20 @@ from __future__ import annotations
 from typing import Any, cast
 
 from agent.models import CrisisAssessment
-from agent.gates.safety.prompts import build_crisis_response_system_prompt
-from agent.state import AgentState
-from agent.therapeutic.dispatch import build_therapeutic_dispatch_system_prompt
-from agent.therapeutic.prompts import (
+from agent.specialists.guided_exercise import build_guided_exercise_system_prompt
+from agent.specialists.therapeutic_response.prompts import (
     _format_procedural_rules_block,
     _format_recall_toggle_constraint,
     build_clarifying_system_prompt,
     build_closing_system_prompt,
-    build_guided_exercise_system_prompt,
     build_psychoeducation_system_prompt,
     build_reflective_system_prompt,
     build_supportive_system_prompt,
     build_technique_system_prompt,
     build_therapeutic_response_prompt,
 )
+from agent.guardrails.prompts import build_crisis_response_system_prompt
+from agent.state import AgentState
 
 
 # ─── Test helpers ──────────────────────────────────────────────────────────
@@ -278,6 +277,18 @@ class TestTherapeuticBuilderInjection:
             assert "proactive recall: OFF" in prompt, (
                 f"{name}: recall-off constraint missing"
             )
+            assert "CLI slash commands available in this TUI" in prompt, (
+                f"{name}: cli command block missing"
+            )
+            assert "/summary [short|full]" in prompt, (
+                f"{name}: summary command missing from cli block"
+            )
+            assert "/export <md|json|txt> [filename]" in prompt, (
+                f"{name}: export command missing from cli block"
+            )
+            assert "Never invent slash commands." in prompt, (
+                f"{name}: cli guidance missing"
+            )
 
     def test_rules_are_injected_when_present(self) -> None:
         """When ``procedural_profile.procedural_rules`` is populated, the rules
@@ -303,6 +314,66 @@ class TestTherapeuticBuilderInjection:
             # knows not to quote the rules
             assert "Follow these rules silently" in prompt, (
                 f"{name}: silent-follow guidance missing"
+            )
+
+    def test_recall_on_switches_constraint_variant(self) -> None:
+        """With ``proactive_recall_enabled=True``, the prompt contains
+        the ON variant of the constraint instead of the OFF variant."""
+
+        state = _make_state(recall_enabled=True)
+        for name, builder in self.BUILDERS:
+            prompt = builder(state)
+            assert "proactive recall: ON" in prompt, (
+                f"{name}: recall-on constraint missing"
+            )
+            assert "proactive recall: OFF" not in prompt, (
+                f"{name}: stale recall-off constraint present"
+            )
+
+    def test_rules_appear_after_instructions(self) -> None:
+        """The rules block is appended after response-style instructions."""
+
+        state = _make_state(
+            rules=["You prefer shorter responses."],
+        )
+
+        signatures = {
+            "supportive": "SUPPORTIVE response style",
+            "reflective": "REFLECTIVE response style",
+            "clarifying": "CLARIFYING response style",
+            "psychoeducation": "PSYCHOEDUCATION response style",
+            "closing": "CLOSING response style",
+            "guided_exercise": "GUIDED_EXERCISE response style",
+        }
+
+        for name, builder in self.BUILDERS:
+            prompt = builder(state)
+            mode_sig = signatures[name]
+            sig_index = prompt.find(mode_sig)
+            rules_index = prompt.find("Style rules from past conversations")
+            assert sig_index >= 0, f"{name}: response-style signature not found"
+            assert rules_index >= 0, f"{name}: rules block not found"
+            assert rules_index > sig_index, (
+                f"{name}: rules block ({rules_index}) appears BEFORE "
+                f"instructions block ({sig_index})"
+            )
+
+    def test_recall_toggle_appears_after_rules(self) -> None:
+        """The recall-toggle constraint remains after the rules block."""
+
+        state = _make_state(
+            rules=["You prefer shorter responses."],
+            recall_enabled=False,
+        )
+        for name, builder in self.BUILDERS:
+            prompt = builder(state)
+            rules_index = prompt.find("Style rules from past conversations")
+            recall_index = prompt.find("proactive recall: OFF")
+            assert rules_index >= 0, f"{name}: rules block missing"
+            assert recall_index >= 0, f"{name}: recall block missing"
+            assert recall_index > rules_index, (
+                f"{name}: recall block ({recall_index}) appears BEFORE "
+                f"rules block ({rules_index})"
             )
 
 
@@ -490,47 +561,6 @@ def test_psychoeducation_prompt_handles_pop_neuro_practical_requests() -> None:
     assert "That's it for now" in prompt
 
 
-def test_dispatch_prompt_separates_technique_from_exercise_track_starts() -> None:
-    prompt = build_therapeutic_dispatch_system_prompt()
-
-    assert "NOT asking to start a named exercise track" in prompt
-    assert (
-        "those are guided_exercise turns because the agent should begin the "
-        "matching stepwise exercise" in prompt
-    )
-    assert "can we figure out a way to test it" in prompt
-    assert "can we look at what actually matters to me" in prompt
-    assert "If the user names self-criticism AND explicitly asks to do " in prompt
-    assert (
-        "do NOT use technique just because the user wants to 'talk it through'"
-        in prompt
-    )
-    assert "consolidating progress, naming strengths" in prompt
-    assert (
-        "I keep avoiding work tasks because I get anxious and start spiraling" in prompt
-    )
-    assert "can choose ACT as the therapeutic_approach" in prompt
-    assert "pairs wrap-up language with a takeaway request" in prompt
-    assert "before we wrap up, what's the main takeaway?" in prompt
-    assert "what should I remember from this?" in prompt
-    assert "A turn that says 'thanks, that helps'" in prompt
-
-
-def test_dispatch_prompt_includes_repair_session_intent_guidance() -> None:
-    """The dispatcher should expose repair as an arc label, not a graph node."""
-
-    prompt = build_therapeutic_dispatch_system_prompt()
-
-    assert (
-        "session_intent: vent, understand, reflect, work, regulate, repair, close"
-        in prompt
-    )
-    assert "you're not listening" in prompt
-    assert "that's not what I meant" in prompt
-    assert "guidance_permission=not_yet" in prompt
-    assert "avoid defending" in prompt
-
-
 def test_supportive_prompt_injects_repair_response_guidance() -> None:
     """Repair turns should constrain response generation toward reset and repair."""
 
@@ -552,83 +582,81 @@ def test_supportive_prompt_injects_repair_response_guidance() -> None:
     assert "Do not defend" in prompt
     assert "Own the miss and reset to listening." in prompt
 
-    def test_recall_on_switches_constraint_variant(self) -> None:
-        """With ``proactive_recall_enabled=True``, the prompt contains
-        the ON variant of the constraint instead of the OFF variant."""
 
-        state = _make_state(recall_enabled=True)
-        for name, builder in self.BUILDERS:
-            prompt = builder(state)
-            assert "proactive recall: ON" in prompt, (
-                f"{name}: recall-on constraint missing"
-            )
-            assert "proactive recall: OFF" not in prompt, (
-                f"{name}: stale recall-off constraint present"
-            )
+def test_clarifying_prompt_injects_blocking_mixed_intent_guidance() -> None:
+    """Blocking clarification should tell the model to ask before acting."""
 
-    def test_rules_appear_AFTER_instructions(self) -> None:
-        """The rules block is a suffix: it appears AFTER the response style's
-        instructions block, not before or in the middle.
+    state = _make_state()
+    state["turn_lifecycle"] = {
+        "active_flow": "none",
+        "action": "none",
+        "tentative_route": "grounded_lookup",
+        "triage_confidence": "medium",
+        "clarification_needed": True,
+        "clarification_kind": "blocking",
+        "secondary_route": "guided_exercise",
+        "intent_summary": "User is choosing between lookup and guided practice.",
+        "clarification_question": "Would you prefer lookup or guided practice?",
+    }
 
-        This matches the schema's ``injection_point: system_prompt_suffix``
-        spec. Using a signature string from each response style's instructions
-        block, we verify the rules block's position.
-        """
+    prompt = build_clarifying_system_prompt(state)
 
-        state = _make_state(
-            rules=["You prefer shorter responses."],
-        )
+    assert "Mixed-intent clarification guidance" in prompt
+    assert "Ask exactly one concise clarification question" in prompt
+    assert "before taking route-specific action" in prompt
+    assert "without mentioning internal route names" in prompt
+    assert "Do not start a guided exercise" in prompt
+    assert "perform grounded lookup" in prompt
+    assert "mutate saved memory" in prompt
+    assert "User is choosing between lookup and guided practice." in prompt
+    assert "Would you prefer lookup or guided practice?" in prompt
 
-        # Each response style has a unique signature string in its instructions.
-        # We verify the rules block appears AFTER it.
-        signatures = {
-            "supportive": "SUPPORTIVE response style",
-            "reflective": "REFLECTIVE response style",
-            "clarifying": "CLARIFYING response style",
-            "psychoeducation": "PSYCHOEDUCATION response style",
-            "closing": "CLOSING response style",
-            "guided_exercise": "GUIDED_EXERCISE response style",
-        }
 
-        for name, builder in self.BUILDERS:
-            prompt = builder(state)
-            mode_sig = signatures[name]
-            sig_index = prompt.find(mode_sig)
-            rules_index = prompt.find("Style rules from past conversations")
-            assert sig_index >= 0, f"{name}: response-style signature not found"
-            assert rules_index >= 0, f"{name}: rules block not found"
-            assert rules_index > sig_index, (
-                f"{name}: rules block ({rules_index}) appears BEFORE "
-                f"instructions block ({sig_index})"
-            )
+def test_therapeutic_response_prompt_injects_soft_clarification_guidance() -> None:
+    """Soft clarification should guide the response writer without blocking action."""
 
-    def test_recall_toggle_appears_AFTER_rules(self) -> None:
-        """The recall-toggle constraint is the final block in the prompt.
+    state = _make_state()
+    state["turn_lifecycle"] = {
+        "active_flow": "none",
+        "action": "none",
+        "triage_confidence": "medium",
+        "clarification_needed": True,
+        "clarification_kind": "soft",
+        "secondary_route": "therapeutic",
+        "intent_summary": "User asks for lookup while also seeking reassurance.",
+    }
 
-        Order (top to bottom):
-          1. Knowledge files
-          2. Mode instructions
-          3. Rules block (if rules exist)
-          4. Recall-toggle constraint (always present)
+    prompt = build_therapeutic_response_prompt(
+        state,
+        response_style="grounded_lookup",
+    )
 
-        This test pins that order for the builders that have all three
-        dynamic sections present.
-        """
+    assert "Mixed-intent clarification guidance" in prompt
+    assert "Proceed with the selected action" in prompt
+    assert "briefly acknowledging the secondary need" in prompt
+    assert "Invite correction in one light phrase" in prompt
+    assert "do not block the response with a question" in prompt
+    assert "User asks for lookup while also seeking reassurance." in prompt
 
-        state = _make_state(
-            rules=["You prefer shorter responses."],
-            recall_enabled=False,
-        )
-        for name, builder in self.BUILDERS:
-            prompt = builder(state)
-            rules_index = prompt.find("Style rules from past conversations")
-            recall_index = prompt.find("proactive recall: OFF")
-            assert rules_index >= 0, f"{name}: rules block missing"
-            assert recall_index >= 0, f"{name}: recall block missing"
-            assert recall_index > rules_index, (
-                f"{name}: recall block ({recall_index}) appears BEFORE "
-                f"rules block ({rules_index})"
-            )
+
+def test_prompt_injects_no_clarification_privacy_guidance() -> None:
+    """Explicit privacy control should not ask whether to comply."""
+
+    state = _make_state()
+    state["turn_lifecycle"] = {
+        "active_flow": "none",
+        "action": "none",
+        "triage_confidence": "high",
+        "clarification_needed": False,
+        "clarification_kind": "none",
+        "no_clarification_reason": "explicit_privacy_control",
+    }
+
+    prompt = build_supportive_system_prompt(state)
+
+    assert "Mixed-intent clarification guidance" in prompt
+    assert "Respect the user's privacy or saved-memory control" in prompt
+    assert "without asking whether to comply" in prompt
 
 
 # ─── Crisis response builder: deliberate exception ────────────────────────
@@ -712,7 +740,7 @@ class TestTherapeuticResponsePrompt:
         assert "- Last session (grief): talked about grief after my dog died." in prompt
 
     def test_legacy_string_working_memory_entries_render_unchanged(self) -> None:
-        """Legacy ``str`` entries (from older checkpoints or manual fixtures)
+        """Legacy ``str`` entries (from older persisted states or manual fixtures)
         should pass through the formatter unchanged."""
 
         state = _make_state(

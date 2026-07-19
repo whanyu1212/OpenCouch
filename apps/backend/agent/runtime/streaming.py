@@ -6,35 +6,13 @@ import time
 from collections.abc import Mapping
 from typing import Any
 
-from agent.graph import state_to_output
-from agent.graph_constants import GRAPH_NODE_TO_STATUS_STAGE
-from agent.models import AgentOutput, ChunkEvent, Message, MessageRole
+from agent.runtime.turn import state_to_output
+from agent.models import AgentOutput, ChunkEvent
+from agent.observability.diagnostics import (
+    diagnostics_from_state,
+    replace_state_diagnostics,
+)
 from agent.state import AgentState
-
-
-def messages_from_transcript(
-    transcript: list[dict[str, Any]],
-) -> list[Message]:
-    """Materialize validated messages from a serialized transcript.
-
-    Args:
-        transcript (list[dict[str, Any]]): Serialized transcript entries.
-
-    Returns:
-        list[Message]: Validated message objects.
-    """
-
-    messages: list[Message] = []
-    for turn in transcript:
-        role = turn.get("role")
-        content = (turn.get("content") or "").strip()
-        if role not in {"system", "user", "assistant"} or not content:
-            continue
-        style = turn.get("response_style") if role == "assistant" else None
-        messages.append(
-            Message(role=MessageRole(role), content=content, response_style=style)
-        )
-    return messages
 
 
 def stamp_turn_total_ms(
@@ -46,35 +24,33 @@ def stamp_turn_total_ms(
 
     Two related metrics land here:
 
-    - ``turn_total_ms``: end-to-end wall-clock from graph entry to graph
+    - ``turn_total_ms``: end-to-end wall-clock from runtime entry to runtime
       termination.
-    - ``post_finalize_ms``: wall-clock from when ``finalize_turn_node``
-      locked in the response to graph termination. This is the window
+    - ``post_finalize_ms``: wall-clock from when turn finalization
+      locked in the response to runtime completion. This is the window
       where the user has *already received* their response (when streaming)
-      but the graph is still running terminal extractors. It quantifies
-      the latency wedge that background extraction (Opportunity #5)
-      would close. Absent when ``finalize_turn_node`` did not run for
-      this turn (early failure paths).
+      but the runtime is still finishing terminal bookkeeping. Absent when
+      finalization did not run for this turn (early failure paths).
 
     Args:
-        state (AgentState): Final graph state for the turn.
-        started_at (float): Monotonic timestamp captured before graph execution.
+        state (AgentState): Final runtime state for the turn.
+        started_at (float): Monotonic timestamp captured before runtime execution.
 
     Returns:
         None: Mutates the state's diagnostics mapping in place.
     """
 
     end_at = time.monotonic()
-    if "diagnostics" not in state or state["diagnostics"] is None:
-        state["diagnostics"] = {}
-    state["diagnostics"]["turn_total_ms"] = round((end_at - started_at) * 1000, 2)
+    diagnostics = diagnostics_from_state(state)
+    diagnostics["turn_total_ms"] = round((end_at - started_at) * 1000, 2)
 
-    finalize_done_at = state["diagnostics"].pop("finalize_done_at_monotonic", None)
+    finalize_done_at = diagnostics.pop("finalize_done_at_monotonic", None)
     if finalize_done_at is not None:
-        state["diagnostics"]["post_finalize_ms"] = round(
+        diagnostics["post_finalize_ms"] = round(
             (end_at - float(finalize_done_at)) * 1000,
             2,
         )
+    replace_state_diagnostics(state, diagnostics)
 
 
 def response_ready_output(
@@ -103,10 +79,10 @@ def response_ready_output(
 
 
 def chunk_event_from_custom_payload(payload: Any) -> ChunkEvent | None:
-    """Build a chunk event from a graph custom stream payload.
+    """Build a chunk event from a custom stream payload.
 
     Args:
-        payload (Any): Custom stream payload emitted by the graph.
+        payload (Any): Custom stream payload emitted by the runtime.
 
     Returns:
         ChunkEvent | None: Token chunk event when the payload is a text chunk.
@@ -115,16 +91,3 @@ def chunk_event_from_custom_payload(payload: Any) -> ChunkEvent | None:
     if not isinstance(payload, dict) or payload.get("type") != "chunk":
         return None
     return ChunkEvent(text=payload["text"])
-
-
-def status_stage_for_node(node_name: str) -> str:
-    """Return the public status stage for a graph node.
-
-    Args:
-        node_name (str): Internal graph node name.
-
-    Returns:
-        str: Public status stage label.
-    """
-
-    return GRAPH_NODE_TO_STATUS_STAGE.get(node_name, node_name)

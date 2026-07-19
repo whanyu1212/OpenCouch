@@ -17,8 +17,8 @@ from agent.audit.crisis_log import (
     InMemoryCrisisLogBackend,
     NullCrisisLogBackend,
 )
-from agent.memory.models import (
-    CrisisLogRecord,
+from agent.audit.models import CrisisLogRecord
+from agent.memory.types import (
     MoodArc,
     SessionArc,
     StoredSessionArc,
@@ -281,7 +281,7 @@ class TestTokenRecallSearch:
     async def test_results_ordered_by_recall_score_desc(self) -> None:
         """When multiple records match, they should be returned in
         score-descending order — the best match first. This is the
-        behavior change that makes ``load_memory_node``'s top-k
+        behavior change that makes turn memory context top-k
         retrieval meaningful."""
 
         store = OpenCouchMemoryStore()
@@ -435,6 +435,25 @@ async def test_memory_store_close_is_idempotent() -> None:
     store = OpenCouchMemoryStore()
     await store.aclose()
     await store.aclose()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_memory_store_observability_helpers_degrade_after_close() -> None:
+    """After aclose, observability helpers degrade gracefully instead of raising.
+
+    Mutating ops (aput/aget) raise RuntimeError once closed, but the
+    read-only observability helpers (alatest/arecord_count/anamespaces)
+    return empty results so callers can treat supported backends interchangeably
+    through the MemoryStore protocol.
+    """
+
+    store = OpenCouchMemoryStore()
+    await store.aput(("user-1", "semantic"), "fact-1", {"v": 1})
+    await store.aclose()
+
+    assert await store.alatest(("user-1", "semantic")) is None
+    assert await store.arecord_count(("user-1", "semantic")) == 0
+    assert await store.anamespaces() == []
 
 
 # ─── v0.4 episodic namespace model + store tests ────────────────────────

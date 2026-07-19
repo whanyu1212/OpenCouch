@@ -17,14 +17,14 @@ from typing import Any
 
 import pytest
 
-from agent.memory.dedup import (
+from agent.memory.operations.dedup import (
     JACCARD_DUPLICATE_THRESHOLD,
     _jaccard_similarity,
     _tokenize,
     _triples_match,
     find_near_duplicate,
 )
-from agent.memory.models import EntityRef, MemoryWrite
+from agent.memory.types import EntityRef, MemoryWrite
 from agent.memory.store import StoreRecord
 
 

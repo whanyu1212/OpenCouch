@@ -18,8 +18,8 @@ from typing import Any, cast
 
 import pytest
 
-from agent.memory.models import ProceduralProfile, ProceduralRule
-from agent.memory.procedural_profile import (
+from agent.memory.types import ProceduralProfile, ProceduralRule
+from agent.memory.operations.procedural_profile import (
     PROCEDURAL_KEY,
     aadd_procedural_rule,
     aclear_procedural_rules,
@@ -496,7 +496,7 @@ async def test_aset_recall_on_new_user_creates_profile() -> None:
 async def test_eviction_archives_oldest_when_exceeding_cap() -> None:
     """Adding a rule past MAX_ACTIVE_RULES evicts the oldest by added_at."""
 
-    from agent.memory.procedural_profile import MAX_ACTIVE_RULES
+    from agent.memory.operations.procedural_profile import MAX_ACTIVE_RULES
 
     store = OpenCouchMemoryStore()
 

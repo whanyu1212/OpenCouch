@@ -8,8 +8,7 @@ write failure, and the ``SessionArc → StoredSessionArc`` promotion.
 
 All tests are deterministic — no live API calls. The fake LLM client
 dispatches on ``response_schema`` so it can coexist with the crisis
-classifier and dispatcher in future integration tests (same pattern as
-``_FakeExtractionLLM`` in test_extract_facts.py).
+classifier and dispatcher in future integration tests.
 """
 
 from __future__ import annotations
@@ -20,7 +19,7 @@ from typing import Any, cast
 
 import pytest
 
-from agent.memory.models import (
+from agent.memory.types import (
     CBTContext,
     MoodArc,
     SessionArc,
@@ -29,10 +28,11 @@ from agent.memory.models import (
 )
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.memory.episodic import (
+from agent.memory.operations.episodic import (
     session_arc_to_stored as _session_arc_to_stored,
 )
 from agent.runtime.session import run_summarize_session
+from agent.runtime.session.history import session_conversation_from_transcript
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
 
@@ -119,6 +119,7 @@ class _FakeSummarizerLLM(BaseLLMClient):
         self.summarization_result = summarization_result
         self.raise_on_summarization = raise_on_summarization
         self.summarization_calls = 0
+        self.summarization_prompts: list[str] = []
 
     async def generate_text(
         self,
@@ -146,6 +147,7 @@ class _FakeSummarizerLLM(BaseLLMClient):
     ) -> StructuredResponseT:
         if response_schema.__name__ == "SummarizationResult":
             self.summarization_calls += 1
+            self.summarization_prompts.append(prompt)
             if self.raise_on_summarization:
                 raise RuntimeError("simulated summarization LLM failure")
             return cast(StructuredResponseT, self.summarization_result)
@@ -233,7 +235,7 @@ class TestSummarizerEarlyExits:
     @pytest.mark.asyncio
     async def test_no_llm_client_returns_none(self) -> None:
         """If llm_client is None, the summarizer should return None
-        without touching the store. Same contract as extract_facts."""
+        without touching the store."""
 
         store = OpenCouchMemoryStore()
         state = _partial_state()
@@ -286,6 +288,48 @@ class TestSummarizerEarlyExits:
 
 class TestSummarizerHappyPath:
     """The normal flow: LLM returns a valid arc or None with reason."""
+
+    @pytest.mark.asyncio
+    async def test_uses_explicit_session_conversation_over_state_transcript(
+        self,
+    ) -> None:
+        """Finalization passes one canonical conversation source to the summarizer."""
+
+        store = OpenCouchMemoryStore()
+        fake = _FakeSummarizerLLM(
+            summarization_result=SummarizationResult(
+                arc=None,
+                reason="prompt inspection test",
+            )
+        )
+        state = _partial_state(
+            transcript=[
+                {"role": "user", "content": "stale state transcript"},
+            ],
+            user_id="user-42",
+        )
+        conversation = session_conversation_from_transcript(
+            [
+                {"role": "user", "content": "canonical session turn"},
+                {"role": "assistant", "content": "canonical reply"},
+            ]
+        )
+
+        result = await run_summarize_session(
+            state,
+            llm_client=fake,
+            memory_store=store,
+            memory_mode=MemoryMode.LOCAL,
+            session_id="session-test",
+            started_at="2026-04-10T12:00:00Z",
+            conversation=conversation,
+        )
+
+        assert result is None
+        assert fake.summarization_calls == 1
+        assert "canonical session turn" in fake.summarization_prompts[0]
+        assert "canonical reply" in fake.summarization_prompts[0]
+        assert "stale state transcript" not in fake.summarization_prompts[0]
 
     @pytest.mark.asyncio
     async def test_writes_arc_to_episodic_namespace(self) -> None:
@@ -389,8 +433,7 @@ class TestSummarizerHappyPath:
     @pytest.mark.asyncio
     async def test_owner_id_falls_back_to_session_id(self) -> None:
         """When state.user_id is None, the owner_id for the episodic
-        namespace derives from session_id. This matches the load_memory
-        and extract_facts convention."""
+        namespace derives from session_id."""
 
         store = OpenCouchMemoryStore()
         arc = _make_session_arc()

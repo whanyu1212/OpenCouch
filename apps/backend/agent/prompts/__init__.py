@@ -4,8 +4,8 @@ This package is the home of the *shared* prompt infrastructure used by
 every prompt builder in the codebase: the markdown source loader, the
 composition helper, the recent-history formatter, and the ``CORE_SOURCES``
 tuple referenced by every system prompt. Feature-specific builders
-(memory extraction, therapeutic responses, crisis replies, grounded
-lookup) live next to their consumers — not here.
+(therapeutic responses, crisis replies, grounded lookup) live next to
+their consumers — not here.
 
 The ``sources/`` subdirectory contains the markdown knowledge files
 that ``load_prompt_source`` reads. It is loaded relative to this
@@ -20,7 +20,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from agent.conversation import format_recent_history as _format_recent_history
+from agent.runtime.session.state import format_recent_history as _format_recent_history
 
 CORE_SOURCES = (
     "core_identity.md",
@@ -74,7 +74,7 @@ def format_recent_history(state: Mapping[str, Any], *, limit: int = 6) -> str:
     """Format recent history entries for prompt injection.
 
     Args:
-        state: Current graph state or state-like mapping.
+        state: Current runtime state or state-like mapping.
         limit: Maximum number of recent history turns to include.
 
     Returns:

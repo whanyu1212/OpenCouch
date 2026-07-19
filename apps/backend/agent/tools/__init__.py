@@ -1,5 +1,91 @@
-"""Tool helpers for agent nodes."""
+"""OpenAI text runtime tools grouped by specialist ownership."""
 
-from agent.tools.grounded_search import answer_factual_lookup, find_crisis_resources
+from agent.tools.crisis import (
+    CrisisResourceLookupToolResult,
+    CrisisSupportTemplateToolResult,
+    build_crisis_response_tools,
+    execute_crisis_resource_lookup_tool,
+    execute_crisis_support_template_tool,
+    get_crisis_support_template,
+    lookup_crisis_resources,
+)
+from agent.tools.grounded import (
+    GroundedLookupToolResult,
+    answer_grounded_lookup,
+    build_grounded_lookup_tools,
+    execute_grounded_lookup_tool,
+)
+from agent.tools.guided_exercise import (
+    GuidedExerciseSkillDiscoveryToolResult,
+    GuidedExerciseSkillSummary,
+    GuidedExerciseSkillToolResult,
+    build_guided_exercise_discovery_tools,
+    build_guided_exercise_tools,
+    execute_guided_exercise_discovery_tool,
+    execute_guided_exercise_skill_tool,
+    list_guided_exercise_skills,
+    load_guided_exercise_skill,
+)
+from agent.tools.memory import (
+    MemoryReadToolResult,
+    MemoryToolResult,
+    build_memory_tools,
+    cancel_memory_deletion,
+    confirm_memory_deletion,
+    execute_memory_tool_action,
+    execute_read_only_memory_action,
+    memory_control_request_from_context,
+    prepare_memory_deletion_by_index,
+    prepare_memory_deletion_by_query,
+    save_response_preference,
+    set_proactive_memory_recall,
+    show_memory_status,
+    show_saved_memory,
+)
+from agent.tools.therapeutic import (
+    TherapeuticResponseSkillToolResult,
+    build_therapeutic_response_tools,
+    execute_therapeutic_response_skill_tool,
+    load_therapeutic_response_skill,
+)
 
-__all__ = ["answer_factual_lookup", "find_crisis_resources"]
+__all__ = [
+    "CrisisResourceLookupToolResult",
+    "CrisisSupportTemplateToolResult",
+    "GroundedLookupToolResult",
+    "GuidedExerciseSkillDiscoveryToolResult",
+    "GuidedExerciseSkillSummary",
+    "GuidedExerciseSkillToolResult",
+    "MemoryReadToolResult",
+    "MemoryToolResult",
+    "TherapeuticResponseSkillToolResult",
+    "answer_grounded_lookup",
+    "build_crisis_response_tools",
+    "build_grounded_lookup_tools",
+    "build_guided_exercise_discovery_tools",
+    "build_guided_exercise_tools",
+    "build_memory_tools",
+    "build_therapeutic_response_tools",
+    "cancel_memory_deletion",
+    "confirm_memory_deletion",
+    "execute_crisis_resource_lookup_tool",
+    "execute_crisis_support_template_tool",
+    "execute_grounded_lookup_tool",
+    "execute_guided_exercise_discovery_tool",
+    "execute_guided_exercise_skill_tool",
+    "execute_memory_tool_action",
+    "execute_read_only_memory_action",
+    "execute_therapeutic_response_skill_tool",
+    "get_crisis_support_template",
+    "list_guided_exercise_skills",
+    "load_guided_exercise_skill",
+    "load_therapeutic_response_skill",
+    "lookup_crisis_resources",
+    "memory_control_request_from_context",
+    "prepare_memory_deletion_by_index",
+    "prepare_memory_deletion_by_query",
+    "save_response_preference",
+    "set_proactive_memory_recall",
+    "show_memory_status",
+    "show_saved_memory",
+]

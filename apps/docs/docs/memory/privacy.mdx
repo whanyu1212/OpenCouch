@@ -14,22 +14,21 @@ Three escalating tiers — each with stronger confirmation gates.
 
 ---
 
-## Memory control runs in the graph
+## Memory control runs as a runtime branch
 
-Explicit memory commands are now first-class graph traffic.
-`turn_dispatch_node` routes natural-language memory commands like:
+Explicit memory commands are now first-class runtime traffic.
+Turn triage routes natural-language memory commands like:
 
 - `"what do you remember about me?"` / `"show my memories"`
 - `"forget #3"` / `"forget that I mentioned my therapist"`
 - `"turn proactive recall off"` / `"enable recall"`
 - `"remember that I prefer shorter replies"`
 
-When this route fires, the turn skips memory retrieval and the
-therapeutic subgraph entirely and routes to `memory_control_node`,
-which executes the operation deterministically (no LLM call) and
-returns a user-facing confirmation. Destructive single-record
-deletes write a `pending_action` to `memory_control` state so the
-**next turn** can confirm or cancel it through the same dispatch node.
+When this route fires, the turn skips memory retrieval and therapeutic
+response generation. The memory-control tool surface executes the operation
+deterministically and returns a user-facing confirmation. Destructive
+single-record deletes write a `pending_action` to `memory_control` state so
+the **next turn** can confirm or cancel it through the same runtime branch.
 
 ---
 
@@ -56,14 +55,20 @@ asymmetry for safety and product quality:
 
 | Subsystem | Incognito behavior | Retention |
 |---|---|---|
-| **Crisis log** | In-memory (dies at exit), `user_id = None`, opaque `session_id` (SHA-256) | 90 days, purge via `/memory purge-crisis` |
-| **Session feedback** | In-memory (dies at exit), `user_id = None`, opaque `session_id` | 180 days |
+| **Crisis log** | In-memory (dies at exit), `user_id = None`, opaque `session_id` (SHA-256) | Operator-driven — records persist until an operator purges them via `/memory purge-crisis [days]` (no automatic expiry) |
+| **Session feedback** | In-memory (dies at exit), `user_id = None`, opaque `session_id` | Operator-driven — `apurge_before(cutoff)` exists, but no scheduled purge ships |
+
+Retention is operator-configured, not automatic: the durable backends
+expose a purge-before-cutoff path, and the crisis log adds a manual
+`/memory purge-crisis [days]` TUI command. Choose a retention window that
+fits your deployment's policy.
 
 No user text is stored in either subsystem — only classification
 labels, classifier provenance, and structural metadata. Both
-subsystems live under [`agent/audit/`](https://github.com/whanyu1212/OpenCouch/tree/main/apps/backend/agent/audit),
-not `agent/memory/`, so they're explicitly excluded from prompt
-memory and from user-facing memory recall toggles.
+subsystems live under [`agent/audit/`](https://github.com/whanyu1212/OpenCouch/tree/main/apps/backend/agent/audit)
+and [`agent/feedback/`](https://github.com/whanyu1212/OpenCouch/tree/main/apps/backend/agent/feedback),
+not `agent/memory/`, so they're explicitly excluded from prompt memory and
+from user-facing memory recall toggles.
 
 ---
 

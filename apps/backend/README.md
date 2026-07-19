@@ -4,11 +4,11 @@ Backend service for the OpenCouch mental health support product.
 
 Current status:
 - minimal FastAPI app entrypoint
-- agent kernel with crisis and therapeutic subgraphs
-- LangGraph workflow with configurable persistence (Postgres recommended, SQLite legacy fallback)
+- OpenAI Agents SDK text runtime with crisis and therapeutic branches
+- Postgres durable persistence with ephemeral guest/incognito modes
 - provider-backed LLM adapters
 - local interactive CLI entrypoint
-- pytest backend tests and runner-based crisis evals
+- pytest backend tests and targeted live-provider checks
 
 Planned implementation order:
 1. real chat API endpoint
@@ -20,40 +20,36 @@ Planned implementation order:
 Local CLI:
 
 ```bash
-uv run python -m opencouch_cli --mode auto
+uv run python -m opencouch_tui.cli_app --mode auto
 ```
 
 Resume a persisted local thread:
 
 ```bash
-uv run python -m opencouch_cli --mode auto --thread-id local-demo
+uv run python -m opencouch_tui.cli_app --mode auto --thread-id local-demo
 ```
 
-Run the CLI against the Dockerized Postgres memory backend:
+Run the CLI against the Dockerized Postgres memory backend. Postgres is the
+only supported durable backend for long-term memory:
 
 ```bash
 OPENCOUCH_PERSISTENCE_BACKEND=postgres \
 OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/opencouch \
-uv run python -m opencouch_cli --mode auto --thread-id local-demo
+uv run python -m opencouch_tui.cli_app --mode auto --thread-id local-demo
 ```
+
+Legacy `memory.sqlite3` files are not imported, copied, or deleted during the
+Postgres cutover; no importer is provided. Archive or discard an old file as
+appropriate. `SqliteMemoryStore` and the built-in SQLite memory inspection and
+clear paths have been removed. Use an older OpenCouch release or an external
+read-only SQLite tool to inspect an archived file. The OpenAI Agents SDK
+`text_sessions.sqlite3` store is separate and preserved.
 
 Run backend tests:
 
 ```bash
 uv run pytest
 ```
-
-Run the local Telegram dogfood gateway:
-
-```bash
-OPENCOUCH_TELEGRAM_BOT_TOKEN="123456:abc..." \
-OPENCOUCH_TELEGRAM_ALLOW_FROM="123456789" \
-OPENCOUCH_TELEGRAM_OWNER_ID="hanyu" \
-OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER="fast" \
-uv run python -m channels.gateway telegram
-```
-
-The Telegram gateway is standalone and does not require the FastAPI server.
 
 Run backend tests with coverage:
 

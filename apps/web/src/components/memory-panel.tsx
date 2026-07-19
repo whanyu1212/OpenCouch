@@ -2,18 +2,7 @@
 
 import { useSessionStore } from "@/lib/session";
 import type { MemoryFact } from "@/lib/api";
-
-const CATEGORY_COLORS: Record<string, { bg: string; text: string; border: string }> = {
-  loss: { bg: "bg-purple-50", text: "text-purple-700", border: "border-purple-200/60" },
-  preference: { bg: "bg-rose-50", text: "text-rose-700", border: "border-rose-200/60" },
-  coping_strategy: { bg: "bg-teal-50", text: "text-teal-700", border: "border-teal-200/60" },
-  relationship: { bg: "bg-blue-50", text: "text-blue-700", border: "border-blue-200/60" },
-  trigger: { bg: "bg-amber-50", text: "text-amber-700", border: "border-amber-200/60" },
-  goal: { bg: "bg-emerald-50", text: "text-emerald-700", border: "border-emerald-200/60" },
-  context: { bg: "bg-indigo-50", text: "text-indigo-700", border: "border-indigo-200/60" },
-};
-
-const DEFAULT_COLORS = { bg: "bg-oc-warm-100", text: "text-oc-warm-600", border: "border-oc-warm-200" };
+import { categoryColors, formatCategory } from "@/components/ui/memory-kinds";
 
 function formatTime(iso: string): string {
   try {
@@ -24,12 +13,8 @@ function formatTime(iso: string): string {
   }
 }
 
-function formatCategory(cat: string): string {
-  return cat.replace(/_/g, " ");
-}
-
 function FactCard({ fact, isNew }: { fact: MemoryFact; isNew: boolean }) {
-  const colors = CATEGORY_COLORS[fact.category] || DEFAULT_COLORS;
+  const colors = categoryColors(fact.category);
 
   // Build a readable summary from the SPO triple
   const summary =

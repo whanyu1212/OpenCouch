@@ -11,12 +11,11 @@ interface NodeState {
   1: crisis_gate active
   2: turn_dispatch active
   3: load_memory active
-  4: therapeutic_subgraph active
+  4: TherapeuticAgent active
   5: finalize active
-  6: graph END
-  7: runtime extraction side effects active
+  6: runtime complete
 */
-const TOTAL_STEPS = 8;
+const TOTAL_STEPS = 7;
 const STEP_DELAY = 1000;
 const RESTART_DELAY = 3500;
 
@@ -32,8 +31,7 @@ type NodeId =
   | 'load_memory'
   | 'therapeutic'
   | 'finalize'
-  | 'end'
-  | 'runtime_extract';
+  | 'end';
 
 function getNodeStates(step: number): Record<NodeId, NodeState> {
   const idle: NodeState = { status: 'idle' };
@@ -53,7 +51,6 @@ function getNodeStates(step: number): Record<NodeId, NodeState> {
     therapeutic: idle,
     finalize: idle,
     end: idle,
-    runtime_extract: idle,
   };
 
   if (step >= 1) { base.start = done; base.crisis_gate = step === 1 ? active : done; }
@@ -62,7 +59,6 @@ function getNodeStates(step: number): Record<NodeId, NodeState> {
   if (step >= 4) { base.therapeutic = step === 4 ? active : done; }
   if (step >= 5) { base.finalize = step === 5 ? active : done; }
   if (step >= 6) { base.end = done; }
-  if (step >= 7) { base.runtime_extract = active; }
 
   return base;
 }
@@ -157,15 +153,15 @@ export default function GraphTopology(): React.JSX.Element {
   return (
     <div className={s.container}>
       <div className={s.header}>
-        <span className={s.headerTitle}>build_agent_workflow()</span>
+        <span className={s.headerTitle}>OpenAITextRuntime</span>
         <span className={s.headerBadges}>
-          <span className={s.headerBadge}>Command routing</span>
-          <span className={s.headerBadge}>RetryPolicy</span>
-          <span className={s.headerBadge}>runtime extraction</span>
+          <span className={s.headerBadge}>runtime routing</span>
+          <span className={s.headerBadge}>SDK Runner</span>
+          <span className={s.headerBadge}>SDK session memory</span>
         </span>
         <span className={s.headerStatus}>
           <span className={isRunning ? s.runDot : s.pausedDot} />
-          {step === 0 ? 'idle' : step >= TOTAL_STEPS - 1 ? 'side effects' : 'executing'}
+          {step === 0 ? 'idle' : step >= TOTAL_STEPS - 1 ? 'complete' : 'executing'}
         </span>
       </div>
 
@@ -179,7 +175,7 @@ export default function GraphTopology(): React.JSX.Element {
           />
           <Connector active={step >= 1} />
           <NodeBox
-            label="crisis_gate_node"
+            label="crisis_gate"
             sub="LLM-only safety classifier"
             state={ns.crisis_gate}
             variant="safety"
@@ -188,7 +184,7 @@ export default function GraphTopology(): React.JSX.Element {
 
         <div className={s.branchZone}>
           <div className={s.branchHeader}>
-            <span className={s.branchLabel}>Command(goto=...)</span>
+            <span className={s.branchLabel}>crisis gate route</span>
           </div>
           <div className={s.branchLanes}>
             <div className={s.branchLane}>
@@ -227,20 +223,20 @@ export default function GraphTopology(): React.JSX.Element {
               </div>
               <div className={s.branchNodeStack}>
                 <NodeBox
-                  label="turn_dispatch_node"
+                  label="turn_dispatch"
                   sub="memory · lookup · support"
                   state={ns.turn_dispatch}
                   variant="default"
                 />
                 <div className={s.routeOptions}>
                   <NodeBox
-                    label="memory_control_node"
+                    label="memory_control"
                     sub="saved-memory command"
                     state={ns.memory_control}
                     variant="default"
                   />
                   <NodeBox
-                    label="grounded_answer_node"
+                    label="grounded_lookup"
                     sub="factual lookup"
                     state={ns.grounded_answer}
                     variant="default"
@@ -255,8 +251,8 @@ export default function GraphTopology(): React.JSX.Element {
                 />
                 <Connector active={step >= 4} variant="branch" />
                 <NodeBox
-                  label="therapeutic_subgraph"
-                  sub="dispatch -> response | exercise"
+                  label="TherapeuticAgent"
+                  sub="response | guided exercise"
                   state={ns.therapeutic}
                   variant="therapy"
                 />
@@ -268,36 +264,20 @@ export default function GraphTopology(): React.JSX.Element {
         <div className={s.spine}>
           <Connector active={step >= 5} />
           <NodeBox
-            label="finalize_turn_node"
-            sub="operator.add reducer"
+            label="finalization"
+            sub="assistant turn"
             state={ns.finalize}
             variant="finalize"
           />
           <Connector active={step >= 6} />
           <NodeBox
             label="END"
-            sub="graph response returned"
+            sub="runtime response returned"
             state={ns.end}
             variant="terminal"
           />
         </div>
 
-        <div className={s.parallelZone}>
-          <div className={s.parallelHeader}>
-            <span className={s.parallelLabel}>runtime side effects after END</span>
-          </div>
-          <div className={s.parallelLanes}>
-            <NodeBox
-              label="TurnExtractionCoordinator"
-              sub="semantic + procedural memory"
-              state={ns.runtime_extract}
-              variant="extract"
-            />
-          </div>
-          <div className={s.parallelReducerTag}>
-            diagnostics still merge via _merge_dicts
-          </div>
-        </div>
       </div>
 
       <div className={s.footer}>

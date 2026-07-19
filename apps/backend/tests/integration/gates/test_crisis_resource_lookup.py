@@ -7,11 +7,11 @@ from typing import Any, cast
 
 import pytest
 
-from agent.graph import build_initial_state
+from agent.runtime import build_initial_state
+from agent.tools.crisis import build_crisis_resource_lookup_delta
 from agent.memory.modes import MemoryMode
 from agent.models import AgentInput, CrisisAssessment
-from agent.nodes.crisis_resource_lookup import run_crisis_resource_lookup_node
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
 from llm.base import BaseLLMClient, StructuredResponseT
 
@@ -100,16 +100,16 @@ def _state(
 
 
 @pytest.mark.asyncio
-async def test_crisis_resource_lookup_node_requires_llm() -> None:
+async def test_crisis_resource_lookup_requires_llm() -> None:
     with pytest.raises(RuntimeError, match="requires an LLM client"):
-        await run_crisis_resource_lookup_node(
+        await build_crisis_resource_lookup_delta(
             _state(),
-            cast(Any, _FakeRuntime(llm_client=None)),
+            _FakeRuntime(llm_client=None).context,
         )
 
 
 @pytest.mark.asyncio
-async def test_crisis_resource_lookup_node_writes_verified_singapore_resource() -> None:
+async def test_crisis_resource_lookup_writes_verified_singapore_resource() -> None:
     llm = _FakeLookupLLM(
         structured_responses=[
             {
@@ -132,9 +132,9 @@ async def test_crisis_resource_lookup_node_writes_verified_singapore_resource() 
         ],
     )
 
-    delta = await run_crisis_resource_lookup_node(
+    delta = await build_crisis_resource_lookup_delta(
         _state(),
-        cast(Any, _FakeRuntime(llm_client=llm)),
+        _FakeRuntime(llm_client=llm).context,
     )
 
     assert delta == {
@@ -153,7 +153,7 @@ async def test_crisis_resource_lookup_node_writes_verified_singapore_resource() 
 
 
 @pytest.mark.asyncio
-async def test_crisis_resource_lookup_node_records_location_refusal() -> None:
+async def test_crisis_resource_lookup_records_location_refusal() -> None:
     llm = _FakeLookupLLM(
         structured_responses=[
             {
@@ -164,9 +164,9 @@ async def test_crisis_resource_lookup_node_records_location_refusal() -> None:
         ]
     )
 
-    delta = await run_crisis_resource_lookup_node(
+    delta = await build_crisis_resource_lookup_delta(
         _state("I might hurt myself, but I don't want to share where I am."),
-        cast(Any, _FakeRuntime(llm_client=llm)),
+        _FakeRuntime(llm_client=llm).context,
     )
 
     assert delta == {
@@ -178,11 +178,22 @@ async def test_crisis_resource_lookup_node_records_location_refusal() -> None:
 
 
 @pytest.mark.asyncio
-async def test_crisis_resource_lookup_node_surfaces_lookup_failure() -> None:
-    llm = _FakeLookupLLM(structured_responses=[])
+async def test_crisis_resource_lookup_degrades_when_location_extraction_fails() -> None:
+    # Regression for #158: a failure in the location-extraction LLM call must degrade
+    # to lookup_error (location-free safety guidance) rather than propagate and crash
+    # the crisis turn. For speech-to-speech this is the difference between the model
+    # still speaking a safe reply and the user in crisis hearing dead air.
+    llm = _FakeLookupLLM(
+        structured_responses=[TimeoutError("provider timed out during extraction")],
+    )
 
-    with pytest.raises(AssertionError, match="No fake structured response configured"):
-        await run_crisis_resource_lookup_node(
-            _state(),
-            cast(Any, _FakeRuntime(llm_client=llm)),
-        )
+    delta = await build_crisis_resource_lookup_delta(
+        _state(),
+        _FakeRuntime(llm_client=llm).context,
+    )
+
+    assert delta == {
+        "inferred_location": "",
+        "found_resources": [],
+        "resource_lookup_status": "lookup_error",
+    }

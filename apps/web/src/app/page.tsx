@@ -7,6 +7,7 @@ import {
   getMemoryStatus,
   getMemoryFacts,
   getThreads,
+  type ApiMemoryMode,
   type Message,
   type MemoryStatus,
   type ThreadSummary,
@@ -22,6 +23,7 @@ import { resolveSlashCommand } from "@/lib/slash-commands";
 import { CouchLogo } from "@/components/logo";
 import { MemoryPanel, MemoryToggleButton } from "@/components/memory-panel";
 import { SessionPill } from "@/components/conversation-shell";
+import { SessionFeedback } from "@/components/session-feedback";
 
 const PROMPT_CARDS = [
   {
@@ -213,7 +215,7 @@ export default function TextChatPage() {
     if (sessionMode === "incognito") return;
     if (messages.length > 0) return;
     let cancelled = false;
-    getHistory(threadId)
+    getHistory(threadId, sessionMode)
       .then((history) => {
         const state = useSessionStore.getState();
         if (
@@ -245,12 +247,12 @@ export default function TextChatPage() {
 
   useEffect(() => {
     if (sessionMode === "incognito") return;
-    getMemoryStatus(threadId, userId)
+    getMemoryStatus(threadId, userId, sessionMode)
       .then(setMemoryStatus)
       .catch(() => {
         setNotice("Could not load memory status.");
       });
-    getMemoryFacts(threadId, userId || undefined)
+    getMemoryFacts(threadId, userId || undefined, sessionMode)
       .then((facts) => setMemoryFacts(facts))
       .catch(() => {
         setNotice("Could not load memory facts.");
@@ -266,7 +268,7 @@ export default function TextChatPage() {
 
   useEffect(() => {
     if (sessionMode === "incognito") return;
-    getThreads(5)
+    getThreads(5, sessionMode)
       .then(setRecentThreads)
       .catch(() => {
         setNotice("Could not load recent sessions.");
@@ -530,19 +532,14 @@ export default function TextChatPage() {
             </div>
 
             <div className="oc-prompts-grid">
-              {PROMPT_CARDS.slice(0, 4).map((card) => (
-                <button
-                  key={card.id}
-                  type="button"
-                  className="oc-prompt-card"
-                  onClick={() => sendMessage(card.prompt)}
-                >
+              {PROMPT_CARDS.map((card) => (
+                <article key={card.id} className="oc-prompt-card">
                   <span className="oc-prompt-icon">{card.icon}</span>
                   <span className="oc-prompt-body">
                     <span className="oc-prompt-title">{card.label}</span>
                     <span className="oc-prompt-desc">{card.description}</span>
                   </span>
-                </button>
+                </article>
               ))}
             </div>
 
@@ -575,21 +572,31 @@ export default function TextChatPage() {
         ) : (
           <div className="oc-chat-inner">
             <div className="space-y-4">
-              {messages.map((msg, i) => (
+              {messages.map((msg, i) => {
+                const groupedWithPrev = i > 0 && messages[i - 1].role === msg.role;
+                return (
                 <div
                   key={i}
                   className="animate-slideUp"
                   style={{ animationDelay: `${Math.min(i * 30, 200)}ms` }}
                 >
                   {msg.role === "user" ? (
-                    <div className="oc-bubble oc-bubble--user">
+                    <div
+                      className={`oc-bubble oc-bubble--user${groupedWithPrev ? " oc-bubble--grouped" : ""}`}
+                    >
                       <div className="oc-bubble-body">{msg.content}</div>
                     </div>
                   ) : (
-                    <div className="oc-bubble">
-                      <div className="oc-bubble-mark">
-                        <CouchLogo variant="mono" className="w-3.5 h-3.5" />
-                      </div>
+                    <div
+                      className={`oc-bubble${groupedWithPrev ? " oc-bubble--grouped" : ""}`}
+                    >
+                      {groupedWithPrev ? (
+                        <div className="oc-bubble-mark--spacer" aria-hidden="true" />
+                      ) : (
+                        <div className="oc-bubble-mark">
+                          <CouchLogo variant="mono" className="w-3.5 h-3.5" />
+                        </div>
+                      )}
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div className="oc-bubble-body">{msg.content}</div>
                         {msg.responseStyle && <StateStrip msg={msg} />}
@@ -606,7 +613,8 @@ export default function TextChatPage() {
                     </div>
                   )}
                 </div>
-              ))}
+                );
+              })}
 
               {isLoading && !chatStreamingStarted && (
                 <div
@@ -618,55 +626,31 @@ export default function TextChatPage() {
                   <div className="oc-bubble-mark">
                     <CouchLogo variant="mono" className="w-3.5 h-3.5" />
                   </div>
-                  <div
-                    className="oc-bubble-body"
-                    style={{ minWidth: 180 }}
-                  >
-                    {stages.length > 0 && (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 6 }}>
-                        {stages.map((s, i) => (
-                          <div
-                            key={i}
-                            className="animate-fadeIn"
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
-                              fontFamily: "var(--font-mono)",
-                              fontSize: 12,
-                              color: "var(--color-oc-muted)",
-                            }}
-                          >
-                            <svg
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2.4"
-                              className="w-3.5 h-3.5"
-                              style={{ color: "var(--color-oc-green)" }}
-                            >
-                              <polyline points="20 6 9 17 4 12" />
-                            </svg>
-                            <span>{s}</span>
-                          </div>
-                        ))}
+                  <div className="oc-bubble-body" style={{ minWidth: 180 }}>
+                    <div className="oc-thinking">
+                      {stages.length > 0 && (
+                        <div className="oc-thinking-stages">
+                          {stages.map((s, i) => (
+                            <div key={i} className="oc-thinking-stage animate-fadeIn">
+                              <svg
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2.4"
+                              >
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                              <span>{s}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="oc-thinking-status">
+                        <span className="oc-thinking-breath">
+                          <span />
+                        </span>
+                        <span>{stages.length === 0 ? "starting…" : "processing…"}</span>
                       </div>
-                    )}
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        fontFamily: "var(--font-mono)",
-                        fontSize: 12,
-                        color: "var(--color-oc-cta)",
-                      }}
-                    >
-                      <span className="relative flex h-3.5 w-3.5 items-center justify-center shrink-0">
-                        <span className="animate-ping absolute inline-flex h-2.5 w-2.5 rounded-full bg-oc-cta opacity-50" />
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-oc-cta" />
-                      </span>
-                      <span>{stages.length === 0 ? "starting…" : "processing…"}</span>
                     </div>
                   </div>
                 </div>
@@ -679,10 +663,10 @@ export default function TextChatPage() {
       {/* Composer */}
       <div className="oc-composer-bar">
         <div style={{ width: "100%", maxWidth: 680 }}>
-          {isPersistent &&
-          lastEndedSession?.threadId === threadId ? (
+          {lastEndedSession?.threadId === threadId ? (
             <SessionEndedCard
               session={lastEndedSession}
+              memoryMode={sessionMode}
               onNewSession={handleNewSession}
               onContinueInThread={handleContinueInThread}
               onReviewMemory={handleReviewMemory}
@@ -725,12 +709,14 @@ export default function TextChatPage() {
 
 function SessionEndedCard({
   session,
+  memoryMode,
   onNewSession,
   onContinueInThread,
   onReviewMemory,
   newSessionDisabled,
 }: {
   session: EndedSessionResult;
+  memoryMode: ApiMemoryMode;
   onNewSession: () => void;
   onContinueInThread: () => void;
   onReviewMemory: () => void;
@@ -764,6 +750,12 @@ function SessionEndedCard({
           ))}
         </div>
       ) : null}
+      <SessionFeedback
+        threadId={session.threadId}
+        memoryMode={memoryMode}
+        modality={session.modality}
+        className="mt-3"
+      />
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"

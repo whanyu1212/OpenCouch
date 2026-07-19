@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-07-19 — Legacy SQLite Memory Removal
+
+- Removed `SqliteMemoryStore`, its runtime selection and store compatibility
+  tests, and the built-in SQLite modes from the memory inspection and clear
+  tools; Postgres is now the only supported durable long-term-memory backend
+- Left old `memory.sqlite3` files untouched with no importer; archived files
+  require an older OpenCouch release or an external read-only SQLite tool, while
+  the separate OpenAI Agents SDK `text_sessions.sqlite3` store remains preserved
+- Removed the deprecated flat `PersistentAgentRuntime` constructor arguments;
+  runtime construction now accepts only the keyword-only `storage_paths`,
+  `persistence_config`, `dependencies`, and `behavior_config` groups
+- Removed obsolete thread, crisis-log, and feedback SQLite path constants and
+  fields. `RuntimeStoragePaths` now contains only `text_session_sqlite_path`,
+  which belongs to the separate OpenAI SDK conversation-history store
+- Renamed the TUI `--sqlite-path` option to
+  `--text-session-sqlite-path`; removed flat constructor keywords and the old
+  TUI option are now rejected
+
 ## 2026-05-13 — Therapeutic Repair, Resource Routing, and Voice Policy Alignment
 
 ### Therapeutic text behavior
@@ -21,7 +39,7 @@
 ### Local dogfooding
 - Added `scripts/voice_agent.sh`, a dedicated LiveKit voice-agent launcher that starts the Dockerized Postgres service by default and then runs `agent.voice.agent`; it defaults to `start` but forwards LiveKit agent commands such as `console`, `console --text`, and `connect --room <name>`
 - Added voice-script flags for common dogfooding configuration without requiring manual environment exports: `--user-id`, `--thread-id`, `--memory-mode`, `--backend`, `--database-url`, and `--no-postgres`
-- Kept `scripts/cli_dogfood.sh` as the text-agent wrapper, so local users can run the text and voice agents independently while the web UI is being reworked
+- Kept `scripts/text_repl.sh` as the text-agent wrapper, so local users can run the text and voice agents independently while the web UI is being reworked
 
 ### LiveKit text-mode verification
 - Fixed the LiveKit local text console path so typed turns go through the same OpenCouch pre-turn policy hook as spoken turns, including crisis classification, turn policy, and exercise-consent state
@@ -94,7 +112,7 @@ The public `AgentOutput.response_type` field is unchanged in shape and value —
 ### Validation
 - Backend test suite at **1025 passed, 0 failed, 15 skipped** throughout each of the three field deletions; assertions on the deleted fields were removed (~17 across `test_state_contracts.py`, `test_crisis_gate.py`, `test_therapeutic_routing.py`, `test_grounded_lookup.py`, `test_diagnostics_reducer.py`, `test_opencouch_cli.py`, `test_session_trajectory_eval_helpers.py`, `test_grounded_lookup.py`)
 - Frontend type definitions, the assistant-message Pill rendering, the debug `state` page sections, and the CLI diagnostics line were updated in the same commit so the public API and UI stay coherent
-- Docs (`AgentGraph.tsx`, `StateFields.tsx`, `NodeCatalog.tsx`, `agent/README.md`) updated to reflect the trimmed state surface
+- Docs components and `agent/README.md` updated to reflect the trimmed state surface
 
 ## 2026-05-07 — Agent Module Restructure + Service Extraction + Latency Wins
 
@@ -122,7 +140,7 @@ This entry covers ~50 commits on `refactor/agent-restructure` since the 2026-05-
 
 ### Local dogfooding ergonomics
 - Added an upfront `get_settings()` validation that raises a clear, actionable `ValueError` when `OPENCOUCH_PERSISTENCE_BACKEND=postgres` (the default) is selected without `OPENCOUCH_MEMORY_DATABASE_URL`, replacing the previous abstract `thread_database_url is required when thread_persistence_backend='postgres'` failure that surfaced deep inside the runtime — the new message names both escape hatches (set the URL with the docker compose default, or switch to `OPENCOUCH_PERSISTENCE_BACKEND=sqlite`)
-- Added `scripts/cli_dogfood.sh`, a thin wrapper that ensures the Dockerized Postgres service is healthy (`docker compose up -d postgres --wait`) before launching the CLI from `apps/backend`, forwarding any flags through `"$@"`; raw `uv run python -m opencouch_cli` invocations remain canonical for guest, deterministic, and SQLite-fallback cases that do not need Postgres
+- Added `scripts/text_repl.sh`, a thin wrapper that ensures the Dockerized Postgres service is healthy (`docker compose up -d postgres --wait`) before launching the CLI from `apps/backend`, forwarding any flags through `"$@"`; raw `uv run python -m opencouch_cli` invocations remain canonical for guest, deterministic, and SQLite-fallback cases that do not need Postgres
 - Updated the root README CLI section to introduce the wrapper alongside the existing raw invocations, with a backlink to the Environment section and an explicit "when not to use it" callout
 
 ### Validation
@@ -319,7 +337,7 @@ This entry covers ~50 commits on `refactor/agent-restructure` since the 2026-05-
 - Moved deterministic crisis regex policy into `agent/safety/crisis_rules.py` so `crisis_gate.py` now focuses on node orchestration, schema normalization, and routing
 - Tightened `CrisisAssessmentSchema` with schema-native field descriptions and simplified the node flow by removing duplicate validation layers
 - Removed unused crisis-gate shadow monitoring and disagreement logging after confirming it was adding complexity without an active operational consumer
-- Added direct standalone `run_crisis_gate_node(...)` tests for override routing, deterministic fallback, LLM-primary success, LLM-exception fallback, and truth-table enforcement
+- Added direct standalone crisis-gate tests for override routing, deterministic fallback, LLM-primary success, LLM-exception fallback, and truth-table enforcement
 
 ### CLI therapeutic theme refinement
 - Updated the OpenCouch CLI Rich theme from amber-dominant tones to a calmer **sage + muted blue** palette to better match the therapeutic product tone

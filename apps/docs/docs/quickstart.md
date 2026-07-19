@@ -10,12 +10,13 @@ import cliScreenshot from '@site/static/img/cli-example.png';
 
 ## Prerequisites
 
-- Python 3.12+
+- Python 3.11+ (3.12 recommended)
 - [uv](https://docs.astral.sh/uv/) for backend dependency management
 - pnpm for the web and docs apps
-- A Gemini or OpenAI API key for LLM-backed runs
+- Docker for the full Compose stack and local Postgres-backed persistence
+- An OpenAI API key for LLM-backed runs and OpenAI Realtime voice
 
-Deterministic CLI mode works without external model keys.
+Deterministic TUI sessions and many local checks work without external model keys.
 
 ## Install
 
@@ -30,59 +31,50 @@ uv sync`}
 ## Environment
 
 OpenCouch loads local environment files from the repo root and
-`apps/backend` (`.env`, then `.env.local`). Real model runs need at
-least one provider:
+`apps/backend` (`.env`, then `.env.local`). Real model runs need an
+OpenAI API key:
 
 <TerminalWindow title="env — text models">
 {`# Defaults to openai when unset.
 LLM_PROVIDER=openai
-OPENAI_API_KEY=...
-
-# Alternative provider.
-# LLM_PROVIDER=gemini
-# GEMINI_API_KEY=...
-# GOOGLE_API_KEY=...`}
+OPENAI_API_KEY=...`}
 </TerminalWindow>
 
-Optional surfaces need additional variables:
+## Run the TUI
 
-<TerminalWindow title="env — optional surfaces">
-{`# Web voice via LiveKit + OpenAI Realtime.
-LIVEKIT_URL=wss://your-project.livekit.cloud
-LIVEKIT_API_KEY=...
-LIVEKIT_API_SECRET=...
-OPENAI_API_KEY=...
+The Textual TUI is the local dogfood surface for the text agent. It
+ships with switchable `Dogfood`, `Debug`, `Chat`, and `Memory` views;
+`Tab` and `Shift+Tab` cycle them, and `Ctrl+1`–`Ctrl+4` jump directly.
+It starts in light mode by default — use `--theme dark` or press
+`Ctrl+Y` inside the TUI to switch.
 
-# Telegram dogfood gateway.
-OPENCOUCH_TELEGRAM_BOT_TOKEN=123456:abc...
-OPENCOUCH_TELEGRAM_ALLOW_FROM=123456789
-OPENCOUCH_TELEGRAM_OWNER_ID=alice
-OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast`}
-</TerminalWindow>
-
-## Run the CLI
+Run the `./scripts/text_tui.sh` commands below from the repository
+root. If you're still in `apps/backend` from the install step, `cd
+../..` first.
 
 ### Deterministic mode
 
-No LLM calls, in-memory only. Good for verifying the graph and slash
-commands.
+No LLM calls, in-memory only. Good for verifying TUI rendering, slash
+commands, and local persistence plumbing. User turns return a labeled
+deterministic smoke response; switch to `auto` or `hybrid` for real
+crisis classification and therapeutic generation.
 
-<TerminalWindow title="bash — deterministic CLI">
-{`cd apps/backend
-uv run python -m opencouch_cli \\
+<TerminalWindow title="bash — deterministic TUI">
+{`./scripts/text_tui.sh \\
     --mode deterministic \\
     --memory-mode guest \\
+    --view dogfood \\
     --thread-id scratch`}
 </TerminalWindow>
 
 ### Full mode with persistent memory
 
 Real LLM with durable configured storage. Facts, session arcs, and style
-rules survive restart; Postgres is recommended for the local durable path.
+rules survive restart; Postgres is the only supported durable long-term
+memory backend.
 
-<TerminalWindow title="bash — persistent CLI">
-{`cd apps/backend
-uv run python -m opencouch_cli \\
+<TerminalWindow title="bash — persistent TUI">
+{`./scripts/text_tui.sh \\
     --mode auto \\
     --memory-mode persistent \\
     --user-id alice \\
@@ -93,111 +85,75 @@ Reuse the same `--user-id` and `--thread-id` to resume a conversation.
 Use the same `--user-id` with a new `--thread-id` to start a fresh
 session that still has access to the user's long-term memory.
 
+You can also invoke the TUI directly from `apps/backend` without the
+script wrapper:
+
+<TerminalWindow title="bash — direct TUI invocation">
+{`cd apps/backend
+.venv/bin/python -m opencouch_tui \\
+    --mode auto \\
+    --memory-mode persistent \\
+    --user-id alice \\
+    --thread-id alice-s1`}
+</TerminalWindow>
+
 <img className="docs-screenshot" src={cliScreenshot} alt="OpenCouch CLI session" />
 
 ## Run the Web App
 
-Start the backend and frontend in separate terminals:
+For day-to-day web development, start Postgres + the backend API with Compose and run the frontend locally for hot reload:
 
-<TerminalWindow title="bash — API server">
-{`cd apps/backend
-uv run uvicorn main:app --port 8000 --reload`}
+<TerminalWindow title="bash — backend stack">
+{`./scripts/dev_api_stack.sh`}
 </TerminalWindow>
 
-<TerminalWindow title="bash — web UI">
-{`# From the repository root
-pnpm --dir apps/web dev`}
+<TerminalWindow title="bash — local web UI">
+{`cd apps/web
+NEXT_PUBLIC_API_URL=http://localhost:8080/api pnpm dev`}
 </TerminalWindow>
 
-Open `http://localhost:3000`. The web app talks to
-`http://localhost:8000` by default. Set `NEXT_PUBLIC_API_URL` in
-`apps/web/.env.local` if the API runs somewhere else.
+Open `http://localhost:3000`. The Compose API is exposed at
+`http://localhost:8080/api`.
 
-:::warning Web UI is temporarily behind the backend
-The backend text and voice agents are the current dogfooding surfaces
-while the app shell catches up with the agent refactor. Use the CLI
-and voice scripts below when you want the most reliable local path.
+:::tip Full-stack Compose smoke test
+The `web` service remains available in Compose but is profile-gated.
+Use it when you want a production-built web smoke test instead of
+Next.js hot reload:
+
+```bash
+./scripts/dev_full_stack.sh
+# or: docker compose --profile web up
+```
+:::
+
+:::info Fully manual backend mode
+If you run the backend directly from `apps/backend`, use port `8000`.
+The web app defaults to `http://localhost:8000/api`, so this path does
+not need `NEXT_PUBLIC_API_URL`.
+
+```bash
+cd apps/backend
+.venv/bin/python -m uvicorn main:app --port 8000 --reload
+```
+:::
+
+:::note Choosing a surface
+The web app is the primary product UI — streaming chat, the memory
+manager, and OpenAI Realtime voice all run there. The TUI is the
+deterministic-mode dogfood path: it needs no provider key and is handy
+for quick local checks and scripted runs.
 :::
 
 ## Voice Mode
 
-The current browser voice path is LiveKit-native. For standalone
-dogfooding, use the wrapper script from the repository root; it starts
-Dockerized Postgres by default and forwards LiveKit worker commands.
-Use `console` for a local microphone session; `start` is worker mode
-for a browser/LiveKit room and does not listen to your terminal
-microphone:
-
-<TerminalWindow title="bash — LiveKit voice">
-{`./scripts/voice_agent.sh --user-id dogfood console
-./scripts/voice_agent.sh --user-id dogfood console --text
-./scripts/voice_agent.sh --memory-mode incognito console
-
-# Worker mode for browser/LiveKit room sessions.
-./scripts/voice_agent.sh --user-id dogfood start`}
-</TerminalWindow>
-
-If you want to run the worker directly from `apps/backend`, the
-underlying commands are:
-
-<TerminalWindow title="bash — voice console">
-{`cd apps/backend
-
-# Long-running token-dispatch worker
-.venv/bin/python -m agent.voice.agent start
-
-# Spoken console, uses your mic
-.venv/bin/python -m agent.voice.agent console
-
-# Text-only
-.venv/bin/python -m agent.voice.agent console --text`}
-</TerminalWindow>
-
-The standalone LiveKit test page is still available from the backend
-at `/api/voice/livekit/test`. The wrapper script is the preferred
-voice dogfood surface while the web UI catches up with the backend
-refactor. See [Voice (LiveKit)](/docs/voice) for the full architecture.
-
-## Telegram Gateway
-
-The Telegram gateway is a standalone process for direct-message
-dogfood. FastAPI does not need to be running.
-
-Create a bot with `@BotFather`, DM it once, then get your numeric
-Telegram sender id:
-
-<TerminalWindow title="bash — Telegram getUpdates">
-{`curl "https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates"`}
-</TerminalWindow>
-
-Use `message.from.id` as the allowlisted sender. If Telegram returns a
-409 webhook conflict, clear the webhook and retry:
-
-<TerminalWindow title="bash — Telegram deleteWebhook">
-{`curl "https://api.telegram.org/bot<YOUR_TOKEN>/deleteWebhook"`}
-</TerminalWindow>
-
-Run the gateway from `apps/backend`:
-
-<TerminalWindow title="bash — Telegram gateway">
-{`OPENCOUCH_TELEGRAM_BOT_TOKEN="123456:abc..." \\
-OPENCOUCH_TELEGRAM_ALLOW_FROM="123456789" \\
-OPENCOUCH_TELEGRAM_OWNER_ID="alice" \\
-OPENCOUCH_TELEGRAM_RESPONSE_MODEL_TIER=fast \\
-OPENCOUCH_MEMORY_MODE=persistent \\
-OPENCOUCH_TELEGRAM_THREAD_ROTATION_ENABLED=true \\
-uv run python -m channels.gateway telegram`}
-</TerminalWindow>
-
-Use `/start` or `/help` for the static intro, send normal messages to
-talk, and use `/end` to close the active session manually. After
-`/end`, the next normal message starts a fresh session; `/start` is
-not required again. See [Telegram Gateway](/docs/system/telegram) for
-thread rotation and rendering details.
+Voice mode runs from the web app at `/voice` using OpenAI Realtime
+WebRTC. Start the backend and web app, complete setup, then open the
+Voice tab. Persistent sessions reuse the same memory owner as text;
+incognito voice sessions do not write durable memory.
 
 ## Slash Commands
 
-Once inside the text CLI:
+Once inside the TUI:
 
 ### Session & Display
 
@@ -205,8 +161,12 @@ Once inside the text CLI:
 |---|---|
 | `/help` | List all commands |
 | `/status` | Thread id, response tier, turn count, and active response LLM |
+| `/doctor [verbose]` | Check runtime readiness for the current session |
 | `/history [n]` | Recent messages with response-style metadata |
 | `/context` | Session context snapshot |
+| `/summary [short\|full]` | Generate a recap of the current session |
+| `/search <history\|memory\|all> <query>` | Search the active transcript, stored memory, or both |
+| `/export <md\|json\|txt> [filename]` | Export the current session transcript to a file |
 | `/keys` | Show keyboard shortcuts and prompt tips |
 | `/ui <compact\|full>` | Switch toolbar density |
 | `/theme <mono\|contrast\|calm>` | Switch prompt color theme |
@@ -221,9 +181,9 @@ Once inside the text CLI:
 |---|---|
 | `/memory status` | Per-namespace counts, recall toggle |
 | `/memory list [facts\|sessions\|rules]` | Semantic facts, episodic arcs, or procedural rules |
-| `/memory recall on\|off` | Toggle proactive content recall |
-| `/memory forget fact\|session\|rule <n>` | Delete one record by index |
-| `/memory clear facts\|sessions\|rules\|all` | Wipe a namespace |
+| `/memory recall [on\|off]` | Toggle proactive recall; omit on/off to show current state |
+| `/memory forget <fact\|session\|rule> <n>` | Delete one record by index |
+| `/memory clear <facts\|sessions\|rules\|all>` | Wipe a namespace |
 | `/memory purge-crisis [days]` | Retention-purge crisis log |
 
 ### Threads
@@ -240,8 +200,9 @@ Once inside the text CLI:
 |---|---|
 | `/mode <deterministic\|hybrid\|auto>` | Switch LLM resolution mode |
 | `/response-tier <fast\|quality>` | Switch response quality/latency tradeoff |
-| `/trace on\|off\|once` | Show or hide routing trace overlay |
-| `/debug state` | Raw graph state as JSON |
+| `/verbosity <compact\|verbose>` | Switch turn observability detail |
+| `/trace <on\|off\|once>` | Show or hide routing trace overlay |
+| `/debug state` | Raw developer/debug runtime state as JSON |
 
 ### Aliases
 
@@ -269,42 +230,29 @@ Run backend tests from `apps/backend`:
 
 <TerminalWindow title="bash — backend tests">
 {`cd apps/backend
-uv run pytest tests/unit tests/integration`}
+.venv/bin/python -m pytest tests/unit tests/integration`}
 </TerminalWindow>
 
-Run frontend checks from the repo root:
+Run frontend checks from `apps/web`:
 
 <TerminalWindow title="bash — web checks">
-{`pnpm --dir apps/web lint
-pnpm --dir apps/web build`}
+{`cd apps/web
+pnpm lint
+pnpm build`}
 </TerminalWindow>
 
-The eval harness is being rebuilt. Until the new harness lands, use backend
-tests and targeted live-provider tests as the regression checks.
+Use backend tests and targeted live-provider tests as the regression checks.
 
-## Eval-driven Observability
+## Trace Observability
 
 To enable Opik tracing for local text runs, add this to `.env`
-before starting the CLI or API:
+before starting the TUI or API:
 
 <TerminalWindow title="env — Opik tracing">
-{`# Primary external trace backend.
-OPIK_API_KEY=...
+{`OPIK_API_KEY=...
 OPIK_WORKSPACE=...
-OPIK_PROJECT_NAME=opencouch-dev
-
-# Optional secondary LangSmith / LangChain tracing.
-LANGSMITH_TRACING=true
-LANGSMITH_ENDPOINT=https://api.smith.langchain.com
-LANGSMITH_API_KEY=...
-LANGSMITH_PROJECT=opencouch-dev
-
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
-LANGCHAIN_API_KEY=...
-LANGCHAIN_PROJECT=opencouch-dev`}
+OPIK_PROJECT_NAME=opencouch-dev`}
 </TerminalWindow>
 
-Opik is the primary trace surface for graph execution, run filtering, and
-experiment review. LangSmith tracing remains supported as an optional secondary
-LangChain integration.
+Opik is the trace surface for runtime execution, run filtering, and
+experiment review.

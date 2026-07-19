@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
 
+from agent.memory.extraction import extract_session_candidates
 from agent.memory.policy.candidates import SessionMemoryBuffer
-from agent.memory.embeddings import EmbeddingProvider
-from agent.memory.extraction_service import (
-    extract_procedural_rules,
-    extract_semantic_facts,
-)
-from agent.memory.models import StoredSessionArc
+from agent.memory.providers.embeddings import EmbeddingProvider
+from agent.memory.types import StoredSessionArc
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.runtime.session.commit import run_commit_session_memory
+from agent.runtime.session.history import (
+    SessionConversation,
+    session_conversation_from_transcript,
+)
 from agent.runtime.session.summarize import run_summarize_session
 from agent.state import AgentState
 from llm.base import BaseLLMClient
@@ -34,6 +34,8 @@ async def finalize_session_window(
     memory_store: MemoryStore,
     memory_mode: MemoryMode,
     embedding_provider: EmbeddingProvider | None,
+    conversation: SessionConversation | None = None,
+    extract_candidates: bool = False,
 ) -> StoredSessionArc | None:
     """Run the shared session-end summarization and memory commit path.
 
@@ -50,6 +52,9 @@ async def finalize_session_window(
         memory_mode (MemoryMode): Runtime memory mode.
         embedding_provider (EmbeddingProvider | None): Optional embedding
             provider for memory writes.
+        conversation (SessionConversation | None): Canonical public
+            conversation projection for this session. If absent, it is derived
+            from the provided state window once and reused across finalization.
 
     Returns:
         StoredSessionArc | None: The stored session arc, or ``None`` when
@@ -57,6 +62,9 @@ async def finalize_session_window(
     """
 
     approach_hint = session_buffer.dominant_approach() if session_buffer else None
+    session_conversation = conversation or session_conversation_from_transcript(
+        state.get("transcript", [])
+    )
 
     stored_arc = await run_summarize_session(
         state,
@@ -69,7 +77,23 @@ async def finalize_session_window(
         crisis_level_max=crisis_level_max,
         embedding_provider=embedding_provider,
         approach_hint=approach_hint,
+        conversation=session_conversation,
     )
+
+    # Whole-transcript intake: populate the buffer that the commit step drains.
+    # Off the realtime path, so an extra LLM pass here is fine. Skips itself in
+    # incognito / no-LLM / empty-session and never raises out.
+    # Opt-in: only the normal session-end path extracts. end_transcript_session
+    # finalizes an externally-supplied transcript and must NOT replay extraction
+    # (its contract is summarize-only), so it leaves extract_candidates=False.
+    if extract_candidates and session_buffer is not None:
+        await extract_session_candidates(
+            conversation=session_conversation,
+            session_id=thread_id,
+            session_buffer=session_buffer,
+            llm_client=llm_client,
+            memory_mode=memory_mode,
+        )
 
     commit_result = await run_commit_session_memory(
         state,
@@ -78,6 +102,7 @@ async def finalize_session_window(
         stored_arc=stored_arc,
         embedding_provider=embedding_provider,
         llm_client=llm_client,
+        conversation=session_conversation,
     )
     if commit_result is not None:
         logger.info(
@@ -90,69 +115,3 @@ async def finalize_session_window(
             commit_result.procedural_skips,
         )
     return stored_arc
-
-
-async def extract_memory_from_transcript(
-    *,
-    thread_id: str,
-    user_id: str | None,
-    transcript: list[dict[str, Any]],
-    llm_client: BaseLLMClient | None,
-    session_buffer: SessionMemoryBuffer,
-    memory_store: MemoryStore,
-    memory_mode: MemoryMode,
-    embedding_provider: EmbeddingProvider | None,
-) -> None:
-    """Replay transcript user turns through the extraction services.
-
-    Args:
-        thread_id (str): The thread identifier for provenance.
-        user_id (str | None): The resolved user identifier, if any.
-        transcript (list[dict[str, Any]]): The serialized transcript to replay.
-        llm_client (BaseLLMClient | None): The LLM client used by extraction.
-        session_buffer (SessionMemoryBuffer): The session buffer to populate.
-        memory_store (MemoryStore): Store available to extraction.
-        memory_mode (MemoryMode): Runtime memory mode.
-        embedding_provider (EmbeddingProvider | None): Optional embedding
-            provider for extraction writes.
-
-    Returns:
-        None: This helper only mutates the provided session buffer.
-    """
-
-    user_turn_count = 0
-    for transcript_index, turn in enumerate(transcript):
-        if turn.get("role") != "user":
-            continue
-
-        message = (turn.get("content") or "").strip()
-        if not message:
-            continue
-
-        user_turn_count += 1
-        state = cast(
-            AgentState,
-            {
-                "message": message,
-                "user_id": user_id,
-                "session_id": thread_id,
-                "transcript": list(transcript[: transcript_index + 1]),
-                "session_progress": {"turn_count": user_turn_count},
-                "route": "therapeutic",
-            },
-        )
-        await extract_semantic_facts(
-            state,
-            llm_client=llm_client,
-            memory_store=memory_store,
-            memory_mode=memory_mode,
-            embedding_provider=embedding_provider,
-            session_buffer=session_buffer,
-        )
-        await extract_procedural_rules(
-            state,
-            llm_client=llm_client,
-            memory_store=memory_store,
-            memory_mode=memory_mode,
-            session_buffer=session_buffer,
-        )

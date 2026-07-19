@@ -1,0 +1,567 @@
+"""Therapeutic execution path helpers for the OpenAI text runtime."""
+
+from __future__ import annotations
+
+import time
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from hashlib import sha256
+from typing import Any, cast
+
+from pydantic import BaseModel, Field
+
+from agent.flows.sdk_fallback import (
+    can_fallback_to_control_response,
+    openai_sdk_fallback_reason,
+)
+from agent.observability.timing import elapsed_ms
+from agent.specialists.therapeutic import THERAPEUTIC_AGENT_NAME
+from agent.runtime.context import OpenAITextRunContext
+from agent.runtime.prompt_utils import (
+    chunk_from_sdk_event,
+    final_output_text,
+)
+from agent.runtime.session.history import include_prompt_history
+from agent.runtime.services import TextRuntimeServices, TextRuntimeServicesFactory
+from agent.runtime.text_turn_graph import TextRoutePlan
+from agent.runtime.types import (
+    RouteHandler,
+    TextRuntimeChunkEvent,
+    TextRuntimeConfig,
+    TextRuntimeStateEvent,
+    TextRuntimeStatusEvent,
+    TextRuntimeStreamEvent,
+)
+from agent.runtime.workflow_context import WorkflowContext
+from agent.specialists.therapeutic_response.runtime_prompts import (
+    build_therapeutic_response_llm_request,
+    response_style_from_state,
+    therapeutic_approach_from_state,
+)
+from agent.state import AgentState
+from llm.base import BaseLLMClient
+
+
+@dataclass(frozen=True)
+class TherapeuticAgentResult:
+    response_text: str
+    runtime_mode: str
+    response_style: str
+    sdk_duration_ms: float
+
+
+@dataclass(frozen=True)
+class TherapeuticToolMergeResult:
+    runtime_mode: str
+    response_style: str
+    response_text: str
+
+
+class TherapeuticResponseLLMOutput(BaseModel):
+    response_text: str = Field(
+        description=(
+            "Final user-facing assistant message only. Do not include tool calls, "
+            "JSON, XML tags, internal style names, or implementation traces."
+        )
+    )
+
+
+@dataclass(frozen=True)
+class ResponseLLMText:
+    text: str
+    sanitized: bool
+    raw_text: str
+
+
+async def run_therapeutic_response_llm_turn(
+    services: TextRuntimeServices,
+    state: AgentState,
+    *,
+    llm_client: BaseLLMClient,
+    session: Any | None,
+    fallback_reason: str | None = None,
+) -> TherapeuticAgentResult:
+    from agent.runtime.state_ops import apply_state_delta
+
+    run_start = time.monotonic()
+    request = build_therapeutic_response_llm_request(
+        state,
+        include_recent_history=include_prompt_history(session),
+    )
+    structured_output = await llm_client.generate_structured(
+        prompt=request.prompt,
+        response_schema=TherapeuticResponseLLMOutput,
+        system_instruction=request.system_instruction,
+    )
+    response_text = response_llm_text_from_structured_output(structured_output)
+    diagnostics = {
+        **dict(state.get("diagnostics", {}) or {}),
+        **response_llm_diagnostics(
+            response_text,
+            structured=True,
+            fallback_reason=fallback_reason,
+        ),
+    }
+    apply_state_delta(state, {"diagnostics": diagnostics})
+    return TherapeuticAgentResult(
+        response_text=response_text.text,
+        runtime_mode="safe_therapeutic",
+        response_style=response_style_from_state(state),
+        sdk_duration_ms=elapsed_ms(run_start),
+    )
+
+
+async def run_therapeutic_response_llm_stream(
+    services: TextRuntimeServices,
+    state: AgentState,
+    *,
+    config: Any,
+    llm_client: BaseLLMClient,
+    session: Any | None,
+    fallback_reason: str | None = None,
+) -> AsyncIterator[TextRuntimeStreamEvent]:
+    from agent.runtime.state_ops import apply_state_delta
+
+    run_start = time.monotonic()
+    request = build_therapeutic_response_llm_request(
+        state,
+        include_recent_history=include_prompt_history(session),
+    )
+    chunks: list[str] = []
+    async for chunk in llm_client.generate_text_stream(
+        prompt=request.prompt,
+        system_instruction=request.system_instruction,
+    ):
+        chunks.append(chunk)
+    response_text = sanitize_response_llm_text("".join(chunks))
+    if response_text.text:
+        yield TextRuntimeChunkEvent(text=response_text.text)
+    diagnostics = {
+        **dict(state.get("diagnostics", {}) or {}),
+        **response_llm_diagnostics(
+            response_text,
+            structured=False,
+            fallback_reason=fallback_reason,
+        ),
+    }
+    apply_state_delta(state, {"diagnostics": diagnostics})
+    final_state = await services.finalize_turn(
+        state,
+        response_text=response_text.text,
+        config=config,
+        runtime_mode="safe_therapeutic",
+        response_style=response_style_from_state(state),
+        selected_agent=THERAPEUTIC_AGENT_NAME,
+        sdk_duration_ms=elapsed_ms(run_start),
+        streamed=True,
+    )
+    yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+    yield TextRuntimeStateEvent(state=final_state)
+
+
+async def run_therapeutic_turn(
+    services: TextRuntimeServices,
+    state: AgentState,
+    *,
+    config: Any,
+    context: WorkflowContext,
+    session: Any | None = None,
+) -> TherapeuticAgentResult:
+    if context.response_llm is not None:
+        return await run_therapeutic_response_llm_turn(
+            services,
+            state,
+            llm_client=context.response_llm,
+            session=session,
+        )
+
+    run_context = services.build_run_context(state, config, context)
+    agent = services.build_agent(state)
+    input_text = services.input_text_for_state(
+        state,
+        include_recent_history=include_prompt_history(session),
+    )
+    try:
+        response_text, sdk_duration_ms = await services.run_openai_agent_with(
+            state,
+            agent=agent,
+            input_text=input_text,
+            run_context=run_context,
+            session=session,
+        )
+    except Exception as exc:
+        if not can_fallback_to_control_response(exc, context):
+            raise
+        return await run_therapeutic_response_llm_turn(
+            services,
+            state,
+            llm_client=cast(BaseLLMClient, context.llm_client),
+            session=session,
+            fallback_reason=cast(str, openai_sdk_fallback_reason(exc)),
+        )
+    return resolve_therapeutic_result(
+        state,
+        run_context=run_context,
+        response_text=response_text,
+        sdk_duration_ms=sdk_duration_ms,
+    )
+
+
+async def run_therapeutic_turn_stream(
+    services: TextRuntimeServices,
+    state: AgentState,
+    *,
+    config: Any,
+    context: WorkflowContext,
+    session: Any | None = None,
+) -> AsyncIterator[TextRuntimeStreamEvent]:
+    if context.response_llm is not None:
+        yield TextRuntimeStatusEvent(stage="therapeutic")
+        async for event in run_therapeutic_response_llm_stream(
+            services,
+            state,
+            config=config,
+            llm_client=context.response_llm,
+            session=session,
+        ):
+            yield event
+        return
+
+    run_context = services.build_run_context(state, config, context)
+    agent = services.build_agent(state)
+    input_text = services.input_text_for_state(
+        state,
+        include_recent_history=include_prompt_history(session),
+    )
+
+    yield TextRuntimeStatusEvent(stage="therapeutic")
+    run_start = time.monotonic()
+    chunks: list[str] = []
+    try:
+        stream = services.runner.run_streamed(
+            agent=agent,
+            input_text=input_text,
+            context=run_context,
+            session=session,
+        )
+        async for sdk_event in stream.stream_events():
+            chunk = chunk_from_sdk_event(sdk_event)
+            if chunk:
+                chunks.append(chunk)
+                yield TextRuntimeChunkEvent(text=chunk)
+    except Exception as exc:
+        # Only fall back to the control-LLM stream if nothing has been emitted
+        # to the client yet. Re-streaming a fresh full reply after partial chunks
+        # already went out would duplicate/garble the response (no reset event
+        # exists in the protocol). A mid-stream failure re-raises for a clean
+        # error instead — matching the non-streaming path, which can always fall
+        # back precisely because it has emitted nothing.
+        if chunks:
+            raise
+        if not can_fallback_to_control_response(exc, context):
+            raise
+        async for event in run_therapeutic_response_llm_stream(
+            services,
+            state,
+            config=config,
+            llm_client=cast(BaseLLMClient, context.llm_client),
+            session=session,
+            fallback_reason=cast(str, openai_sdk_fallback_reason(exc)),
+        ):
+            yield event
+        return
+
+    response_text = final_output_text(
+        getattr(stream, "final_output", None),
+        fallback="".join(chunks),
+    )
+    result = resolve_therapeutic_result(
+        state,
+        run_context=run_context,
+        response_text=response_text,
+        sdk_duration_ms=elapsed_ms(run_start),
+    )
+    final_state = await services.finalize_turn(
+        state,
+        response_text=result.response_text,
+        config=config,
+        runtime_mode=result.runtime_mode,
+        response_style=result.response_style,
+        selected_agent=THERAPEUTIC_AGENT_NAME,
+        sdk_duration_ms=result.sdk_duration_ms,
+        streamed=True,
+    )
+    yield TextRuntimeStatusEvent(stage="finalize", turn_finalized=True)
+    yield TextRuntimeStateEvent(state=final_state)
+
+
+def resolve_therapeutic_result(
+    state: AgentState,
+    *,
+    run_context: OpenAITextRunContext,
+    response_text: str,
+    sdk_duration_ms: float,
+) -> TherapeuticAgentResult:
+    merge_result = merge_therapeutic_tool_results(
+        state,
+        run_context=run_context,
+        response_text=response_text,
+    )
+    return TherapeuticAgentResult(
+        response_text=merge_result.response_text,
+        runtime_mode=merge_result.runtime_mode,
+        response_style=merge_result.response_style,
+        sdk_duration_ms=sdk_duration_ms,
+    )
+
+
+def normalize_response_llm_text(text: str) -> str:
+    return str(text or "").strip()
+
+
+def response_llm_text_from_structured_output(
+    output: TherapeuticResponseLLMOutput,
+) -> ResponseLLMText:
+    return sanitize_response_llm_text(normalize_response_llm_text(output.response_text))
+
+
+def sanitize_response_llm_text(raw_text: str) -> ResponseLLMText:
+    """Strip leading pseudo tool-call text from response-LLM output."""
+
+    cleaned = str(raw_text or "").strip()
+    sanitized = False
+    while cleaned:
+        stripped = _strip_leading_pseudo_tool_call(cleaned)
+        if stripped == cleaned:
+            break
+        cleaned = stripped.lstrip()
+        sanitized = True
+    if not cleaned:
+        cleaned = str(raw_text or "").strip()
+    return ResponseLLMText(text=cleaned, sanitized=sanitized, raw_text=raw_text)
+
+
+def response_llm_sanitization_diagnostics(
+    response_text: ResponseLLMText,
+) -> dict[str, Any]:
+    if not response_text.sanitized:
+        return {"openai_response_llm_output_sanitized": False}
+    raw_text = str(response_text.raw_text or "")
+    return {
+        "openai_response_llm_output_sanitized": True,
+        "openai_response_llm_raw_text_length": len(raw_text),
+        "openai_response_llm_raw_text_preview": raw_text[:160],
+        "openai_response_llm_raw_text_sha256": sha256(raw_text.encode()).hexdigest(),
+    }
+
+
+def response_llm_diagnostics(
+    response_text: ResponseLLMText,
+    *,
+    structured: bool,
+    fallback_reason: str | None = None,
+) -> dict[str, Any]:
+    diagnostics: dict[str, Any] = {
+        "openai_response_llm_override": True,
+        "openai_response_llm_output_structured": structured,
+        "openai_response_llm_response_text_length": len(response_text.text),
+    }
+    diagnostics.update(response_llm_sanitization_diagnostics(response_text))
+    if fallback_reason is not None:
+        diagnostics["openai_sdk_fallback_reason"] = fallback_reason
+    return diagnostics
+
+
+def _strip_leading_pseudo_tool_call(text: str) -> str:
+    stripped = text.lstrip()
+    lower = stripped.lower()
+    if lower.startswith("<tool_call"):
+        close_index = lower.find("</tool_call>")
+        if close_index != -1:
+            return stripped[close_index + len("</tool_call>") :]
+
+    marker = "load_therapeutic_response_skill"
+    marker_index = stripped.find(marker)
+    if marker_index == -1 or marker_index > 40:
+        return text
+
+    prefix = stripped[:marker_index].strip().lower()
+    if prefix and not prefix.startswith("to="):
+        return text
+
+    json_start = stripped.find("{", marker_index)
+    if json_start != -1:
+        json_end = _find_matching_json_object_end(stripped, json_start)
+        if json_end != -1:
+            remainder = stripped[json_end + 1 :]
+            if remainder.startswith(")"):
+                remainder = remainder[1:]
+            return remainder
+
+    paren_end = stripped.find(")", marker_index)
+    if paren_end != -1 and paren_end <= marker_index + 240:
+        return stripped[paren_end + 1 :]
+    return text
+
+
+def _find_matching_json_object_end(text: str, start_index: int) -> int:
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start_index, len(text)):
+        char = text[index]
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = in_string
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{":
+            depth += 1
+            continue
+        if char == "}":
+            depth -= 1
+            if depth == 0:
+                return index
+    return -1
+
+
+def build_therapeutic_route_handler(
+    services_factory: TextRuntimeServicesFactory,
+) -> RouteHandler:
+    """Build the default therapeutic route handler."""
+
+    async def execute(
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AgentState:
+        services = services_factory()
+        result = await run_therapeutic_turn(
+            services,
+            plan.state,
+            config=config,
+            context=context,
+            session=session,
+        )
+        return await services.finalize_turn(
+            plan.state,
+            response_text=result.response_text,
+            config=config,
+            runtime_mode=result.runtime_mode,
+            response_style=result.response_style,
+            selected_agent=THERAPEUTIC_AGENT_NAME,
+            sdk_duration_ms=result.sdk_duration_ms,
+            streamed=False,
+        )
+
+    async def stream(
+        plan: TextRoutePlan,
+        *,
+        config: TextRuntimeConfig,
+        context: WorkflowContext,
+        session: Any | None = None,
+    ) -> AsyncIterator[TextRuntimeStreamEvent]:
+        async for event in run_therapeutic_turn_stream(
+            services_factory(),
+            plan.state,
+            config=config,
+            context=context,
+            session=session,
+        ):
+            yield event
+
+    return RouteHandler(execute=execute, stream=stream)
+
+
+def merge_therapeutic_tool_results(
+    state: AgentState,
+    *,
+    run_context: OpenAITextRunContext,
+    response_text: str,
+) -> TherapeuticToolMergeResult:
+    from agent.runtime.state_ops import apply_state_delta
+
+    memory_calls = list(run_context.memory_tool_calls)
+    grounded_calls = list(run_context.grounded_tool_calls)
+    diagnostics: dict[str, Any] = {
+        **dict(state.get("diagnostics", {}) or {}),
+        "openai_therapeutic_style_guidance_response_style": (
+            response_style_from_state(state)
+        ),
+        "openai_therapeutic_style_guidance_approach": (
+            therapeutic_approach_from_state(state)
+        ),
+    }
+
+    for call in memory_calls:
+        delta: dict[str, Any] = {"memory_control": call.memory_control}
+        if call.procedural_profile is not None:
+            delta["procedural_profile"] = call.procedural_profile
+        if call.clear_session_buffer:
+            delta["session_memory"] = {
+                "held_semantic_candidates": [],
+                "held_procedural_candidates": [],
+            }
+        apply_state_delta(state, delta)
+
+    if memory_calls:
+        latest_memory_call = memory_calls[-1]
+        diagnostics.update(
+            {
+                "openai_memory_tool_expected": latest_memory_call.tool_name,
+                "openai_memory_tool_selected": latest_memory_call.tool_name,
+                "openai_memory_tool_calls": [call.tool_name for call in memory_calls],
+                "openai_memory_tool_side_effects": [
+                    call.side_effect for call in memory_calls
+                ],
+                "openai_memory_tool_fallback": False,
+            }
+        )
+
+    for call in grounded_calls:
+        apply_state_delta(state, {"grounded_lookup": call.grounded_lookup})
+
+    if grounded_calls:
+        latest_grounded_call = grounded_calls[-1]
+        diagnostics.update(
+            {
+                "openai_grounded_tool_expected": latest_grounded_call.tool_name,
+                "openai_grounded_tool_selected": latest_grounded_call.tool_name,
+                "openai_grounded_tool_calls": [
+                    call.tool_name for call in grounded_calls
+                ],
+                "openai_grounded_tool_fallback": False,
+            }
+        )
+
+    apply_state_delta(state, {"diagnostics": diagnostics})
+
+    if grounded_calls:
+        apply_state_delta(state, {"route": "grounded_lookup"})
+        return TherapeuticToolMergeResult(
+            runtime_mode="grounded_lookup",
+            response_style="grounded_lookup",
+            response_text=grounded_calls[-1].response_text,
+        )
+    if memory_calls:
+        apply_state_delta(state, {"route": "memory_control"})
+        return TherapeuticToolMergeResult(
+            runtime_mode="memory_control",
+            response_style="memory_control",
+            response_text=memory_calls[-1].response_text,
+        )
+
+    apply_state_delta(state, {"route": "therapeutic"})
+    return TherapeuticToolMergeResult(
+        runtime_mode="safe_therapeutic",
+        response_style=response_style_from_state(state),
+        response_text=response_text,
+    )

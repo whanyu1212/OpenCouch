@@ -7,13 +7,18 @@ sidebar_position: 1
 import AgentGraph from '@site/src/components/AgentGraph';
 import GraphTopology from '@site/src/components/GraphTopology';
 
-# Agent Graph
+# Text Agent Runtime
 
-Every message follows the same pipeline: safety check first, then a
-safe-turn dispatcher for memory commands or factual lookups, then
-memory retrieval, response generation, and post-response memory
-evaluation. Some memory commits happen immediately; others wait for
-the shared session-end path.
+This page describes the **text agent runtime** used by the CLI, web
+text chat, and synchronous/streaming chat APIs. Voice uses
+OpenAI Realtime as its live speech loop and records finalized
+transcripts back into the shared runtime; see [Voice](/docs/voice) for
+that path.
+
+Every text message follows the same pipeline: safety check first, then
+a safe-turn dispatcher for memory commands or factual lookups, then
+memory retrieval and response generation. Long-term memory writes are
+handled by explicit memory commands and the shared session-end path.
 Click any step below to see what it does.
 
 <AgentGraph />
@@ -22,43 +27,47 @@ Click any step below to see what it does.
 
 ## Topology
 
-The parent graph has **10 named nodes**, including the therapeutic
-subgraph compiled as a single parent-level node. That subgraph now hides
-three internal nodes: dispatcher, shared therapeutic response, and guided
-exercise response. The crisis gate routes between branches via
-`Command(goto=...)`. `turn_dispatch_node` branches safe turns to memory
-control, grounded lookup, or the therapeutic flow. Post-response
-extractors run outside LangGraph as runtime-managed side effects.
+The text runtime keeps branch decisions explicit through an app-owned
+`TextTurnGraph` route planner (the name is historical; it is a deterministic
+router, not a graph engine). The router resolves one typed route plan, then
+delegates response generation to the selected OpenAI Agents SDK specialist
+executor. The crisis gate runs first, deterministic dispatch handles
+memory-control and grounded lookup branches, and safe therapeutic turns enter
+the TherapeuticAgent. Post-response extractors remain runtime-managed side
+effects.
 
 <GraphTopology />
 
-The full execution graph (from `build_agent_workflow()` in
-`agent/graph.py`):
+The full execution path:
 
 ```text
 START
-  → crisis_gate_node  (Command routes to one of the branches)
-     ├─ crisis_resource_lookup_node → crisis_response_node
-     │  → crisis_log_node → finalize_turn_node
-     └─ turn_dispatch_node
-        ├─ memory_control_node → finalize_turn_node
-        ├─ grounded_answer_node → finalize_turn_node
-        └─ load_memory_node → therapeutic_subgraph
-           → finalize_turn_node
+  → crisis_gate
+     ├─ crisis_resource_lookup → CrisisAgent → crisis_log → finalization
+     └─ turn_dispatch
+        ├─ memory_control → finalization
+        ├─ grounded_lookup → finalization
+        └─ load_memory → TherapeuticAgent / GuidedExerciseAgent → finalization
 
-finalize_turn_node → END
+finalization → END
 ```
 
-## Node responsibilities
+## Runtime Stage Responsibilities
 
-Each node has its own datasheet on the [Nodes page](/docs/agent/nodes) —
-filterable by category (safety, routing, memory, terminal)
-or capability (LLM, retry, reducer, parallel). Every card shows the
-node's inputs, outputs, skip conditions, and source file.
+Runtime stages own deterministic state deltas, persistence boundaries, and
+tool-result validation. Specialist agents own natural-language response
+generation and the tools assigned to their branch.
 
-## Therapeutic subgraph
+The route plan is shared by normal and streaming execution so those entrypoints
+do not each reimplement the branch table.
 
-The dispatcher picks exactly one therapeutic response style per turn:
+Voice reuses the service implementations behind those tools, but not this
+text-stage topology. Realtime function tools call the backend service layer
+directly through `/api/voice/realtime/tools`.
+
+## Therapeutic Response Selection
+
+The TherapeuticAgent selects exactly one therapeutic response style per turn:
 
 | Response style | When it fires |
 |---|---|
@@ -70,7 +79,7 @@ The dispatcher picks exactly one therapeutic response style per turn:
 | `guided_exercise` | User requests a structured exercise ([13 exercises](/docs/agent/guided-exercises)) |
 | `closing` | User signals wind-down ("I should go", "thanks, this helped") |
 
-The dispatcher is **LLM-owned** with local validation around active
+The style decision is **LLM-owned** with local validation around active
 exercise state. When a guided exercise is active, the dispatcher preserves the pinned
 `exercise_therapeutic_approach` for exercise continuations and narrow
 clarifying turns. Psychoeducation side-turns keep the exercise active, but may
@@ -79,14 +88,13 @@ use a fresh top-level approach for the explanation.
 ## Design principles
 
 **Safety is sequential.** The crisis gate runs before any memory
-retrieval or response generation. There is no path through the graph
+retrieval or response generation. There is no path through the runtime
 that loads context without first passing the safety check.
 
 **Operational dispatch runs before memory loading.** After the crisis
-gate, `turn_dispatch_node` routes explicit saved-memory commands to
-`memory_control_node`, explicit factual lookup requests to
-`grounded_answer_node`, and ordinary support to memory loading plus the
-therapeutic subgraph.
+gate, `turn_dispatch` routes explicit saved-memory commands to
+memory control, explicit factual lookup requests to grounded lookup,
+and ordinary support to memory loading plus the therapeutic agent.
 
 **Routing is LLM-owned, locally validated.** Classifiers own natural
 language decisions; plain services enforce schema validity, active-flow
@@ -95,35 +103,29 @@ or failing LLM calls retry or surface instead of silently degrading to
 regex.
 
 **Post-response memory evaluation.** Semantic and procedural extractors
-run after graph finalization as runtime-managed side effects. Some
+run after turn finalization as runtime-managed side effects. Some
 candidates commit immediately; others are buffered for session end or
 dropped. Extractor diagnostics are merged into the final turn output.
 
-**Reducer-backed accumulation.** `history` and `transcript` use
-`operator.add` reducers. Each turn emits only the new entries
-(user turn at init, assistant turn at finalize); the checkpointer
-accumulates prior turns automatically. No `get_history()` calls
-on the hot path.
+**App-owned state snapshots.** Each persistent turn loads the prior runtime
+state snapshot, appends the current user turn, and saves the finalized snapshot
+after the assistant reply is sealed. The OpenAI SDK session separately carries
+model-visible short-term message history; public `get_history()` remains a
+read-side surface, not the hot-path prompt source.
 
-**Structured working memory.** `load_memory_node` returns raw
+**Structured working memory.** The load-memory stage returns raw
 `WorkingMemoryEntry` dicts (semantic and episodic types). Formatting
 happens on demand at prompt-build time and CLI render time — not
-in the graph.
+inside the response model.
 
-**Defense-in-depth retry.** All I/O nodes have
-`RetryPolicy(max_attempts=2)`. Nodes catch their own expected
-exceptions internally; the retry policy covers unexpected transient
-failures outside the node's error handling.
+**Defense-in-depth retry.** I/O branches keep explicit provider and
+storage failure handling at the runtime boundary so failures retry or
+surface instead of being hidden by fallback text.
 
-**Small-talk gate saves cost.** Both extractors check whether the
-message is obviously small talk before making the LLM call.
-Greetings and acknowledgments skip extraction entirely.
-
-**Per-turn diagnostics.** Graph nodes and runtime side effects stamp
-timing and decision metadata into `state["diagnostics"]` via the
-`_merge_dicts` reducer. Keys include `load_memory_ms`,
-`crisis_gate_ms`, `extract_facts_ms`, `extract_procedural_ms`, and
-`turn_total_ms`.
+**Per-turn diagnostics.** Runtime stages and side effects stamp timing and
+decision metadata into `state["diagnostics"]`. Dict-shaped state channels are
+shallow-merged by explicit runtime helpers when stages return partial updates.
+Keys include `load_memory_ms`, `crisis_gate_ms`, and `turn_total_ms`.
 
 ## Runtime context
 
@@ -138,43 +140,49 @@ for the full breakdown.
 
 | File | What it does |
 |---|---|
-| `agent/graph.py` | `build_agent_workflow()`, `build_initial_state()`, `state_to_output()`, `run_agent()` |
-| `agent/state.py` | `AgentState` TypedDict with reducer annotations and split input/output schemas |
+| `agent/runtime/turn.py` | Compatibility entrypoint for `build_initial_state()`, `state_to_output()`, and `run_agent()` |
+| `agent/state.py` | `AgentState` TypedDict fragments plus turn-input and full-state schemas |
 | `agent/memory/entries.py` | `WorkingMemoryEntry` types, factory functions, formatters |
-| `agent/runtime_context.py` | `WorkflowContext` frozen dataclass |
-| `agent/therapeutic/graph.py` | `build_therapeutic_subgraph()` with `TherapeuticSubgraphOutput` |
-| `agent/therapeutic/dispatch/` | LLM-primary response-style + therapeutic-approach planning with local active-flow validation |
-| `agent/therapeutic/prompting/` | Therapeutic prompt composition, instructions, and on-demand working memory formatting |
-| `agent/therapeutic/exercises/` | Guided-exercise definitions, selection, state transitions, memory helpers, and node implementation |
-| `agent/nodes/load_memory.py` | Retrieval orchestration node backed by `agent/memory/recall.py` |
-| `agent/nodes/crisis_gate.py` | Crisis branch routing backed by `agent/gates/safety/service.py` |
-| `agent/nodes/crisis_resource_lookup.py` | Location-aware hotline lookup before crisis response |
-| `agent/nodes/crisis_response.py` | Crisis response generation |
-| `agent/nodes/crisis_log.py` | Always-on audit log writer |
-| `agent/nodes/turn_dispatch.py` | Routes safe turns to memory control, grounded lookup, or therapeutic flow |
-| `agent/nodes/memory_control.py` | Executes memory commands (list, forget, recall toggle, save preference) |
-| `agent/nodes/grounded_answer.py` | Search-grounded factual replies |
-| `agent/runtime/turn_extraction.py` | Runtime-owned post-graph semantic/procedural extraction coordinator |
-| `agent/runtime/session/commit.py` | Session-end promotion path backed by `agent/memory/session_commit_service.py` |
-| `agent/runtime/session/summarize.py` | Session-end episodic summarization path backed by `agent/memory/episodic.py` |
-| `agent/nodes/finalize_turn.py` | Transcript finalization (single-element delta) |
-| `agent/memory/policy/small_talk.py` | Pre-extractor small-talk heuristic |
-| `agent/audit/crisis_log.py` | Audit-log backend protocol + in-memory implementations |
+| `agent/runtime/workflow_context.py` | `WorkflowContext` frozen dataclass |
+| `agent/runtime/openai_text_runtime.py` | OpenAI Agents SDK text runtime orchestration |
+| `agent/specialists/` | Triage, therapeutic, crisis, and guided-exercise specialist agent definitions |
+| `agent/tools/` | Agent-owned memory, grounded lookup, crisis lookup, therapeutic response style-loader, and guided-exercise tools |
+| `agent/specialists/therapeutic_response/style_guidance.py` | Response-style guidance rendered directly for text and as prompt-local skill context for voice/tool paths |
+| `agent/specialists/therapeutic_response/prompts.py` | Therapeutic response prompt composition owned by the therapeutic agent |
+| `agent/specialists/guided_exercise.py` | Guided-exercise agent instructions and system prompt ownership |
+| `agent/skills/guided_exercises/catalog/` | Guided-exercise definition source of truth, registry indexes, and availability filtering |
+| `agent/skills/guided_exercises/lifecycle/` | Guided-exercise selection, state transitions, step classification, and memory helpers |
+| `agent/skills/guided_exercises/rendering/` | Prompt-local guided-exercise skill/directive rendering from catalog definitions |
+| `agent/runtime/memory_context.py` | Runtime-owned turn-memory loading backed by `agent/memory/retrieval/service.py` |
+| `agent/guardrails/` | Crisis input guardrail, classifier service, prompts, and safety delta construction |
+| `agent/tools/crisis.py` | Crisis resource lookup tool and response delta |
+| `agent/memory/control/service.py` | Executes memory commands (list, forget, recall toggle, save preference) |
+| `agent/tools/grounded.py` | Search-grounded factual replies |
+| `agent/runtime/session/commit.py` | Session-end promotion path backed by `agent/memory/commit/service.py` |
+| `agent/runtime/session/summarize.py` | Session-end episodic summarization path backed by `agent/memory/operations/episodic.py` |
+| `agent/runtime/state_ops.py` | State delta application and OpenAI turn finalization helpers |
+| `agent/audit/capture.py` | Bounded post-response safety-event capture seam |
+| `agent/audit/crisis_log.py` | Audit-log write helper, backend protocol, and in-memory implementations |
 | `agent/audit/postgres_crisis_log.py` | Primary durable crisis log with retention purge |
-| `agent/audit/sqlite_crisis_log.py` | SQLite crisis-log fallback backend |
-| `agent/persistence.py` | `PersistentAgentRuntime` — configured persistent thread state |
+| `agent/runtime/runtime.py` | `PersistentAgentRuntime` — configured persistent thread state |
+
+Postgres is the only supported durable backend for OpenCouch long-term memory
+and other application-owned persistence. OpenAI Agents SDK `SQLiteSession`
+storage is a separate model-visible short-term history surface, not long-term
+memory, and is preserved. The old SQLite runtime-state, active-session,
+crisis-log, feedback, and long-term-memory implementations and built-in SQLite
+memory tools have been removed.
 
 ## Adding a new therapeutic response style
 
 1. Create `agent/prompts/sources/response_styles/your_style.md` with the
    response style's knowledge content
-2. Add prompt-source wiring in `agent/therapeutic/prompting/sources.py`
-   and instructions in `agent/therapeutic/prompting/instructions.py`
-3. Update the shared response node only if the style needs special
-   runtime behavior beyond prompt composition
-4. Update the LLM dispatcher prompt in
-   `agent/therapeutic/dispatch/prompt.py` to teach the classifier when to
-   pick the new response style
+2. Add prompt-source wiring in `agent/specialists/therapeutic_response/prompt_sources.py`
+   and instructions in `agent/specialists/therapeutic_response/prompt_instructions.py`
+3. Update `agent/specialists/therapeutic_response/style_guidance.py` if the style needs different
+   prompt-local style metadata or voice skill context
+4. Update `load_therapeutic_response_skill` guidance if the therapeutic
+   response agent needs clearer selection criteria for the new style
 5. Add or update backend tests for the route and state contract
-6. Add a `STAGE_LABELS` entry in `agent/models.py` if the
-   node name differs from the stage label vocabulary
+6. Add a `STAGE_LABELS` entry in `agent/models.py` if the runtime
+   stage name needs a distinct user-facing label

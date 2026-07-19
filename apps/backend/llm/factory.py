@@ -5,10 +5,9 @@ from __future__ import annotations
 from typing import Literal
 
 from llm.base import BaseLLMClient
-from llm.google_genai import DEFAULT_GEMINI_MODEL, GeminiLLMClient
 from llm.openai_client import DEFAULT_OPENAI_MODEL, OpenAILLMClient
 
-LLMProvider = Literal["gemini", "openai"]
+LLMProvider = Literal["openai"]
 
 
 def create_llm_client(
@@ -32,12 +31,6 @@ def create_llm_client(
     Raises:
         ValueError: If the provider name is unsupported.
     """
-
-    if provider == "gemini":
-        return GeminiLLMClient(
-            api_key=api_key,
-            model=model or DEFAULT_GEMINI_MODEL,
-        )
 
     if provider == "openai":
         return OpenAILLMClient(

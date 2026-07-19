@@ -1,8 +1,8 @@
 """FastAPI dependency injection for the agent runtime.
 
 The ``PersistentAgentRuntime`` is an async context manager that owns
-configured persistence backends, an embedding provider, and the LangGraph
-checkpointer. It must be opened once at startup and closed at
+configured persistence backends, an embedding provider, and the runtime
+session store. It must be opened once at startup and closed at
 shutdown, not per request. FastAPI's lifespan protocol handles this.
 
 Usage in ``main.py``::
@@ -28,30 +28,33 @@ Then in route handlers::
     ):
         ...
 
-The runtime and LLM client are singletons. Every request shares
-the same instance. This is safe because ``PersistentAgentRuntime``
-serializes graph invocations per thread_id via the LangGraph
-checkpointer, and the LLM clients are stateless (each call is
-independent).
+The runtime registry and LLM clients are singletons. Requests share
+the runtime selected for their memory mode. This is safe because
+``PersistentAgentRuntime`` serializes agent turns per thread_id via
+the persistent session store, and the LLM clients are stateless
+(each call is independent).
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import logging
+import os
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 
 from agent.memory.modes import MemoryMode
-from agent.persistence import (
-    DEFAULT_CRISIS_LOG_DB_PATH,
-    DEFAULT_MEMORY_DB_PATH,
-    DEFAULT_THREAD_DB_PATH,
+from api.models import ApiMemoryMode
+from agent.runtime import (
     PersistentAgentRuntime,
+    RuntimeDependencies,
+    RuntimePersistenceConfig,
 )
 from config import (
     ResponseModelTier,
+    Settings,
     create_configured_control_llm_client,
     create_configured_response_llm_clients,
     get_settings,
@@ -65,12 +68,21 @@ logger = logging.getLogger(__name__)
 # read by the Depends() callables below. Using module-level state
 # (rather than app.state) keeps the dependency signatures simple
 # and avoids importing FastAPI in every route module.
-_runtime: PersistentAgentRuntime | None = None
+_runtimes: dict[ApiMemoryMode, PersistentAgentRuntime] = {}
+_default_memory_mode = ApiMemoryMode.PERSISTENT
 _llm_client: BaseLLMClient | None = None
 _response_llm_clients: dict[ResponseModelTier, BaseLLMClient | None] = {
     "fast": None,
     "quality": None,
 }
+
+
+@dataclass(frozen=True)
+class ApiRuntimeSelection:
+    """Resolved API memory mode and its shared runtime."""
+
+    memory_mode: ApiMemoryMode
+    runtime: PersistentAgentRuntime
 
 
 @asynccontextmanager
@@ -96,7 +108,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
         Async lifespan context manager.
     """
 
-    global _runtime, _llm_client, _response_llm_clients  # noqa: PLW0603
+    global _default_memory_mode, _llm_client, _response_llm_clients, _runtimes  # noqa: PLW0603
 
     # Resolve clients once so request handlers do not pay setup cost.
     # Missing API keys leave clients as None, keeping deterministic paths available.
@@ -113,45 +125,129 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     except Exception:
         _response_llm_clients = {"fast": None, "quality": None}
 
-    # The API server reads memory mode from env because there is no interactive prompt.
-    import os
-
     settings = get_settings()
-    memory_mode_str = os.getenv("OPENCOUCH_MEMORY_MODE", "persistent")
-    memory_mode = (
-        MemoryMode.INCOGNITO if memory_mode_str == "guest" else MemoryMode.LOCAL
+    _default_memory_mode = parse_api_memory_mode(
+        os.getenv("OPENCOUCH_MEMORY_MODE"),
+        default=ApiMemoryMode.PERSISTENT,
     )
+    _runtimes = {
+        ApiMemoryMode.INCOGNITO: _build_runtime(
+            memory_mode=MemoryMode.INCOGNITO,
+            settings=settings,
+            llm_client=_llm_client,
+        )
+    }
+    if _default_memory_mode is ApiMemoryMode.PERSISTENT or settings.memory_database_url:
+        _runtimes[ApiMemoryMode.PERSISTENT] = _build_runtime(
+            memory_mode=MemoryMode.LOCAL,
+            settings=settings,
+            llm_client=_llm_client,
+        )
 
-    _runtime = PersistentAgentRuntime(
-        sqlite_path=str(DEFAULT_THREAD_DB_PATH),
-        memory_backend=settings.persistence_backend,
-        memory_database_url=settings.memory_database_url,
-        thread_persistence_backend=settings.persistence_backend,
-        thread_database_url=settings.memory_database_url,
-        crisis_log_persistence_backend=settings.persistence_backend,
-        crisis_log_database_url=settings.memory_database_url,
-        session_feedback_persistence_backend=settings.persistence_backend,
-        session_feedback_database_url=settings.memory_database_url,
-        memory_sqlite_path=str(DEFAULT_MEMORY_DB_PATH),
-        crisis_log_sqlite_path=str(DEFAULT_CRISIS_LOG_DB_PATH),
-        memory_mode=memory_mode,
-        default_llm_client=_llm_client,
-    )
-    async with _runtime:
+    async with AsyncExitStack() as stack:
+        for runtime in _runtimes.values():
+            await stack.enter_async_context(runtime)
         try:
             yield
         finally:
-            try:
-                await _runtime.finalize_active_sessions(llm_client=_llm_client)
-            except Exception:
-                logger.warning(
-                    "api lifespan shutdown: failed to finalize active sessions",
-                    exc_info=True,
-                )
+            for runtime in _runtimes.values():
+                try:
+                    await runtime.finalize_active_sessions(llm_client=_llm_client)
+                except Exception:
+                    logger.warning(
+                        "api lifespan shutdown: failed to finalize active sessions",
+                        exc_info=True,
+                    )
 
-    _runtime = None
+    _runtimes = {}
+    _default_memory_mode = ApiMemoryMode.PERSISTENT
     _llm_client = None
     _response_llm_clients = {"fast": None, "quality": None}
+
+
+def parse_api_memory_mode(
+    value: str | ApiMemoryMode | None,
+    *,
+    default: ApiMemoryMode,
+) -> ApiMemoryMode:
+    """Parse the configured default API memory mode."""
+
+    if value is None:
+        return default
+    try:
+        return ApiMemoryMode(str(value).strip().lower())
+    except ValueError as exc:
+        valid_values = ", ".join(mode.value for mode in ApiMemoryMode)
+        raise ValueError(
+            f"Invalid OPENCOUCH_MEMORY_MODE={value!r}; expected one of: {valid_values}"
+        ) from exc
+
+
+def _build_runtime(
+    *,
+    memory_mode: MemoryMode,
+    settings: Settings,
+    llm_client: BaseLLMClient | None,
+) -> PersistentAgentRuntime:
+    """Construct a runtime with API persistence settings."""
+
+    persistence_config = RuntimePersistenceConfig.for_shared_backend(
+        memory_mode=memory_mode,
+        persistence_backend="postgres",
+        database_url=settings.memory_database_url,
+        text_session_backend=settings.text_session_backend,
+        text_session_database_url=settings.text_session_database_url,
+        allow_legacy_sqlite=settings.allow_legacy_sqlite,
+    )
+
+    return PersistentAgentRuntime(
+        persistence_config=persistence_config,
+        dependencies=RuntimeDependencies(
+            default_llm_client=llm_client,
+        ),
+    )
+
+
+def resolve_api_memory_mode(
+    memory_mode: ApiMemoryMode | str | None = None,
+) -> ApiMemoryMode:
+    """Resolve an API memory mode against the configured backend default."""
+
+    return parse_api_memory_mode(memory_mode, default=_default_memory_mode)
+
+
+def get_runtime_for_memory_mode(
+    memory_mode: ApiMemoryMode | str | None = None,
+) -> PersistentAgentRuntime:
+    """Return the shared runtime for a request's resolved API memory mode."""
+
+    return get_runtime_selection(memory_mode).runtime
+
+
+def get_runtime_selection(
+    memory_mode: ApiMemoryMode | str | None = None,
+) -> ApiRuntimeSelection:
+    """Return a request's resolved API memory mode and matching runtime."""
+
+    resolved_mode = resolve_api_memory_mode(memory_mode)
+    runtime = _runtimes.get(resolved_mode)
+    if runtime is None:
+        if _runtimes:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "memory_mode_unavailable",
+                    "message": (
+                        f"Memory mode {resolved_mode.value!r} is unavailable for "
+                        "this server configuration."
+                    ),
+                },
+            )
+        raise RuntimeError(
+            "Agent runtime not initialized. "
+            "Ensure the lifespan handler is configured on the FastAPI app."
+        )
+    return ApiRuntimeSelection(memory_mode=resolved_mode, runtime=runtime)
 
 
 def get_runtime() -> PersistentAgentRuntime:
@@ -169,12 +265,7 @@ def get_runtime() -> PersistentAgentRuntime:
             the runtime yet.
     """
 
-    if _runtime is None:
-        raise RuntimeError(
-            "Agent runtime not initialized. "
-            "Ensure the lifespan handler is configured on the FastAPI app."
-        )
-    return _runtime
+    return get_runtime_for_memory_mode(None)
 
 
 def get_llm_client() -> BaseLLMClient | None:

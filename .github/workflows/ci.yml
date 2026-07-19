@@ -4,13 +4,33 @@ on:
   push:
   pull_request:
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: opencouch
+          POSTGRES_USER: opencouch
+          POSTGRES_PASSWORD: opencouch
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U opencouch -d opencouch"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS: "1"
+      OPENCOUCH_TEST_POSTGRES_URL: postgresql://opencouch:opencouch@localhost:5432/opencouch
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
@@ -18,7 +38,7 @@ jobs:
           enable-cache: true
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -30,23 +50,20 @@ jobs:
         working-directory: apps/backend
         run: uv run pytest -q tests/unit tests/integration
 
-      - name: Run therapeutic contract eval
-        run: apps/backend/.venv/bin/python -m eval.runners.therapeutic_contract_eval --plain
-
   web:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
 
       - name: Set up pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v5
         with:
           version: 9
 

@@ -6,21 +6,29 @@ send and receive. They intentionally do not re-export the internal
 carry implementation details that should not leak to HTTP callers.
 
 The route handlers own the mapping between these public schemas and the
-internal agent models, keeping the API surface stable as the graph state
+internal agent models, keeping the API surface stable as runtime state
 evolves.
 """
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agent.memory.models import FeedbackLabel
+from agent.feedback.models import FeedbackLabel, FeedbackModality
 from config import ResponseModelTier
 
 
 # Request models
+
+
+class ApiMemoryMode(StrEnum):
+    """API-facing memory mode selector."""
+
+    PERSISTENT = "persistent"
+    INCOGNITO = "incognito"
 
 
 class ChatRequest(BaseModel):
@@ -37,6 +45,13 @@ class ChatRequest(BaseModel):
         description="Optional stable owner identifier for cross-thread "
         "memory. When set, memory is namespaced by user_id rather "
         "than thread_id.",
+    )
+    memory_mode: ApiMemoryMode | None = Field(
+        default=None,
+        description=(
+            "Optional memory mode for this chat session. When omitted, "
+            "the API default from OPENCOUCH_MEMORY_MODE is used."
+        ),
     )
     response_model_tier: ResponseModelTier | None = Field(
         default="fast",
@@ -55,6 +70,106 @@ class EndSessionRequest(BaseModel):
     endpoint remains extensible for future per-request hints.
     """
 
+    feedback: FeedbackLabel | None = Field(
+        default=None,
+        description=(
+            "Optional end-of-session rating: 'positive', 'negative', "
+            "or 'skip'. When set, written to the session_feedback "
+            "store before summarization runs. When null or omitted, "
+            "no feedback record is created and summarization proceeds "
+            "as usual."
+        ),
+    )
+    memory_mode: ApiMemoryMode | None = Field(
+        default=None,
+        description=(
+            "Optional memory mode for the thread session being ended. "
+            "When omitted, the API default from OPENCOUCH_MEMORY_MODE is used."
+        ),
+    )
+
+
+class SessionFeedbackRequest(BaseModel):
+    """POST /api/threads/{thread_id}/feedback request body."""
+
+    feedback: FeedbackLabel = Field(
+        description="Explicit end-of-session rating: positive, negative, or skip."
+    )
+    memory_mode: ApiMemoryMode | None = Field(
+        default=None,
+        description=(
+            "Optional runtime selector. When omitted, the API default from "
+            "OPENCOUCH_MEMORY_MODE is used."
+        ),
+    )
+    modality: FeedbackModality = Field(
+        default="text",
+        description="Interaction channel being rated: text or voice.",
+    )
+
+
+class VoiceRealtimeSessionRequest(BaseModel):
+    """POST /api/voice/realtime/session request body."""
+
+    thread_id: str = Field(min_length=1)
+    user_id: str | None = None
+    memory_mode: ApiMemoryMode | None = None
+    assistant_voice: (
+        Literal[
+            "alloy",
+            "ash",
+            "ballad",
+            "cedar",
+            "coral",
+            "echo",
+            "marin",
+            "sage",
+            "shimmer",
+            "verse",
+        ]
+        | None
+    ) = None
+
+
+class VoiceToolCallRequest(BaseModel):
+    """POST /api/voice/realtime/tools request body."""
+
+    thread_id: str = Field(min_length=1)
+    user_id: str | None = None
+    current_user_message: str = ""
+    transcript: list[dict[str, object]] = Field(default_factory=list)
+    memory_mode: ApiMemoryMode | None = None
+    tool_name: str = Field(min_length=1)
+    arguments: dict[str, object] = Field(default_factory=dict)
+
+
+class VoiceRecordedToolCall(BaseModel):
+    """One Realtime tool call observed during a voice turn."""
+
+    tool_name: str = Field(min_length=1)
+    status: Literal["started", "completed", "failed"]
+    output: dict[str, object] = Field(default_factory=dict)
+    error: str | None = None
+
+
+class VoiceTurnRecordRequest(BaseModel):
+    """POST /api/voice/realtime/turn request body."""
+
+    thread_id: str = Field(min_length=1)
+    user_id: str | None = None
+    user_text: str = ""
+    assistant_text: str = ""
+    memory_mode: ApiMemoryMode | None = None
+    route: str | None = None
+    response_style: str | None = None
+    tool_calls: list[VoiceRecordedToolCall] = Field(default_factory=list)
+
+
+class VoiceEndSessionRequest(BaseModel):
+    """POST /api/voice/realtime/end request body."""
+
+    thread_id: str = Field(min_length=1)
+    memory_mode: ApiMemoryMode | None = None
     feedback: FeedbackLabel | None = Field(
         default=None,
         description=(
@@ -148,6 +263,68 @@ class SessionArcResponse(BaseModel):
     resolved_threads: list[str]
 
 
+class SessionEndResponse(BaseModel):
+    """Stable session finalization response shared by text and voice endpoints."""
+
+    finalized: bool
+    summary: str | None = None
+    detail: str
+    themes: list[str] = Field(default_factory=list)
+    mood_opened: str | None = None
+    mood_closed: str | None = None
+    turn_count: int | None = None
+    open_loops: list[str] = Field(default_factory=list)
+    resolved_threads: list[str] = Field(default_factory=list)
+
+
+class EndSessionResponse(SessionEndResponse):
+    """POST /api/threads/{thread_id}/end response body."""
+
+
+class VoiceRealtimeSessionResponse(BaseModel):
+    """POST /api/voice/realtime/session response body."""
+
+    client_secret: str
+    thread_id: str
+    user_id: str | None = None
+    memory_mode: Literal["incognito", "persistent"]
+    session_config: dict[str, object]
+
+
+class VoiceToolCallResponse(BaseModel):
+    """POST /api/voice/realtime/tools response body."""
+
+    output: dict[str, object]
+
+
+class VoicePostTurnSafetyResponse(BaseModel):
+    """Immediate scheduling status for the non-blocking voice safety net."""
+
+    scheduled: bool
+    status: Literal["scheduled", "skipped"]
+    reason: str | None = None
+    pending_count: int = Field(default=0, ge=0)
+
+
+class VoiceTurnRecordResponse(BaseModel):
+    """POST /api/voice/realtime/turn response body."""
+
+    recorded: bool
+    thread_id: str
+    message_count: int
+    post_turn_safety: VoicePostTurnSafetyResponse | None = None
+
+
+class VoiceEndSessionResponse(SessionEndResponse):
+    """POST /api/voice/realtime/end response body."""
+
+
+class SessionFeedbackResponse(BaseModel):
+    """POST /api/threads/{thread_id}/feedback response body."""
+
+    recorded: bool
+
+
 class MemoryStatusResponse(BaseModel):
     """GET /api/memory/status response."""
 
@@ -182,6 +359,44 @@ class MemoryRecallUpdateResponse(BaseModel):
     owner_id: str
     proactive_recall_enabled: bool
     detail: str
+
+
+class MemoryFactResponse(BaseModel):
+    """One semantic fact row returned by GET /api/memory/facts."""
+
+    index: int
+    key: str
+    category: str = ""
+    predicate: str = ""
+    subject: str = ""
+    object: str = ""
+    evidence_quote: str = ""
+    confidence: str = ""
+    created_at: str = ""
+
+
+class MemorySessionResponse(BaseModel):
+    """One episodic session row returned by GET /api/memory/sessions."""
+
+    index: int
+    key: str
+    session_id: str = ""
+    summary: str = ""
+    themes: list[str] = Field(default_factory=list)
+    mood_opened: str = ""
+    mood_closed: str = ""
+    turn_count: int = 0
+    ended_at: str = ""
+
+
+class MemoryRuleResponse(BaseModel):
+    """One procedural rule row returned by GET /api/memory/rules."""
+
+    index: int
+    rule: str
+    evidence: list[str] = Field(default_factory=list)
+    confidence: str = ""
+    added_at: str = ""
 
 
 class DeleteResponse(BaseModel):

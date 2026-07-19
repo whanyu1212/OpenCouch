@@ -14,7 +14,7 @@ layer to see how it writes, reads, and stores.
 <MemoryArchitecture />
 
 :::tip Post-response extraction is runtime-owned
-After the graph reaches `END`, the runtime schedules semantic and
+After the response is finalized, the runtime schedules semantic and
 procedural extraction work. The extractors don't write everything they
 extract directly into long-term memory. They:
 
@@ -22,12 +22,12 @@ extract directly into long-term memory. They:
 2. run LLM-primary write policy with hard local safety/storage guards
 3. either commit immediately, hold for session end, require repetition, or drop
 
-Diagnostics still merge via `_merge_dicts`, so the two extractor lanes
-can report into the same turn without racing.
+Diagnostics still use explicit shallow dict merging, so the two extractor
+lanes can report into the same turn without racing.
 :::
 
 :::info Working memory carries structured context
-`load_memory_node` returns `WorkingMemoryEntry` dicts with full
+The load-memory runtime stage returns `WorkingMemoryEntry` dicts with full
 semantic triples (category, subject, predicate, object) alongside the
 evidence quote. The response LLM sees entries like
 `[relationship] User WORRIES_ABOUT work — 'my boss is terrible'`
@@ -35,14 +35,22 @@ instead of raw quotes. Formatting happens on demand at prompt-build
 time via `format_working_memory_entries()`.
 :::
 
-:::note Audit and memory are separate packages
-Crisis logs and session feedback live in
-[`agent/audit/`](https://github.com/whanyu1212/OpenCouch/tree/main/apps/backend/agent/audit) —
-not under `agent/memory/`. The split is enforced because audit
-records are operationally always-on, never feed the prompt, and never
-participate in the user-facing memory-recall toggle.
-`agent/memory/types/audit.py` only keeps compatibility re-exports of
-the audit record schemas.
+:::note Audit, feedback, and memory are separate packages
+Crisis logs live in
+[`agent/audit/`](https://github.com/whanyu1212/OpenCouch/tree/main/apps/backend/agent/audit),
+and session feedback lives in
+[`agent/feedback/`](https://github.com/whanyu1212/OpenCouch/tree/main/apps/backend/agent/feedback) —
+not under `agent/memory/`. The split is enforced because those records are
+operationally always-on, never feed the prompt, and never participate in the
+user-facing memory-recall toggle.
+:::
+
+:::note Storage names vs. product names
+The API and stores use the [CoALA](https://arxiv.org/abs/2309.02427)-derived
+layer names — `semantic`, `episodic`, `procedural` (this is what
+`/api/memory/status` returns under `counts`). The web Memory page relabels them
+to the friendlier **facts**, **sessions**, and **rules** for users. They are
+the same three layers; only the labels differ by surface.
 :::
 
 ---
@@ -73,8 +81,8 @@ Three persistence tiers are defined in `agent/memory/modes.py`:
 | Mode | Writes to disk | Embeddings | Crisis log | Feedback |
 |---|---|---|---|---|
 | **Incognito** | No (in-memory only) | `NullEmbeddingProvider` | In-memory (ephemeral) | In-memory (ephemeral) |
-| **Local** | Yes (configured backend; Postgres recommended) | Configured provider | Configured backend | Configured backend |
-| **Synced** | Yes (treated like Local today) | Configured provider | Configured backend | Configured backend |
+| **Local** | Yes (Postgres) | Configured provider | Postgres | Postgres |
+| **Synced** | Yes (treated like Local today) | Configured provider | Postgres | Postgres |
 
 `SYNCED` is reserved for a future remote persistence tier; runtime
 code currently treats it like `LOCAL` while the backend sync layer
@@ -84,6 +92,21 @@ alias for `INCOGNITO`.
 The `--user-id` flag decouples memory identity from thread identity
 — switching threads preserves memory across sessions. Without
 `--user-id`, the thread id is used as the memory owner.
+
+:::info Legacy SQLite long-term-memory files
+Postgres is the only supported durable long-term memory backend. OpenCouch has
+no importer for old `memory.sqlite3` files and does not copy or delete them
+during cutover. Archive a file if its records are still needed, or discard it.
+The legacy `SqliteMemoryStore` and built-in SQLite memory inspection and clear
+paths have been removed. Inspect an archived file with an older OpenCouch
+release or an external read-only SQLite tool.
+
+OpenAI Agents SDK text sessions are separate. The SDK may use `SQLiteSession`
+and `text_sessions.sqlite3` for model-visible short-term history; that storage
+is preserved and is not an OpenCouch long-term-memory backend. SQLite
+runtime-state, active-session, crisis-log, and feedback implementations have
+also been removed.
+:::
 
 ---
 
@@ -109,20 +132,16 @@ The `--user-id` flag decouples memory identity from thread identity
 |---|---|
 | `agent/memory/store/__init__.py` | `MemoryStore` protocol — `aput`, `aput_batch`, `asearch_similar`, `alatest`, plus the in-memory `OpenCouchMemoryStore` |
 | `agent/memory/store/postgres.py` | Primary durable Postgres backend with hybrid retrieval support |
-| `agent/memory/store/sqlite.py` | SQLite fallback backend with embedding BLOB storage and transactional batch writes |
 | `agent/memory/modes.py` | `MemoryMode` enum (`INCOGNITO`, `LOCAL`, `SYNCED`) |
-| `agent/memory/retrieval.py` | RRF fusion (`k=60`), lexical/dense rank, cosine similarity |
-| `agent/memory/embeddings.py` | `EmbeddingProvider` protocol + Gemini / OpenAI / Null providers |
+| `agent/memory/retrieval/` | `ranking.py` (RRF fusion `k=60`, lexical/dense rank, cosine similarity) and `service.py` (`load_memory_for_turn` orchestration) |
+| `agent/memory/providers/embeddings.py` | `EmbeddingProvider` protocol + OpenAI / Null providers |
 | `agent/memory/text_tokens.py` | Unicode-aware tokenizer with CJK character splitting |
 | `agent/memory/policy/candidates.py` | Candidate models + `SessionMemoryBuffer` |
-| `agent/memory/dedup.py` | Token-set Jaccard dedup (0.85 threshold) |
+| `agent/memory/operations/dedup.py` | Token-set Jaccard dedup (0.85 threshold) |
 | `agent/memory/policy/write.py` | LLM-primary immediate-write / hold / drop / require-repetition policy with hard local guards |
 | `agent/memory/policy/semantic.py` | Stable vs session-only semantic category policy constants |
-| `agent/memory/reconciliation.py` | LLM-primary bump / supersede / coexist handling for semantic + procedural writes |
-| `agent/memory/procedural_profile.py` | `ProceduralProfile` load/save with per-user async lock and rule cap |
-| `agent/memory/policy/small_talk.py` | Pre-extractor small-talk heuristic (length + vocabulary) |
-| `agent/memory/prompts/extraction.py` | Semantic extraction prompts |
-| `agent/memory/prompts/procedural.py` | Procedural extraction prompts |
+| `agent/memory/operations/reconciliation.py` | LLM-primary bump / supersede / coexist handling for semantic + procedural writes |
+| `agent/memory/operations/procedural_profile.py` | `ProceduralProfile` load/save with per-user async lock and rule cap |
 | `agent/memory/prompts/summarization.py` | Session summarization prompts |
 | `agent/memory/hashing.py` | `hash_session_id()`, `iso_now()` |
 | `agent/memory/types/` | Pydantic models grouped by concern (semantic, episodic, procedural, therapeutic, primitives) |
@@ -131,23 +150,26 @@ The `--user-id` flag decouples memory identity from thread identity
 
 | File | Purpose |
 |---|---|
-| `agent/audit/models.py` | `CrisisLogRecord`, `SessionFeedbackRecord`, classifier-path enums |
+| `agent/audit/models.py` | `CrisisLogRecord` and classifier-path enums |
+| `agent/audit/capture.py` | Bounded runtime capture seam for minimal safety events |
 | `agent/audit/crisis_log.py` | `CrisisLogBackend` protocol + in-memory implementation |
 | `agent/audit/postgres_crisis_log.py` | Primary durable Postgres crisis log with retention purge |
-| `agent/audit/postgres_session_feedback.py` | Primary durable Postgres session feedback store |
-| `agent/audit/sqlite_crisis_log.py` | SQLite crisis log fallback backend |
-| `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
-| `agent/audit/sqlite_session_feedback.py` | SQLite session feedback fallback backend |
 
-### Graph integration
+### Feedback package (`agent/feedback/`)
+
+| File | Purpose |
+|---|---|
+| `agent/feedback/models.py` | `FeedbackLabel`, `FeedbackSource`, and `SessionFeedbackRecord` |
+| `agent/feedback/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory implementation |
+| `agent/feedback/postgres_session_feedback.py` | Primary durable Postgres session feedback store |
+
+### Runtime integration
 
 | File | Purpose |
 |---|---|
 | `agent/memory/entries.py` | `WorkingMemoryEntry` types with full SPO triples + formatters |
 | `agent/state.py` | `resolve_owner_id` — fail-loud identity validation |
-| `agent/nodes/load_memory.py` | Per-turn retrieval orchestration; core retrieval logic lives in `agent/memory/recall.py` |
-| `agent/runtime/turn_extraction.py` | Runtime-owned turn extraction coordinator that schedules semantic/procedural memory work after graph `END` |
-| `agent/memory/turn_write_service.py` | Semantic/procedural candidate extraction and immediate-write orchestration |
-| `agent/runtime/session/commit.py` | Session-end promotion orchestration for held semantic / procedural candidates; promotion logic lives in `agent/memory/session_commit_service.py` |
-| `agent/runtime/session/summarize.py` | Session-end episodic summarization orchestration; summarization/persistence logic lives in `agent/memory/episodic.py` |
-| `agent/persistence.py` | Shared session-end path, timeout handling, active-session buffering |
+| `agent/runtime/memory_context.py` | Runtime-owned per-turn retrieval orchestration; core retrieval logic lives in `agent/memory/retrieval/service.py` (`load_memory_for_turn`) |
+| `agent/runtime/session/commit.py` | Session-end promotion orchestration for held semantic / procedural candidates; promotion logic lives in `agent/memory/commit/service.py` |
+| `agent/runtime/session/summarize.py` | Session-end episodic summarization orchestration; summarization/persistence logic lives in `agent/memory/operations/episodic.py` |
+| `agent/runtime/runtime.py` | Shared session-end path, timeout handling, active-session buffering |

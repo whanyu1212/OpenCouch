@@ -19,25 +19,38 @@ CLI-only until a frontend with a proper confirmation flow exists.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Path, Query
 
-from agent.memory.reconciliation import filter_active_semantic_records
-from agent.memory.procedural_profile import (
+from agent.memory.operations.reconciliation import filter_active_semantic_records
+from agent.memory.operations.procedural_profile import (
     adelete_procedural_rule,
     aget_procedural_profile,
     aset_proactive_recall,
 )
 from agent.memory.store import StoreRecord
-from agent.persistence import PersistentAgentRuntime
-from api.dependencies import get_runtime
+from agent.runtime import PersistentAgentRuntime
+from api.dependencies import ApiRuntimeSelection, get_runtime_selection
 from api.models import (
+    ApiMemoryMode,
     DeleteResponse,
+    MemoryFactResponse,
     MemoryRecallUpdateRequest,
     MemoryRecallUpdateResponse,
+    MemoryRuleResponse,
+    MemorySessionResponse,
     MemoryStatusResponse,
 )
 
 router = APIRouter(prefix="/memory", tags=["memory"])
+
+_INCOGNITO_MEMORY_MUTATION_STATUS = 409
+_INCOGNITO_MEMORY_MUTATION_MESSAGE = (
+    "Saved-memory controls are unavailable in incognito mode."
+)
+_INCOGNITO_MEMORY_MUTATION_DETAIL = {
+    "code": "incognito_memory_mutation_unavailable",
+    "message": _INCOGNITO_MEMORY_MUTATION_MESSAGE,
+}
 
 
 def _resolve_owner_id(
@@ -59,6 +72,24 @@ def _resolve_owner_id(
     """
 
     return user_id or thread_id
+
+
+def _select_runtime(
+    memory_mode: ApiMemoryMode | None,
+) -> ApiRuntimeSelection:
+    """Resolve the API memory mode and runtime for a memory endpoint."""
+
+    return get_runtime_selection(memory_mode)
+
+
+def _reject_incognito_memory_mutation(selection: ApiRuntimeSelection) -> None:
+    """Reject saved-memory writes for incognito sessions."""
+
+    if selection.memory_mode is ApiMemoryMode.INCOGNITO:
+        raise HTTPException(
+            status_code=_INCOGNITO_MEMORY_MUTATION_STATUS,
+            detail=_INCOGNITO_MEMORY_MUTATION_DETAIL,
+        )
 
 
 async def _list_active_semantic_records(
@@ -85,19 +116,24 @@ async def _list_active_semantic_records(
 async def memory_status(
     thread_id: str = Query(description="Thread to scope the status to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
+    memory_mode: ApiMemoryMode | None = Query(
+        default=None,
+        description="Optional runtime selector for memory status.",
+    ),
 ) -> MemoryStatusResponse:
     """Return user-facing memory counts and the recall toggle state.
 
     Args:
         thread_id: Thread to scope the status to.
         user_id: Optional owner override.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for memory status.
 
     Returns:
         Memory status payload for the effective owner.
     """
 
+    selection = _select_runtime(memory_mode)
+    runtime = selection.runtime
     owner_id = _resolve_owner_id(user_id, thread_id)
     store = runtime.memory_store
     crisis_log = runtime.crisis_log_backend
@@ -105,6 +141,16 @@ async def memory_status(
 
     crisis_count = await crisis_log.arecord_count()
     feedback_count = await session_feedback.arecord_count()
+    if selection.memory_mode is ApiMemoryMode.INCOGNITO:
+        return MemoryStatusResponse(
+            memory_mode=selection.memory_mode.value,
+            owner_id=owner_id,
+            counts={"semantic": 0, "episodic": 0, "procedural": 0},
+            crisis_log_count=crisis_count,
+            session_feedback_count=feedback_count,
+            proactive_recall_enabled=False,
+        )
+
     profile = await aget_procedural_profile(store, user_id=owner_id)
     semantic_records = await _list_active_semantic_records(runtime, owner_id=owner_id)
     episodic_count = await store.arecord_count((owner_id, "episodic"))
@@ -116,7 +162,7 @@ async def memory_status(
     }
 
     return MemoryStatusResponse(
-        memory_mode=str(runtime.memory_mode.value),
+        memory_mode=selection.memory_mode.value,
         owner_id=owner_id,
         counts=counts,
         crisis_log_count=crisis_count,
@@ -130,7 +176,10 @@ async def update_memory_recall(
     payload: MemoryRecallUpdateRequest,
     thread_id: str = Query(description="Thread to scope the update to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
+    memory_mode: ApiMemoryMode | None = Query(
+        default=None,
+        description="Optional runtime selector for memory recall.",
+    ),
 ) -> MemoryRecallUpdateResponse:
     """Set the proactive recall toggle for the effective owner.
 
@@ -138,15 +187,17 @@ async def update_memory_recall(
         payload: Desired proactive recall state.
         thread_id: Thread to scope the update to.
         user_id: Optional owner override.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for memory recall.
 
     Returns:
         Updated proactive recall state for the effective owner.
     """
 
+    selection = _select_runtime(memory_mode)
+    _reject_incognito_memory_mutation(selection)
     owner_id = _resolve_owner_id(user_id, thread_id)
     profile = await aset_proactive_recall(
-        runtime.memory_store,
+        selection.runtime.memory_store,
         user_id=owner_id,
         enabled=payload.enabled,
     )
@@ -158,25 +209,32 @@ async def update_memory_recall(
     )
 
 
-@router.get("/facts")
+@router.get("/facts", response_model=list[MemoryFactResponse])
 async def list_facts(
     thread_id: str = Query(description="Thread to scope the listing to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
-) -> list[dict]:
+    memory_mode: ApiMemoryMode | None = Query(
+        default=None,
+        description="Optional runtime selector for memory facts.",
+    ),
+) -> list[MemoryFactResponse]:
     """List all semantic facts for this owner.
 
     Args:
         thread_id: Thread to scope the listing to.
         user_id: Optional owner override.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for memory facts.
 
     Returns:
         JSON-serializable semantic fact rows.
     """
 
+    selection = _select_runtime(memory_mode)
+    if selection.memory_mode is ApiMemoryMode.INCOGNITO:
+        return []
+
     owner_id = _resolve_owner_id(user_id, thread_id)
-    records = await _list_active_semantic_records(runtime, owner_id=owner_id)
+    records = await _list_active_semantic_records(selection.runtime, owner_id=owner_id)
     return [
         {
             "index": i + 1,
@@ -193,25 +251,32 @@ async def list_facts(
     ]
 
 
-@router.get("/sessions")
+@router.get("/sessions", response_model=list[MemorySessionResponse])
 async def list_sessions(
     thread_id: str = Query(description="Thread to scope the listing to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
-) -> list[dict]:
+    memory_mode: ApiMemoryMode | None = Query(
+        default=None,
+        description="Optional runtime selector for memory sessions.",
+    ),
+) -> list[MemorySessionResponse]:
     """List all episodic session arcs for this owner.
 
     Args:
         thread_id: Thread to scope the listing to.
         user_id: Optional owner override.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for memory sessions.
 
     Returns:
         JSON-serializable episodic session rows.
     """
 
+    selection = _select_runtime(memory_mode)
+    if selection.memory_mode is ApiMemoryMode.INCOGNITO:
+        return []
+
     owner_id = _resolve_owner_id(user_id, thread_id)
-    store = runtime.memory_store
+    store = selection.runtime.memory_store
     namespace = (owner_id, "episodic")
     records = await store.asearch(namespace, query=None, limit=1000)
     return [
@@ -230,25 +295,32 @@ async def list_sessions(
     ]
 
 
-@router.get("/rules")
+@router.get("/rules", response_model=list[MemoryRuleResponse])
 async def list_rules(
     thread_id: str = Query(description="Thread to scope the listing to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
-) -> list[dict]:
+    memory_mode: ApiMemoryMode | None = Query(
+        default=None,
+        description="Optional runtime selector for memory rules.",
+    ),
+) -> list[MemoryRuleResponse]:
     """List all procedural rules for this owner.
 
     Args:
         thread_id: Thread to scope the listing to.
         user_id: Optional owner override.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for memory rules.
 
     Returns:
         JSON-serializable procedural rule rows.
     """
 
+    selection = _select_runtime(memory_mode)
+    if selection.memory_mode is ApiMemoryMode.INCOGNITO:
+        return []
+
     owner_id = _resolve_owner_id(user_id, thread_id)
-    store = runtime.memory_store
+    store = selection.runtime.memory_store
     profile = await aget_procedural_profile(store, user_id=owner_id)
     return [
         {
@@ -264,10 +336,13 @@ async def list_rules(
 
 @router.delete("/facts/{index}", response_model=DeleteResponse)
 async def delete_fact(
-    index: int,
+    index: int = Path(ge=1),
     thread_id: str = Query(description="Thread to scope the deletion to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
+    memory_mode: ApiMemoryMode | None = Query(
+        default=None,
+        description="Optional runtime selector for memory facts.",
+    ),
 ) -> DeleteResponse:
     """Delete one semantic fact by its 1-based index.
 
@@ -279,17 +354,19 @@ async def delete_fact(
         index: One-based fact index from the memory list.
         thread_id: Thread to scope the deletion to.
         user_id: Optional owner override.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for memory facts.
 
     Returns:
         Delete result with a user-facing detail string.
     """
 
+    selection = _select_runtime(memory_mode)
+    _reject_incognito_memory_mutation(selection)
     owner_id = _resolve_owner_id(user_id, thread_id)
-    store = runtime.memory_store
+    store = selection.runtime.memory_store
     namespace = (owner_id, "semantic")
 
-    records = await _list_active_semantic_records(runtime, owner_id=owner_id)
+    records = await _list_active_semantic_records(selection.runtime, owner_id=owner_id)
     if not records:
         raise HTTPException(
             status_code=404,
@@ -311,10 +388,13 @@ async def delete_fact(
 
 @router.delete("/sessions/{index}", response_model=DeleteResponse)
 async def delete_session(
-    index: int,
+    index: int = Path(ge=1),
     thread_id: str = Query(description="Thread to scope the deletion to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
+    memory_mode: ApiMemoryMode | None = Query(
+        default=None,
+        description="Optional runtime selector for memory sessions.",
+    ),
 ) -> DeleteResponse:
     """Delete one episodic session arc by its 1-based index.
 
@@ -322,14 +402,16 @@ async def delete_session(
         index: One-based session index from the memory list.
         thread_id: Thread to scope the deletion to.
         user_id: Optional owner override.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for memory sessions.
 
     Returns:
         Delete result with a user-facing detail string.
     """
 
+    selection = _select_runtime(memory_mode)
+    _reject_incognito_memory_mutation(selection)
     owner_id = _resolve_owner_id(user_id, thread_id)
-    store = runtime.memory_store
+    store = selection.runtime.memory_store
     namespace = (owner_id, "episodic")
 
     records = await store.asearch(namespace, query=None, limit=1000)
@@ -353,10 +435,13 @@ async def delete_session(
 
 @router.delete("/rules/{index}", response_model=DeleteResponse)
 async def delete_rule(
-    index: int,
+    index: int = Path(ge=1),
     thread_id: str = Query(description="Thread to scope the deletion to."),
     user_id: str | None = Query(default=None, description="Optional owner override."),
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
+    memory_mode: ApiMemoryMode | None = Query(
+        default=None,
+        description="Optional runtime selector for memory rules.",
+    ),
 ) -> DeleteResponse:
     """Delete one procedural rule by its 1-based index.
 
@@ -364,14 +449,16 @@ async def delete_rule(
         index: One-based rule index from the memory list.
         thread_id: Thread to scope the deletion to.
         user_id: Optional owner override.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for memory rules.
 
     Returns:
         Delete result with a user-facing detail string.
     """
 
+    selection = _select_runtime(memory_mode)
+    _reject_incognito_memory_mutation(selection)
     owner_id = _resolve_owner_id(user_id, thread_id)
-    store = runtime.memory_store
+    store = selection.runtime.memory_store
     profile = await aget_procedural_profile(store, user_id=owner_id)
 
     if not profile.rules:

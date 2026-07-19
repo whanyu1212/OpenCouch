@@ -18,12 +18,21 @@ import {
 import { useSessionStore } from "@/lib/session";
 import { CouchLogo } from "@/components/logo";
 import { SessionPill } from "@/components/conversation-shell";
+import { Card } from "@/components/ui/card";
+import { Chip } from "@/components/ui/chip";
+import {
+  memoryKind,
+  memoryKindName,
+  moodDotClass,
+  formatCategory,
+} from "@/components/ui/memory-kinds";
 
 type Tab = "overview" | "facts" | "sessions" | "rules";
 
 export default function MemoryPage() {
   const userId = useSessionStore((s) => s.userId);
   const threadId = useSessionStore((s) => s.threadId);
+  const sessionMode = useSessionStore((s) => s.sessionMode);
   const memoryRefreshVersion = useSessionStore((s) => s.memoryRefreshVersion);
   const bumpMemoryRefreshVersion = useSessionStore((s) => s.bumpMemoryRefreshVersion);
   const [tab, setTab] = useState<Tab>("overview");
@@ -40,10 +49,10 @@ export default function MemoryPage() {
     setError(null);
     try {
       const [s, f, sess, r] = await Promise.all([
-        getMemoryStatus(threadId, userId),
-        getMemoryFacts(threadId, userId),
-        getMemorySessions(threadId, userId),
-        getMemoryRules(threadId, userId),
+        getMemoryStatus(threadId, userId, sessionMode),
+        getMemoryFacts(threadId, userId, sessionMode),
+        getMemorySessions(threadId, userId, sessionMode),
+        getMemoryRules(threadId, userId, sessionMode),
       ]);
       setStatus(s);
       setFacts(f);
@@ -54,7 +63,7 @@ export default function MemoryPage() {
     } finally {
       setLoading(false);
     }
-  }, [threadId, userId]);
+  }, [sessionMode, threadId, userId]);
 
   useEffect(() => {
     loadAll();
@@ -63,7 +72,7 @@ export default function MemoryPage() {
   const handleDeleteFact = async (index: number) => {
     setError(null);
     try {
-      await deleteMemoryFact(index, threadId, userId || undefined);
+      await deleteMemoryFact(index, threadId, userId || undefined, sessionMode);
       bumpMemoryRefreshVersion();
     } catch {
       setError("Could not delete memory fact.");
@@ -73,7 +82,7 @@ export default function MemoryPage() {
   const handleDeleteSession = async (index: number) => {
     setError(null);
     try {
-      await deleteMemorySession(index, threadId, userId || undefined);
+      await deleteMemorySession(index, threadId, userId || undefined, sessionMode);
       bumpMemoryRefreshVersion();
     } catch {
       setError("Could not delete memory session.");
@@ -83,7 +92,7 @@ export default function MemoryPage() {
   const handleDeleteRule = async (index: number) => {
     setError(null);
     try {
-      await deleteMemoryRule(index, threadId, userId || undefined);
+      await deleteMemoryRule(index, threadId, userId || undefined, sessionMode);
       bumpMemoryRefreshVersion();
     } catch {
       setError("Could not delete memory rule.");
@@ -94,7 +103,12 @@ export default function MemoryPage() {
     setUpdatingRecall(true);
     setError(null);
     try {
-      const result = await updateMemoryRecall(enabled, threadId, userId || undefined);
+      const result = await updateMemoryRecall(
+        enabled,
+        threadId,
+        userId || undefined,
+        sessionMode
+      );
       setStatus((current) =>
         current
           ? {
@@ -204,6 +218,7 @@ export default function MemoryPage() {
                 status={status}
                 updatingRecall={updatingRecall}
                 onRecallChange={handleRecallChange}
+                onSelectTab={setTab}
               />
             )}
             {tab === "facts" && <FactsTab facts={facts} onDelete={handleDeleteFact} />}
@@ -221,27 +236,31 @@ function OverviewTab({
   status,
   updatingRecall,
   onRecallChange,
+  onSelectTab,
 }: {
   status: MemoryStatus;
   updatingRecall: boolean;
   onRecallChange: (enabled: boolean) => Promise<void>;
+  onSelectTab: (tab: Tab) => void;
 }) {
   const recallEnabled = status.proactive_recall_enabled;
 
   return (
     <div className="space-y-5 max-w-lg">
-      {/* Count cards */}
+      {/* Count cards — color + icon identity, clickable to jump to the tab */}
       <div className="grid grid-cols-3 gap-3">
         {Object.entries(status.counts).map(([kind, count]) => (
-          <div key={kind} className="bg-oc-bg-card border border-oc-border rounded-xl p-5 text-center">
-            <p className="text-3xl font-display text-oc-teal-700 tabular-nums">{count}</p>
-            <p className="text-[12px] text-oc-text-muted mt-1.5 font-mono uppercase tracking-wider">{kind}</p>
-          </div>
+          <CountCard
+            key={kind}
+            kind={kind}
+            count={count}
+            onSelect={onSelectTab}
+          />
         ))}
       </div>
 
       {/* Config card */}
-      <div className="bg-oc-bg-card border border-oc-border rounded-xl divide-y divide-oc-border">
+      <Card variant="surface" className="divide-y divide-oc-border">
         <MetaRow label="Mode" value={status.memory_mode} />
         <MetaRow label="Owner" value={status.owner_id} mono />
         <MetaRow label="Crisis log" value={String(status.crisis_log_count)} />
@@ -254,9 +273,9 @@ function OverviewTab({
           value={recallEnabled ? "On" : "Off"}
           accent={recallEnabled}
         />
-      </div>
+      </Card>
 
-      <div className="bg-oc-bg-card border border-oc-border rounded-xl p-5">
+      <Card variant="surface" className="p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[15px] font-medium text-oc-text">
@@ -282,7 +301,65 @@ function OverviewTab({
             {updatingRecall ? "saving..." : recallEnabled ? "on" : "off"}
           </button>
         </div>
+      </Card>
+    </div>
+  );
+}
+
+function CountCard({
+  kind,
+  count,
+  onSelect,
+}: {
+  kind: string;
+  count: number;
+  onSelect: (tab: Tab) => void;
+}) {
+  const identity = memoryKind(kind);
+  // Canonical kind names (facts/sessions/rules) double as tab keys.
+  const tab = memoryKindName(kind);
+
+  const inner = (
+    <>
+      {identity && (
+        <span
+          className={`absolute inset-x-0 top-0 h-1 ${identity.rail} opacity-70`}
+          aria-hidden="true"
+        />
+      )}
+      <div className="flex items-center justify-center gap-2">
+        {identity && (
+          <span
+            className={`inline-flex h-6 w-6 items-center justify-center rounded-md border ${identity.accent.bg} ${identity.accent.text} ${identity.accent.border}`}
+          >
+            {identity.icon}
+          </span>
+        )}
+        <p className="text-3xl font-display text-oc-teal-700 tabular-nums">
+          {count}
+        </p>
       </div>
+      <p className="text-[12px] text-oc-text-muted mt-1.5 font-mono uppercase tracking-wider">
+        {identity?.label ?? kind}
+      </p>
+    </>
+  );
+
+  if (tab) {
+    return (
+      <button
+        type="button"
+        onClick={() => onSelect(tab)}
+        className="group relative overflow-hidden bg-oc-bg-card border border-oc-border rounded-xl p-5 text-center transition-colors hover:border-oc-border-strong"
+      >
+        {inner}
+      </button>
+    );
+  }
+
+  return (
+    <div className="relative overflow-hidden bg-oc-bg-card border border-oc-border rounded-xl p-5 text-center">
+      {inner}
     </div>
   );
 }
@@ -299,53 +376,147 @@ function MetaRow({ label, value, mono, accent }: { label: string; value: string;
 }
 
 function FactsTab({ facts, onDelete }: { facts: MemoryFact[]; onDelete: (index: number) => Promise<void> }) {
+  const [filter, setFilter] = useState<string | null>(null);
+
   if (facts.length === 0) return <Empty label="No semantic facts stored yet." />;
+
+  const categories = Array.from(new Set(facts.map(f => f.category))).filter(Boolean);
+  const filteredFacts = filter ? facts.filter(f => f.category === filter) : facts;
+
   return (
-    <div className="space-y-3 max-w-2xl">
-      {facts.map((f, i) => (
-        <div key={i} className="group bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1 min-w-0">
-              <p className="text-[15px] text-oc-text leading-relaxed italic">
-                &ldquo;{String(f.evidence_quote)}&rdquo;
-              </p>
-              <div className="flex flex-wrap gap-2 mt-3">
-                <Tag>{f.category}</Tag>
-                <Tag>{f.subject} → {f.predicate} → {f.object}</Tag>
-                <Tag muted>{f.confidence}</Tag>
-              </div>
-            </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="text-[11px] font-mono text-oc-text-dim">#{f.index}</span>
-              <DeleteButton onDelete={() => onDelete(f.index)} label="fact" />
-            </div>
+    <div className="space-y-4 max-w-2xl">
+      {categories.length > 1 && (
+        <div className="flex flex-wrap gap-2 mb-2">
+          <FilterPill active={!filter} onClick={() => setFilter(null)}>
+            All
+          </FilterPill>
+          {categories.map(cat => (
+            <FilterPill
+              key={cat}
+              active={filter === cat}
+              onClick={() => setFilter(cat)}
+            >
+              {formatCategory(cat)}
+            </FilterPill>
+          ))}
+        </div>
+      )}
+      <div className="space-y-3">
+        {filteredFacts.map((f) => (
+          <FactCard key={f.index} fact={f} onDelete={() => onDelete(f.index)} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FactCard({
+  fact,
+  onDelete,
+}: {
+  fact: MemoryFact;
+  onDelete: () => Promise<void>;
+}) {
+  // Lead with the human-readable summary; keep the raw quote as quiet support.
+  // The SPO triple is internal knowledge-graph shape and is intentionally not shown.
+  const summary =
+    fact.subject && fact.object
+      ? `${fact.subject} ${fact.predicate.replace(/_/g, " ")} ${fact.object}`
+      : fact.evidence_quote;
+  const showQuote =
+    Boolean(fact.evidence_quote) && fact.evidence_quote !== summary;
+
+  return (
+    <Card variant="elevated" interactive className="group p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex-1 min-w-0">
+          <p className="text-[15px] text-oc-text leading-relaxed">{summary}</p>
+          {showQuote && (
+            <p className="mt-2 text-[13px] text-oc-text-muted leading-relaxed italic">
+              &ldquo;{fact.evidence_quote}&rdquo;
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2 mt-3">
+            <Chip tone="category" category={fact.category}>
+              {formatCategory(fact.category)}
+            </Chip>
+            <Chip tone="muted">{fact.confidence}</Chip>
           </div>
         </div>
-      ))}
-    </div>
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <DeleteButton onDelete={onDelete} label="fact" />
+          <span className="text-[11px] font-mono text-oc-text-dim mt-auto pt-2">
+            #{fact.index}
+          </span>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function FilterPill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors ${
+        active
+          ? "bg-oc-teal-600 text-white border-oc-teal-600"
+          : "bg-oc-warm-100 text-oc-text-secondary border-transparent hover:bg-oc-warm-200"
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
 function SessionsTab({ sessions, onDelete }: { sessions: MemorySession[]; onDelete: (index: number) => Promise<void> }) {
   if (sessions.length === 0) return <Empty label="No episodic session arcs yet." />;
   return (
-    <div className="space-y-3 max-w-2xl">
+    <div className="space-y-4 max-w-2xl relative">
+      {/* Add a subtle timeline vertical line on the left */}
+      <div className="absolute left-6 top-4 bottom-4 w-px bg-oc-line-2 z-0 hidden sm:block" />
       {sessions.map((s, i) => (
-        <div key={i} className="group bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
-          <div className="flex items-start justify-between gap-4">
-            <div className="flex-1 min-w-0">
-              <p className="text-[15px] text-oc-text leading-relaxed">{s.summary}</p>
-              <div className="flex flex-wrap gap-2 mt-3">
-                {s.themes.map((t) => (
-                  <Tag key={t}>{t}</Tag>
-                ))}
-                <Tag muted>{s.mood_opened} → {s.mood_closed}</Tag>
-                <Tag muted>{s.turn_count} turns</Tag>
-                <Tag muted>{s.ended_at.slice(0, 10)}</Tag>
-              </div>
-            </div>
-            <DeleteButton onDelete={() => onDelete(s.index)} label="session" />
+        <div key={i} className="group relative z-10 flex gap-4">
+          <div className="hidden sm:flex flex-col items-center mt-2 shrink-0 w-12">
+            <div
+              className={`w-3 h-3 rounded-full border-2 border-white shadow-sm ${moodDotClass(s.mood_closed)}`}
+              title={`closed: ${s.mood_closed}`}
+            />
           </div>
+          <Card variant="elevated" interactive className="flex-1 p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[12px] font-mono font-medium text-oc-text-secondary">
+                    {s.ended_at.slice(0, 10)}
+                  </span>
+                  <span className="text-[12px] text-oc-text-dim px-2 py-0.5 rounded-full bg-oc-warm-50 border border-oc-warm-200">
+                    {s.turn_count} turns
+                  </span>
+                </div>
+                <p className="text-[15px] text-oc-ink-2 leading-relaxed">{s.summary}</p>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-gradient-to-r from-oc-warm-50 to-oc-teal-50 border border-oc-line-2 rounded-md text-[11px] font-mono text-oc-text-secondary">
+                    <span>{s.mood_opened}</span>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="opacity-50"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+                    <span>{s.mood_closed}</span>
+                  </div>
+                  {s.themes.map((t) => (
+                    <Chip key={t} tone="muted">{t}</Chip>
+                  ))}
+                </div>
+              </div>
+              <DeleteButton onDelete={() => onDelete(s.index)} label="session" />
+            </div>
+          </Card>
         </div>
       ))}
     </div>
@@ -355,25 +526,39 @@ function SessionsTab({ sessions, onDelete }: { sessions: MemorySession[]; onDele
 function RulesTab({ rules, onDelete }: { rules: MemoryRule[]; onDelete: (index: number) => Promise<void> }) {
   if (rules.length === 0) return <Empty label="No procedural style rules yet." />;
   return (
-    <div className="space-y-3 max-w-2xl">
+    <div className="space-y-4 max-w-2xl">
       {rules.map((r, i) => (
-        <div key={i} className="group bg-oc-bg-card border border-oc-border rounded-xl p-5 hover:border-oc-border-strong transition-colors">
+        <Card key={i} variant="accent" interactive className="group p-5 relative overflow-hidden">
+          {/* Subtle accent bar */}
+          <div className="absolute left-0 top-0 bottom-0 w-1 bg-oc-teal-400 opacity-50" />
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
-              <p className="text-[15px] text-oc-text">{r.rule}</p>
-              <div className="flex flex-wrap gap-2 mt-3">
-                <Tag muted>{r.confidence}</Tag>
-                {r.added_at ? <Tag muted>{r.added_at.slice(0, 10)}</Tag> : null}
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-oc-teal-700/70">
+                  Style Rule
+                </span>
+                <span className="text-oc-text-dim">·</span>
+                <span className="text-[11px] font-mono text-oc-teal-700/60">
+                  {r.confidence} confidence
+                </span>
               </div>
+              <p className="text-[15px] font-medium text-oc-teal-900 leading-relaxed mb-3">
+                {r.rule}
+              </p>
               {r.evidence.length > 0 ? (
-                <p className="text-[13px] text-oc-text-muted mt-2.5 italic font-mono leading-relaxed">
-                  evidence: {r.evidence.join("; ")}
-                </p>
+                <div className="mt-3 pt-3 border-t border-oc-teal-200/40">
+                  <p className="text-[12px] text-oc-teal-800/70 italic font-mono leading-relaxed">
+                    Based on: &quot;{r.evidence.join('&quot;, &quot;')}&quot;
+                  </p>
+                </div>
               ) : null}
             </div>
-            <DeleteButton onDelete={() => onDelete(r.index)} label="rule" />
+            <div className="flex flex-col items-end gap-2 shrink-0">
+              <DeleteButton onDelete={() => onDelete(r.index)} label="rule" />
+              {r.added_at ? <span className="text-[10px] font-mono text-oc-teal-700/50 mt-auto pt-2">{r.added_at.slice(0, 10)}</span> : null}
+            </div>
           </div>
-        </div>
+        </Card>
       ))}
     </div>
   );
@@ -411,18 +596,6 @@ function DeleteButton({ onDelete, label }: { onDelete: () => Promise<void>; labe
     >
       {deleting ? "…" : confirming ? "confirm?" : "forget"}
     </button>
-  );
-}
-
-function Tag({ children, muted }: { children: React.ReactNode; muted?: boolean }) {
-  return (
-    <span className={`text-[11px] font-mono font-medium px-2 py-0.5 rounded-md border ${
-      muted
-        ? "bg-oc-warm-100 text-oc-warm-600 border-oc-warm-200"
-        : "bg-oc-teal-50 text-oc-teal-700 border-oc-teal-200/60"
-    }`}>
-      {children}
-    </span>
   );
 }
 

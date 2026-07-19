@@ -1,6 +1,6 @@
 ---
 title: Guided Exercises
-sidebar_position: 6
+sidebar_position: 8
 ---
 
 import ExerciseCatalog from '@site/src/components/ExerciseCatalog';
@@ -8,17 +8,20 @@ import ExerciseCatalog from '@site/src/components/ExerciseCatalog';
 # Guided Exercises
 
 OpenCouch includes 13 structured exercises spanning 6 therapeutic
-subtypes. Each exercise is a multi-turn flow run by the plain
-`ExerciseRunner` service: the control LLM selects the exercise and
-classifies step progress, the response LLM writes the user-facing
-guidance, and local code applies catalog/state validation.
+subtypes. The catalog is shared by text and voice, but availability is
+channel-aware: text can use the full catalog, while voice filters to
+exercises marked suitable for spoken delivery. Each exercise is a
+multi-turn flow run by plain guided-exercise services: the control LLM
+selects the exercise and classifies step progress, the response model
+writes user-facing guidance, and local code applies catalog/state
+validation.
 
 ## How it works
 
 1. **Dispatcher routes to `guided_exercise`** when the user explicitly asks for a structured exercise or practice.
 2. **Exercise selector chooses one supported exercise.** Selection is LLM-owned and constrained to definitions available for the current channel, installed skills, and therapeutic approach.
 3. **Step-state classifier** evaluates each user response as `complete` / `hold` / `stuck` / `exit` using the current step's natural-language completion criteria.
-4. **`ExerciseRunner` advances, holds, adapts, exits, or completes** based on the classifier output and local state validation.
+4. **`GuidedExerciseSkillService` advances, holds, adapts, exits, or completes** based on the classifier output and local state validation.
 5. **Exercise clears** on natural completion or user-initiated exit.
 
 ### Approach continuity
@@ -33,6 +36,32 @@ side-turns preserve the active exercise state, but may use a fresh
 top-level approach for the explanation. Without the exercise pin,
 resuming guidance after a side-turn could silently drift into `cbt` or
 `motivational_interviewing` framing.
+
+### Text and voice delivery
+
+The registry normalizes text-like channels to `text` and voice turns to
+`voice`. Voice can only offer definitions where `voice_supported=True`
+or the definition explicitly includes the `voice` channel.
+
+Today the voice-supported set contains 10 exercises:
+
+| Exercise id | Family |
+|---|---|
+| `grounding_5_4_3_2_1` | Grounding |
+| `grounding_box_breathing` | Grounding |
+| `grounding_stop_technique` | Grounding |
+| `grounding_muscle_relaxation` | Grounding |
+| `thought_work_continuum` | Thought work |
+| `behavioral_activation_tiny_action` | Activation |
+| `defusion_values_compass` | ACT values |
+| `self_compassion_break` | Emotion regulation |
+| `emotion_regulation_improve` | Emotion regulation |
+| `emotion_regulation_gratitude` | Emotion regulation |
+
+Voice uses Realtime function tools to list available exercises, load
+the selected skill block, and record step progress. The underlying
+catalog and state validation are the same as text; only the transport
+binding differs.
 
 ### Post-exercise check-in
 
@@ -73,5 +102,5 @@ Click any exercise to see its steps and trigger keywords. Use the filter tabs to
 
 
 :::tip Adding a new exercise
-Define an `ExerciseDefinition` under `agent/therapeutic/exercises/definitions/`, include its steps and selector groups, export it through that package's `ALL_EXERCISE_DEFINITIONS`, and add LLM guidance to `agent/prompts/sources/response_styles/guided_exercise.md` when the new exercise needs behavior-specific prose. No dispatcher or graph changes should be needed. See [Agent Graph](/docs/agent/graph) for the full architecture.
+Define an `ExerciseDefinition` under `agent/skills/guided_exercises/catalog/definitions/`, include its steps and selector groups, register it in the `ALL_EXERCISE_DEFINITIONS` tuple in `agent/skills/guided_exercises/catalog/registry.py`, and add LLM guidance to `agent/prompts/sources/response_styles/guided_exercise.md` when the new exercise needs behavior-specific prose. No dispatcher or router changes should be needed. See [Text Agent Runtime](/docs/agent/graph) for the full architecture.
 :::

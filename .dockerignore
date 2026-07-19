@@ -1,5 +1,6 @@
 .git
 .github
+.cache
 .docusaurus
 .mypy_cache
 .pytest_cache
@@ -20,10 +21,20 @@ skills
 **/.coverage
 **/.store
 **/.next
+**/build
+**/dist
+**/coverage
 **/tsconfig.tsbuildinfo
 **/.env
 **/.env.local
 **/*.pyc
+
+# macOS AppleDouble sidecar files — created on external/non-HFS volumes.
+# BuildKit's context sender fails to xattr these ("operation not permitted").
+._*
+**/._*
+.DS_Store
+**/.DS_Store
 
 apps/docs
 eval

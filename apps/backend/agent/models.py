@@ -13,9 +13,6 @@ class Channel(str, Enum):
 
     TEST = "test"
     WEB = "web"
-    SMS = "sms"
-    WHATSAPP = "whatsapp"
-    TELEGRAM = "telegram"
     VOICE = "voice"
 
 
@@ -35,6 +32,29 @@ class ResponseCategory(str, Enum):
 
 
 SessionAction = Literal["none", "suggest_end_session"]
+
+SessionIntent = Literal[
+    "vent",
+    "understand",
+    "reflect",
+    "work",
+    "regulate",
+    "repair",
+    "close",
+]
+
+GuidancePermission = Literal["unknown", "not_yet", "granted"]
+
+TherapeuticApproach = Literal[
+    "motivational_interviewing",
+    "cbt",
+    "act",
+    "dbt_skills",
+    "grief_support",
+    "interpersonal_therapy",
+    "pfa",
+    "none",
+]
 
 
 class Message(BaseModel):
@@ -105,15 +125,12 @@ STAGE_LABELS: dict[str, str] = {
     "memory_profile_save": "saving profile memory",
     "memory_graph_save": "writing graph memory",
     "crisis_gate": "safety check",
-    "turn_dispatch": "routing turn",
     "memory_control": "updating memory",
     "grounded_lookup": "looking up factual answer",
     "crisis_resource_lookup": "looking up crisis resources",
     "crisis_response": "generating crisis reply",
-    "crisis_log": "writing crisis log",
+    "crisis_clarification": "checking immediate safety",
     "therapeutic": "generating therapeutic reply",
-    "extract_facts": "extracting facts",
-    "extract_procedural": "extracting style rules",
     "finalize": "finalizing turn",
     "session_stage": "reading context",
     "response_generation": "generating",
@@ -136,9 +153,7 @@ def friendly_stage(stage: str) -> str:
 class ChunkEvent(BaseModel):
     """Incremental text chunk from response generation.
 
-    Mode nodes call ``get_stream_writer()`` to push chunks through
-    LangGraph's custom stream channel, which ``run_turn_stream`` maps to
-    ``ChunkEvent`` values.
+    Text runtimes emit these while streaming response text.
     """
 
     type: Literal["chunk"] = "chunk"
@@ -148,11 +163,10 @@ class ChunkEvent(BaseModel):
 class ResponseReadyEvent(BaseModel):
     """Non-terminal event emitted when the reply is finalized.
 
-    This fires after ``finalize_turn_node`` has appended the assistant
-    reply to transcript, but before post-response memory writers
-    finish. The output payload is intentionally partial: response text,
-    routing, and crisis metadata are ready; tail diagnostics like
-    ``turn_total_ms`` still land on the terminal ``DoneEvent``.
+    This fires after turn finalization has appended the assistant
+    reply to transcript. The output payload is intentionally partial:
+    response text, routing, and crisis metadata are ready; tail diagnostics
+    like ``turn_total_ms`` still land on the terminal ``DoneEvent``.
     """
 
     type: Literal["response_ready"] = "response_ready"

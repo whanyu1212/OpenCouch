@@ -1,4 +1,4 @@
-"""Runtime configuration helpers for model and tracing setup."""
+"""Runtime configuration helpers for model and persistence setup."""
 
 from __future__ import annotations
 
@@ -11,33 +11,38 @@ from dotenv import load_dotenv
 
 from llm.base import BaseLLMClient
 from llm.factory import create_llm_client
-from llm.google_genai import DEFAULT_GEMINI_MODEL
 from llm.openai_client import DEFAULT_OPENAI_MODEL
 
-LLMProvider = Literal["gemini", "openai"]
+LLMProvider = Literal["openai"]
 ResponseModelTier = Literal["fast", "quality"]
-PersistenceBackend = Literal["sqlite", "postgres"]
+PersistenceBackend = Literal["postgres"]
+TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
 
 # Single source of truth for the default provider when LLM_PROVIDER is unset.
 DEFAULT_LLM_PROVIDER: LLMProvider = "openai"
 DEFAULT_OPENAI_QUALITY_MODEL = "gpt-5.4"
-# Postgres is the default persistent backend (Docker compose ships it as the
-# primary persistence path). SQLite remains available as an explicit fallback
-# via OPENCOUCH_PERSISTENCE_BACKEND=sqlite for local-only installs without
-# Docker.
+# Postgres is the only application persistence backend. The legacy SQLite flag
+# remains available for SDK text-session compatibility.
 DEFAULT_PERSISTENCE_BACKEND: PersistenceBackend = "postgres"
+LEGACY_SQLITE_OPT_IN_ENV = "OPENCOUCH_ALLOW_LEGACY_SQLITE"
+LEGACY_SQLITE_REJECT_MESSAGE = (
+    "OPENCOUCH_PERSISTENCE_BACKEND=sqlite is no longer supported. "
+    "Use OPENCOUCH_PERSISTENCE_BACKEND=postgres with "
+    "OPENCOUCH_MEMORY_DATABASE_URL. OPENCOUCH_ALLOW_LEGACY_SQLITE only retains "
+    "SDK text-session compatibility."
+)
 
 # Shared, actionable error text raised by every postgres-without-URL guard
 # in the runtime. Lives here so the message stays consistent across the
-# checkpointer and voice-finalization validators that reference it.
+# runtime persistence and voice-finalization validators that reference it.
 MISSING_MEMORY_DATABASE_URL_MESSAGE = (
     "OPENCOUCH_PERSISTENCE_BACKEND=postgres requires "
     "OPENCOUCH_MEMORY_DATABASE_URL. Add it to your .env — for the "
     "local docker compose stack use "
     "postgresql://opencouch:opencouch@localhost:5432/opencouch "
     "(or @postgres:5432/opencouch from inside the compose network). "
-    "For a local-only install without docker, set "
-    "OPENCOUCH_PERSISTENCE_BACKEND=sqlite instead."
+    "Application-owned durable persistence requires Postgres. Legacy SQLite "
+    "compatibility is limited to SDK text sessions."
 )
 
 _DOTENV_LOADED = False
@@ -72,24 +77,16 @@ class Settings:
     """
 
     llm_provider: LLMProvider = DEFAULT_LLM_PROVIDER
-    gemini_model: str = DEFAULT_GEMINI_MODEL
     openai_model: str = DEFAULT_OPENAI_MODEL
     response_fast_provider: LLMProvider = DEFAULT_LLM_PROVIDER
-    response_fast_gemini_model: str = DEFAULT_GEMINI_MODEL
     response_fast_openai_model: str = DEFAULT_OPENAI_MODEL
     response_quality_provider: LLMProvider = DEFAULT_LLM_PROVIDER
-    response_quality_gemini_model: str = DEFAULT_GEMINI_MODEL
     response_quality_openai_model: str = DEFAULT_OPENAI_QUALITY_MODEL
     persistence_backend: PersistenceBackend = DEFAULT_PERSISTENCE_BACKEND
     memory_database_url: str | None = None
-    langsmith_tracing: bool = False
-    langsmith_endpoint: str | None = None
-    langsmith_api_key: str | None = None
-    langsmith_project: str | None = None
-    langchain_tracing_v2: bool = False
-    langchain_endpoint: str | None = None
-    langchain_api_key: str | None = None
-    langchain_project: str | None = None
+    allow_legacy_sqlite: bool = False
+    text_session_backend: TextSessionBackend = "auto"
+    text_session_database_url: str | None = None
 
 
 def get_settings() -> Settings:
@@ -117,41 +114,30 @@ def get_settings() -> Settings:
         "OPENCOUCH_PERSISTENCE_BACKEND",
         DEFAULT_PERSISTENCE_BACKEND,
     )
+    allow_legacy_sqlite = _read_bool_env(LEGACY_SQLITE_OPT_IN_ENV)
+    text_session_backend = _read_text_session_backend_env(
+        "OPENCOUCH_TEXT_SESSION_BACKEND",
+        "auto",
+    )
 
     return Settings(
         llm_provider=provider,
-        gemini_model=os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
         openai_model=os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
         response_fast_provider=response_fast_provider,
-        response_fast_gemini_model=os.getenv(
-            "RESPONSE_FAST_GEMINI_MODEL",
-            os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
-        ),
         response_fast_openai_model=os.getenv(
             "RESPONSE_FAST_OPENAI_MODEL",
             os.getenv("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
         ),
         response_quality_provider=response_quality_provider,
-        response_quality_gemini_model=os.getenv(
-            "RESPONSE_QUALITY_GEMINI_MODEL",
-            os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL),
-        ),
         response_quality_openai_model=os.getenv(
             "RESPONSE_QUALITY_OPENAI_MODEL",
             DEFAULT_OPENAI_QUALITY_MODEL,
         ),
         persistence_backend=persistence_backend,
         memory_database_url=os.getenv("OPENCOUCH_MEMORY_DATABASE_URL"),
-        langsmith_tracing=os.getenv("LANGSMITH_TRACING", "").strip().lower()
-        in {"1", "true", "yes", "on"},
-        langsmith_endpoint=os.getenv("LANGSMITH_ENDPOINT"),
-        langsmith_api_key=os.getenv("LANGSMITH_API_KEY"),
-        langsmith_project=os.getenv("LANGSMITH_PROJECT"),
-        langchain_tracing_v2=os.getenv("LANGCHAIN_TRACING_V2", "").strip().lower()
-        in {"1", "true", "yes", "on"},
-        langchain_endpoint=os.getenv("LANGCHAIN_ENDPOINT"),
-        langchain_api_key=os.getenv("LANGCHAIN_API_KEY"),
-        langchain_project=os.getenv("LANGCHAIN_PROJECT"),
+        allow_legacy_sqlite=allow_legacy_sqlite,
+        text_session_backend=text_session_backend,
+        text_session_database_url=os.getenv("OPENCOUCH_TEXT_SESSION_DATABASE_URL"),
     )
 
 
@@ -173,11 +159,32 @@ def _read_persistence_backend_env(
     """
 
     raw = os.getenv(name, fallback).strip().lower()
-    if raw == "sqlite":
-        return "sqlite"
     if raw == "postgres":
         return "postgres"
+    if raw == "sqlite":
+        raise ValueError(LEGACY_SQLITE_REJECT_MESSAGE)
     raise ValueError(f"Unsupported {name} value: {raw}")
+
+
+def _read_text_session_backend_env(
+    name: str,
+    fallback: TextSessionBackend,
+) -> TextSessionBackend:
+    """Read and validate the OpenAI SDK text-session backend."""
+
+    raw = os.getenv(name, fallback).strip().lower()
+    if raw == "auto":
+        return "auto"
+    if raw == "disabled":
+        return "disabled"
+    if raw == "sqlite":
+        return "sqlite"
+    if raw == "sqlalchemy":
+        return "sqlalchemy"
+    raise ValueError(
+        f"Unsupported {name} value: {raw}. "
+        "Supported values: auto, disabled, sqlite, sqlalchemy."
+    )
 
 
 def _read_provider_env(name: str, fallback: LLMProvider) -> LLMProvider:
@@ -195,8 +202,6 @@ def _read_provider_env(name: str, fallback: LLMProvider) -> LLMProvider:
     """
 
     raw = os.getenv(name, fallback).strip().lower()
-    if raw == "gemini":
-        return "gemini"
     if raw == "openai":
         return "openai"
     raise ValueError(f"Unsupported {name} value: {raw}")
@@ -238,26 +243,6 @@ def _read_int_env(name: str, fallback: int) -> int:
         raise ValueError(f"Unsupported {name} value: {raw}") from exc
 
 
-def _resolve_model_for_provider(
-    *,
-    provider: LLMProvider,
-    gemini_model: str,
-    openai_model: str,
-) -> str:
-    """Return the provider-specific model string.
-
-    Args:
-        provider: LLM provider selected for the client.
-        gemini_model: Gemini model name to use when provider is Gemini.
-        openai_model: OpenAI model name to use when provider is OpenAI.
-
-    Returns:
-        Model name for the selected provider.
-    """
-
-    return gemini_model if provider == "gemini" else openai_model
-
-
 def create_configured_control_llm_client(
     settings: Settings | None = None,
 ) -> BaseLLMClient:
@@ -273,14 +258,9 @@ def create_configured_control_llm_client(
 
     load_runtime_env()
     settings = settings or get_settings()
-    model = _resolve_model_for_provider(
-        provider=settings.llm_provider,
-        gemini_model=settings.gemini_model,
-        openai_model=settings.openai_model,
-    )
     return create_llm_client(
         provider=settings.llm_provider,
-        model=model,
+        model=settings.openai_model,
     )
 
 
@@ -303,18 +283,10 @@ def create_configured_response_llm_client(
     settings = settings or get_settings()
     if tier == "fast":
         provider = settings.response_fast_provider
-        model = _resolve_model_for_provider(
-            provider=provider,
-            gemini_model=settings.response_fast_gemini_model,
-            openai_model=settings.response_fast_openai_model,
-        )
+        model = settings.response_fast_openai_model
     else:
         provider = settings.response_quality_provider
-        model = _resolve_model_for_provider(
-            provider=provider,
-            gemini_model=settings.response_quality_gemini_model,
-            openai_model=settings.response_quality_openai_model,
-        )
+        model = settings.response_quality_openai_model
 
     return create_llm_client(provider=provider, model=model)
 
@@ -337,17 +309,3 @@ def create_configured_response_llm_clients(
         "fast": create_configured_response_llm_client("fast", settings),
         "quality": create_configured_response_llm_client("quality", settings),
     }
-
-
-def create_configured_llm_client(settings: Settings | None = None) -> BaseLLMClient:
-    """Return the configured control-plane client.
-
-    Args:
-        settings: Optional preloaded settings. Reads the environment
-            when omitted.
-
-    Returns:
-        Configured control-plane LLM client.
-    """
-
-    return create_configured_control_llm_client(settings)

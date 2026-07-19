@@ -16,9 +16,9 @@ import pytest
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.runtime_context import WorkflowContext
+from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
-from agent.therapeutic.exercises.registry import (
+from agent.skills.guided_exercises.catalog.registry import (
     EXERCISE_5_4_3_2_1,
     EXERCISE_BEHAVIORAL_EXPERIMENT,
     EXERCISE_BOX_BREATHING,
@@ -33,32 +33,43 @@ from agent.therapeutic.exercises.registry import (
     EXERCISE_TINY_ACTION,
     EXERCISE_VALUES_COMPASS,
 )
-from agent.therapeutic.exercises.types import ExerciseDefinition, ExerciseStep
-from agent.therapeutic.exercises.node import (
-    run_guided_exercise_response_node as _run_guided_exercise_response_node,
+from agent.skills.guided_exercises.lifecycle.service import GuidedExerciseSkillService
+from agent.skills.guided_exercises.catalog.types import ExerciseDefinition, ExerciseStep
+from agent.skills.guided_exercises.lifecycle.memory import (
+    ExerciseCompletionMemoryRequest,
+    write_exercise_completion_fact,
 )
 
 # ── Helper ────────────────────────────────────────────────────────────
 
 
-async def run_guided_exercise_response_node(
+async def run_guided_exercise_skill_turn(
     state: AgentState,
     runtime: Any,
     **kwargs: Any,
 ) -> dict[str, Any]:
-    """Run the guided exercise node with a no-op test stream writer.
+    """Run the guided exercise skill lifecycle with a no-op test stream writer.
 
     Args:
-        state (AgentState): Test graph state.
+        state (AgentState): Test runtime state.
         runtime (Any): Runtime stub.
-        **kwargs (Any): Optional node keyword overrides.
+        **kwargs (Any): Optional skill service keyword overrides.
 
     Returns:
-        dict[str, Any]: Node delta.
+        dict[str, Any]: Skill lifecycle delta.
     """
 
-    kwargs.setdefault("stream_writer_factory", lambda: lambda _: None)
-    return await _run_guided_exercise_response_node(state, runtime, **kwargs)
+    stream_writer_factory = kwargs.pop("stream_writer_factory", lambda: lambda _: None)
+    control_llm = runtime.context.llm_client
+    skill_service = GuidedExerciseSkillService(
+        classifier_llm=control_llm,
+        response_llm=runtime.context.response_llm or control_llm,
+        memory_store=runtime.context.memory_store,
+        memory_mode=runtime.context.memory_mode,
+        stream_writer_factory=stream_writer_factory,
+        **kwargs,
+    )
+    return await skill_service.run_turn(state)
 
 
 class _RecordingMemoryStore:
@@ -186,7 +197,7 @@ class TestBoxBreathingFlow:
         state = _make_state("I need an exercise")
 
         with pytest.raises(RuntimeError, match="classifier LLM"):
-            await run_guided_exercise_response_node(
+            await run_guided_exercise_skill_turn(
                 cast(AgentState, state),
                 runtime,  # type: ignore[arg-type]
             )
@@ -201,7 +212,7 @@ class TestBoxBreathingFlow:
         )
         state = _make_state("done", EXERCISE_BOX_BREATHING, 0)
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -222,7 +233,7 @@ class TestBoxBreathingFlow:
         # Step 3 is the last step (0-indexed, 4 steps total)
         state = _make_state("done", EXERCISE_BOX_BREATHING, 3)
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -251,7 +262,7 @@ class TestThoughtRecordFlow:
             0,
         )
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -272,7 +283,7 @@ class TestMuscleRelaxationFlow:
         )
         state = _make_state("done", EXERCISE_MUSCLE_RELAXATION, 0)
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -292,7 +303,7 @@ class TestSelfCompassionFlow:
         runtime = _MockRuntime(llm_client=llm)
         state = _make_state("I'm being really harsh with myself today")
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -309,7 +320,7 @@ class TestSelfCompassionFlow:
         state = _make_state("Can we do something for this?")
 
         with pytest.raises(ValueError, match="low confidence"):
-            await run_guided_exercise_response_node(
+            await run_guided_exercise_skill_turn(
                 cast(AgentState, state),
                 runtime,  # type: ignore[arg-type]
             )
@@ -321,7 +332,7 @@ class TestSelfCompassionFlow:
         state = _make_state("Can we do an exercise?")
 
         with pytest.raises(RuntimeError, match="selection failure"):
-            await run_guided_exercise_response_node(
+            await run_guided_exercise_skill_turn(
                 cast(AgentState, state),
                 runtime,  # type: ignore[arg-type]
             )
@@ -342,7 +353,7 @@ class TestSelfCompassionFlow:
             2,
         )
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -365,7 +376,7 @@ class TestSelfCompassionFlow:
             0,
         )
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -389,7 +400,7 @@ class TestSelfCompassionFlow:
             0,
         )
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -412,7 +423,7 @@ class TestExitMidExercise:
         )
         state = _make_state("I don't want to do this", EXERCISE_BOX_BREATHING, 1)
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -433,7 +444,7 @@ class TestExitMidExercise:
         runtime = _MockRuntime(llm_client=llm)
         state = _make_state("stop, I want to just talk", EXERCISE_SELF_COMPASSION, 0)
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -454,7 +465,7 @@ class TestExitMidExercise:
             "never mind, can we just talk", EXERCISE_LEAVES_ON_STREAM, 2
         )
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -467,7 +478,7 @@ class TestRegistryCompleteness:
     """Verify the registry and display names cover all exercises."""
 
     def test_catalog_contains_current_core_exercises(self) -> None:
-        from agent.therapeutic.exercises.registry import (
+        from agent.skills.guided_exercises.catalog.registry import (
             EXERCISE_5_4_3_2_1,
             EXERCISE_BOX_BREATHING,
             EXERCISE_LEAVES_ON_STREAM,
@@ -496,7 +507,7 @@ class TestRegistryCompleteness:
         assert expected.issubset(registered)
 
     def test_all_exercises_have_display_names(self) -> None:
-        from agent.therapeutic.exercises.registry import (
+        from agent.skills.guided_exercises.catalog.registry import (
             get_exercise_display_name,
             iter_exercise_definitions,
         )
@@ -505,7 +516,9 @@ class TestRegistryCompleteness:
             assert get_exercise_display_name(definition.id) == definition.display_name
 
     def test_all_steps_have_instructions(self) -> None:
-        from agent.therapeutic.exercises.registry import iter_exercise_definitions
+        from agent.skills.guided_exercises.catalog.registry import (
+            iter_exercise_definitions,
+        )
 
         for definition in iter_exercise_definitions():
             for i, step in enumerate(definition.steps):
@@ -514,7 +527,7 @@ class TestRegistryCompleteness:
                 )
 
     def test_catalog_public_helpers_match_definitions(self) -> None:
-        from agent.therapeutic.exercises.registry import (
+        from agent.skills.guided_exercises.catalog.registry import (
             get_exercise_definition,
             get_exercise_display_name,
             get_exercise_steps,
@@ -566,7 +579,7 @@ class TestRegistryCompleteness:
         assert voice_ids == expected_voice_ids
 
     def test_availability_helpers_filter_by_capability_metadata(self) -> None:
-        from agent.therapeutic.exercises.registry import (
+        from agent.skills.guided_exercises.catalog.registry import (
             available_exercise_definitions,
         )
 
@@ -587,10 +600,10 @@ class TestRegistryCompleteness:
         gated = ExerciseDefinition(
             id="gated",
             display_name="Gated",
-            selection_use_case="skill-gated support",
+            selection_use_case="capability-gated support",
             steps=(step,),
             selection_aliases=("gated",),
-            required_skill="advanced_exercises",
+            required_capability="advanced_exercises",
         )
         voice_only = ExerciseDefinition(
             id="voice_only",
@@ -656,7 +669,7 @@ class TestExerciseCompletionMemory:
         state["user_id"] = "test-user"
         state["session_id"] = "test-session"
 
-        await run_guided_exercise_response_node(
+        await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -667,6 +680,28 @@ class TestExerciseCompletionMemory:
         assert fact["predicate"] == "USES"
         assert "box_breathing" in fact["object"]["identifier"]
         assert fact["confidence"] == "high"
+
+    @pytest.mark.asyncio
+    async def test_completion_write_accepts_neutral_request(self) -> None:
+        store = _RecordingMemoryStore()
+
+        await write_exercise_completion_fact(
+            request=ExerciseCompletionMemoryRequest(
+                owner_id="test-user",
+                session_id="test-session",
+                turn_count=3,
+                exercise_type=EXERCISE_BOX_BREATHING,
+                display_name="box breathing",
+            ),
+            memory_store=store,
+            memory_mode=MemoryMode.LOCAL,
+        )
+
+        assert len(store.writes) == 1
+        fact = store.writes[0]["value"]
+        assert fact["subject"]["identifier"] == "test-user"
+        assert fact["source_session_id"] == "test-session"
+        assert fact["source_turn_index"] == 3
 
     @pytest.mark.asyncio
     async def test_exit_does_not_write_fact(self) -> None:
@@ -682,7 +717,7 @@ class TestExerciseCompletionMemory:
         )
         state = _make_state("stop, I don't want to do this", EXERCISE_BOX_BREATHING, 1)
 
-        await run_guided_exercise_response_node(
+        await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -703,7 +738,7 @@ class TestExerciseCompletionMemory:
         )
         state = _make_state("done", EXERCISE_BOX_BREATHING, 3)
 
-        await run_guided_exercise_response_node(
+        await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -723,7 +758,7 @@ class TestExerciseCompletionMemory:
         )
         state = _make_state("done", EXERCISE_BOX_BREATHING, 3)
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -749,7 +784,7 @@ class TestExerciseTherapeuticApproach:
         state = _make_state("let's do a thought record")
         state["therapeutic_approach"] = "cbt"
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -766,7 +801,7 @@ class TestExerciseTherapeuticApproach:
         runtime = _MockRuntime(llm_client=llm)
         state = _make_state("can we do a breathing exercise")
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -785,7 +820,7 @@ class TestExerciseTherapeuticApproach:
         state = _make_state("done", EXERCISE_BOX_BREATHING, 3)
         state["exercise_state"]["exercise_therapeutic_approach"] = "dbt_skills"
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -805,7 +840,7 @@ class TestExerciseTherapeuticApproach:
         state = _make_state("stop, I don't want to do this", EXERCISE_BOX_BREATHING, 1)
         state["exercise_state"]["exercise_therapeutic_approach"] = "dbt_skills"
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )
@@ -816,7 +851,9 @@ class TestExerciseTherapeuticApproach:
     def test_prompt_builder_prefers_exercise_therapeutic_approach(self) -> None:
         """build_guided_exercise_system_prompt reads exercise_state.exercise_therapeutic_approach
         over routing.therapeutic_approach when an exercise is active."""
-        from agent.therapeutic.prompts import build_guided_exercise_system_prompt
+        from agent.specialists.guided_exercise import (
+            build_guided_exercise_system_prompt,
+        )
 
         state: dict[str, Any] = {
             "exercise_state": {
@@ -839,7 +876,9 @@ class TestExerciseTherapeuticApproach:
 
     def test_prompt_builder_falls_back_to_routing(self) -> None:
         """When exercise_therapeutic_approach is None, falls back to routing approach."""
-        from agent.therapeutic.prompts import build_guided_exercise_system_prompt
+        from agent.specialists.guided_exercise import (
+            build_guided_exercise_system_prompt,
+        )
 
         state: dict[str, Any] = {
             "exercise_state": {"exercise_therapeutic_approach": None},
@@ -856,7 +895,9 @@ class TestExerciseTherapeuticApproach:
     def test_prompt_builder_ignores_stale_approach_without_exercise(self) -> None:
         """When exercise_type is None but exercise_therapeutic_approach is stale,
         the prompt builder ignores the stale therapeutic approach and falls back to routing."""
-        from agent.therapeutic.prompts import build_guided_exercise_system_prompt
+        from agent.specialists.guided_exercise import (
+            build_guided_exercise_system_prompt,
+        )
 
         state: dict[str, Any] = {
             "exercise_state": {
@@ -888,7 +929,7 @@ class TestCompletionResponse:
         )
         state = _make_state("done", EXERCISE_BOX_BREATHING, 3)
 
-        delta = await run_guided_exercise_response_node(
+        delta = await run_guided_exercise_skill_turn(
             cast(AgentState, state),
             runtime,  # type: ignore[arg-type]
         )

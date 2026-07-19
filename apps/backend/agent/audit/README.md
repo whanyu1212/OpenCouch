@@ -1,85 +1,106 @@
-# Audit Backends
+# Safety Audit Ledger
 
-This package contains always-on operational records for safety, feedback, and
-operator review. Audit data is intentionally separate from prompt memory:
-audit records are not loaded into `working_memory`, are not used to generate
-ordinary therapeutic responses, and are not controlled by conversational memory
-recall toggles.
+This package owns OpenCouch's deployment-facing safety event ledger. It is not
+therapeutic memory, prompt context, or a general observability bucket. The
+runtime captures only minimal structured safety events; operators review,
+summarize, export, or purge those records later without loading audit data back
+into the assistant's ordinary responses.
+
+## Why It Exists
+
+For a user-facing deployment, the safety ledger should answer operational
+questions that app logs and prompt memory should not own:
+
+- Did the crisis classifier fire, at what level, and through which classifier
+  path?
+- Did the crisis-response branch complete?
+- Did crisis-resource lookup run, find resources, or fall back?
+- Did the runtime use the SDK path, SDK tool fallback path, or direct response
+  LLM override?
+- Can maintainers build daily safety summaries without exposing raw user text?
+
+If nobody can review or summarize a record, it does not belong here.
+
+## Runtime Flow
+
+The crisis path captures events in one direction only:
+
+1. The crisis gate writes turn-scoped `crisis` and `crisis_audit` state.
+2. The crisis-response branch resolves resources and produces the user-facing
+   safety reply.
+3. The text or voice runtime finalizes and persists the conversation state.
+4. `agent.audit.capture.capture_crisis_outcome` gets a small best-effort timeout
+   window to invoke `agent.audit.crisis_log.write_crisis_log`.
+5. The configured `CrisisLogBackend` appends the record when it completes within
+   that window; timeout/failure is logged and must not break the conversation.
+6. Operator review, status, export, summary, and retention paths read or purge
+   records later through scripts/jobs, not the live response flow.
+
+Audit rows must never be loaded into `working_memory` or used by normal
+therapeutic response generation.
 
 ## File Map
 
 | File | Responsibility |
 | --- | --- |
 | `__init__.py` | Package marker and short package-level contract. |
-| `models.py` | Source-of-truth pydantic models for crisis logs, classifier audit metadata, and session feedback records. |
-| `crisis_log.py` | Defines `CrisisLogBackend` plus in-memory and null crisis-log implementations. Used by tests, incognito mode, and explicit fixtures. |
-| `postgres_crisis_log.py` | Primary Postgres implementation of `CrisisLogBackend` for durable local/runtime deployments. |
-| `postgres_session_feedback.py` | Primary Postgres implementation of `SessionFeedbackBackend` for durable local/runtime deployments. |
-| `sqlite_crisis_log.py` | Legacy SQLite implementation of `CrisisLogBackend` for compatibility fallback and migration coverage. |
-| `session_feedback.py` | Defines `SessionFeedbackBackend` plus in-memory and null feedback implementations. Used for end-of-session thumbs feedback. |
-| `sqlite_session_feedback.py` | Legacy SQLite implementation of `SessionFeedbackBackend` for compatibility fallback and migration coverage. |
+| `models.py` | Pydantic record and aggregate models for safety audit data. |
+| `capture.py` | Runtime-facing bounded/best-effort capture seam. |
+| `summary.py` | Daily aggregate helper for operator-facing counts. |
+| `crisis_log.py` | `CrisisLogBackend`, in-memory/null implementations, and lower-level crisis record writer. |
+| `postgres_crisis_log.py` | Direct durable Postgres implementation of `CrisisLogBackend`. |
 
-## Graph Significance
+## What Records Store
 
-`crisis_log.py` is directly significant to the LangGraph flow. The top-level
-graph routes crisis turns through:
+`CrisisLogRecord` stores structured operational metadata:
 
-```text
-crisis_resource_lookup_node
-  -> crisis_response_node
-  -> crisis_log_node
-  -> finalize_turn_node
+- opaque record id and SHA-256 session id
+- `user_id_or_null`, with incognito mode always writing `None`
+- detection timestamp, crisis level, classifier path, and bounded classifier
+  reason
+- response completion and LLM failure flags
+- response path, response style, resource lookup status, resource count, tool
+  calls, and fallback reason
+- optional retention extension fields
+
+It should not store raw transcripts, raw user messages, assistant responses, or
+ordinary therapeutic memory.
+
+## Persistence Behavior
+
+The crisis log is always available across memory modes, but persistence is
+mode-aware:
+
+- Incognito mode uses `InMemoryCrisisLogBackend`; records die with the runtime.
+- Persistent modes require Postgres.
+- `NullCrisisLogBackend` is reserved for explicit tests and fixtures.
+
+User memory recall controls must not disable crisis event capture. Retention and
+purge flows are operator- or maintenance-driven, never agent-driven.
+
+## Operator Scripts
+
+Use `scripts/audit_crisis_ledger.py` from the backend virtualenv for ad hoc
+review work, for example:
+
+```bash
+cd apps/backend
+OPENCOUCH_CRISIS_LOG_DATABASE_URL=postgresql://... \
+  .venv/bin/python ../../scripts/audit_crisis_ledger.py summary --date 2026-06-30
 ```
 
-`crisis_log_node` reads `runtime.context.crisis_log_backend` and appends one
-`CrisisLogRecord` for crisis turns. The node returns no meaningful state delta;
-its purpose is the audit side effect. This keeps safety observability separate
-from response generation and from normal memory extraction.
-
-The crisis log is always-on across memory modes:
-
-- Incognito mode uses `InMemoryCrisisLogBackend`, so records exist only for the
-  runtime lifetime.
-- Local/synced modes use the configured durable backend; Postgres is recommended and SQLite remains a legacy fallback.
-- `NullCrisisLogBackend` should stay limited to explicit tests.
-
-## Runtime Significance
-
-`session_feedback.py` is not a graph node. It is runtime-owned operational
-persistence used by `PersistentAgentRuntime.record_session_feedback` when a
-session is explicitly ended through CLI or API flows.
-
-That split is intentional:
-
-- Crisis logging belongs in the graph because it must happen immediately after
-  the crisis response branch.
-- Session feedback belongs in the runtime because it is collected at session
-  close, outside ordinary turn routing.
-
-`PersistentAgentRuntime` selects concrete audit backends from memory mode and
-exposes them through runtime context or runtime accessors.
-
-## Privacy And Persistence
-
-Audit records use opaque session identifiers and mode-aware persistence. They
-should not be treated as therapeutic memory:
-
-- Do not load audit rows into prompt memory.
-- Do not let user memory recall controls disable crisis audit writes.
-- Do not write ordinary therapeutic content into audit stores unless it belongs
-  to an explicit audit record type.
-- Keep purge/retention paths operator- or maintenance-driven, not agent-driven.
+The script requires Postgres through `--database-url` or
+`OPENCOUCH_CRISIS_LOG_DATABASE_URL`.
 
 ## Extension Rules
 
-Add a new audit backend here only when the record is operational rather than
-therapeutic memory. A good audit feature usually has these properties:
+Add audit records here only for operational safety or review data. A valid
+extension must have:
 
-- It must be reviewable by operators or maintainers.
-- It should persist independently of conversational memory settings.
-- It should not influence normal therapeutic response generation unless a
-  dedicated node explicitly reads it.
-- It has a clear runtime or graph owner.
+- a clear runtime owner and write point
+- a review, export, summary, or retention use case
+- tests for record construction and every backend's round-trip behavior
+- privacy boundaries that keep raw therapeutic content out by default
 
-If a feature is meant to help the assistant remember the user, place it under
-`agent.memory` instead.
+If a feature helps the assistant remember or personalize future replies, put it
+under `agent.memory` instead.

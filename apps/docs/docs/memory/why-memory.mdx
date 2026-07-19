@@ -42,16 +42,23 @@ OpenCouch carries three kinds of memory between sessions:
 ## Common questions
 
 **Can I use OpenCouch without memory?**
-Yes — guest mode stores nothing to disk. Same responses, no continuity.
+Yes — a no-memory session stores nothing to disk (same responses, no
+continuity). It is called **incognito mode** in the web app and **guest
+mode** in the TUI.
 
 **What if the agent remembers something wrong?**
-Delete individual facts, sessions, or rules anytime via `/memory forget`
-in the CLI or the Memory page in the web UI.
+Delete individual facts, sessions, or rules anytime. On the **Memory
+page** in the web app, each card has its own "forget" button (with a
+confirm step). In the **TUI**, use `/memory forget <n>`.
 
 **What happens to old sessions?**
 Summaries older than 30 days stop appearing in active context but remain
 stored for your review.
 
 **Can I export my data?**
-Durable memory lives in the configured local backend you control. With the recommended Postgres path, back up the local database; with the legacy SQLite fallback, copy, back up,
-or inspect with any SQLite tool.
+Durable long-term memory lives in Postgres, the only supported durable backend,
+so back up or export that database. OpenCouch does not import, copy, or delete an
+older `memory.sqlite3`; no importer is provided. Archive or discard the file as
+appropriate. The legacy store and built-in SQLite memory tools are removed, so
+inspection requires an older OpenCouch release or an external read-only SQLite
+tool. OpenAI SDK `text_sessions.sqlite3` storage is separate and preserved.

@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any, cast
 
 from agent.models import CrisisAssessment
-from agent.state import AgentState
+from agent.runtime.session.history import SessionConversation
+from agent.state import AgentState, cleared_exercise_state
 
 EXERCISE_STATE_FIELDS = (
     "exercise_type",
@@ -15,6 +19,112 @@ EXERCISE_STATE_FIELDS = (
     "exercise_version",
     "exercise_therapeutic_approach",
 )
+
+ACTIVE_FLOWS = {"none", "guided_exercise", "pending_memory_action"}
+ACTIVE_FLOW_ACTIONS = {"none", "start", "continue", "preserve", "resume", "clear"}
+
+
+def parse_iso_timestamp(value: str | None) -> datetime | None:
+    """Parse a stored ISO timestamp, returning ``None`` when invalid."""
+
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def session_has_expired(
+    last_active_at: str | None,
+    *,
+    session_timeout: timedelta,
+    now: datetime | None = None,
+) -> bool:
+    """Return whether an active session crossed its inactivity timeout."""
+
+    last_active = parse_iso_timestamp(last_active_at)
+    if last_active is None:
+        return True
+    if now is not None and (now.tzinfo is None) != (last_active.tzinfo is None):
+        raise ValueError("now timezone awareness must match last_active_at")
+    current_time = now if now is not None else datetime.now(tz=last_active.tzinfo)
+    return current_time - last_active >= session_timeout
+
+
+@dataclass(frozen=True)
+class TurnLifecycleDecision:
+    """Resolved active-flow lifecycle metadata for the current turn."""
+
+    active_flow: str
+    action: str
+    state_delta: dict[str, object]
+
+
+def get_transcript(state: Mapping[str, Any]) -> list[dict[str, Any]]:
+    """Return transcript turns from runtime state."""
+
+    transcript = state.get("transcript")
+    if isinstance(transcript, list):
+        return [turn for turn in transcript if isinstance(turn, dict)]
+
+    history = state.get("history")
+    if isinstance(history, list):
+        return [turn for turn in history if isinstance(turn, dict)]
+
+    return []
+
+
+def get_recent_history(
+    state: Mapping[str, Any], *, limit: int = 6
+) -> list[dict[str, Any]]:
+    """Return recent transcript turns for prompt/context use."""
+
+    if limit <= 0:
+        return []
+    return get_transcript(state)[-limit:]
+
+
+def format_recent_history(
+    state: Mapping[str, Any],
+    *,
+    limit: int = 6,
+    empty: str = "(no prior history)",
+) -> str:
+    """Format recent transcript turns for prompt injection."""
+
+    lines = []
+    for turn in get_recent_history(state, limit=limit):
+        content = str(turn.get("content", "") or "").strip()
+        if not content:
+            continue
+        role = str(turn.get("role", "unknown") or "unknown")
+        lines.append(f"{role}: {content}")
+    return "\n".join(lines) or empty
+
+
+def current_turn_lifecycle(state: AgentState) -> TurnLifecycleDecision:
+    """Read the current turn's active-flow lifecycle decision from state."""
+
+    raw = state.get("turn_lifecycle")
+    if not isinstance(raw, Mapping):
+        raise ValueError("Missing or invalid turn_lifecycle state.")
+
+    active_flow = raw.get("active_flow")
+    action = raw.get("action")
+    if active_flow not in ACTIVE_FLOWS or action not in ACTIVE_FLOW_ACTIONS:
+        raise ValueError(f"Malformed turn_lifecycle state: {raw!r}.")
+    return TurnLifecycleDecision(str(active_flow), str(action), {})
+
+
+def clear_all_active_flows_delta() -> dict[str, object]:
+    """Return a delta that clears guided exercise and pending memory actions."""
+
+    return {
+        "exercise_state": cleared_exercise_state(),
+        "memory_control": {"pending_action": None},
+        "turn_lifecycle": {"active_flow": "none", "action": "none"},
+    }
 
 
 def transcript_length(state: AgentState | None) -> int:
@@ -65,7 +175,7 @@ def session_continuity_clear_delta(state: AgentState | None) -> dict[str, Any]:
     """Build a delta that clears session-scoped continuity fields.
 
     Args:
-        state (AgentState | None): Current checkpointed state, if any.
+        state (AgentState | None): Current runtime state, if any.
 
     Returns:
         dict[str, Any]: Partial state update that clears stale session
@@ -93,10 +203,10 @@ def session_continuity_clear_delta(state: AgentState | None) -> dict[str, Any]:
 
 
 def turn_count_from_state(state: AgentState | None) -> int:
-    """Extract the persisted turn count from a checkpoint snapshot.
+    """Extract the persisted turn count from a runtime state snapshot.
 
     Args:
-        state (AgentState | None): Checkpointed state snapshot, if any.
+        state (AgentState | None): Runtime state snapshot, if any.
 
     Returns:
         int: Persisted turn count.
@@ -128,10 +238,10 @@ def active_transcript_length(
 
 
 def crisis_level_from_state(state: AgentState) -> int:
-    """Extract the crisis level from a graph state.
+    """Extract the crisis level from a runtime state.
 
     Args:
-        state (AgentState): Graph state snapshot.
+        state (AgentState): Runtime state snapshot.
 
     Returns:
         int: Crisis level, defaulting to ``0`` when absent or unrecognized.
@@ -143,3 +253,112 @@ def crisis_level_from_state(state: AgentState) -> int:
     if isinstance(crisis, Mapping):
         return int(crisis.get("level", 0) or 0)
     return 0
+
+
+def render_session_conversation_markdown(
+    conversation: SessionConversation,
+    *,
+    thread_id: str,
+) -> str:
+    """Render a canonical session conversation as Markdown.
+
+    Args:
+        conversation: Canonical public conversation projection.
+        thread_id: Active thread identifier shown in the export header.
+
+    Returns:
+        Markdown transcript text.
+    """
+
+    lines = [
+        "# OpenCouch session transcript",
+        "",
+        f"- Thread: `{thread_id}`",
+        f"- Messages: {len(conversation.messages)}",
+        "",
+    ]
+    for message in conversation.messages:
+        role = message.role.value.capitalize()
+        lines.extend((f"## {role}", "", message.content, ""))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def render_session_conversation_text(
+    conversation: SessionConversation,
+    *,
+    thread_id: str,
+) -> str:
+    """Render a canonical session conversation as plain text.
+
+    Args:
+        conversation: Canonical public conversation projection.
+        thread_id: Active thread identifier shown in the export header.
+
+    Returns:
+        Plain-text transcript.
+    """
+
+    lines = [
+        "OpenCouch session transcript",
+        f"Thread: {thread_id}",
+        f"Messages: {len(conversation.messages)}",
+        "",
+    ]
+    for message in conversation.messages:
+        role = message.role.value
+        lines.extend((f"{role}: {message.content}", ""))
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def session_conversation_to_json_dict(
+    conversation: SessionConversation,
+    *,
+    thread_id: str,
+) -> dict[str, Any]:
+    """Return a JSON-serializable transcript payload.
+
+    Args:
+        conversation: Canonical public conversation projection.
+        thread_id: Active thread identifier shown in the export metadata.
+
+    Returns:
+        Structured transcript payload.
+    """
+
+    return {
+        "thread_id": thread_id,
+        "message_count": len(conversation.messages),
+        "messages": [
+            {
+                "role": message.role.value,
+                "content": message.content,
+                "response_style": message.response_style,
+            }
+            for message in conversation.messages
+        ],
+    }
+
+
+def render_session_conversation_json(
+    conversation: SessionConversation,
+    *,
+    thread_id: str,
+) -> str:
+    """Render a canonical session conversation as pretty JSON.
+
+    Args:
+        conversation: Canonical public conversation projection.
+        thread_id: Active thread identifier shown in the export metadata.
+
+    Returns:
+        Pretty-printed JSON transcript.
+    """
+
+    return (
+        json.dumps(
+            session_conversation_to_json_dict(conversation, thread_id=thread_id),
+            indent=2,
+            ensure_ascii=False,
+        )
+        + "\n"
+    )

@@ -1,0 +1,80 @@
+---
+title: Realtime Lifecycle
+sidebar_position: 2
+---
+
+# Realtime Lifecycle
+
+One voice session spans three systems: the browser, OpenAI Realtime,
+and the OpenCouch backend. The browser talks directly to OpenAI over
+WebRTC, while backend calls handle OpenCouch-owned state and tools.
+
+## Connection setup
+
+1. The user opens `/voice` and clicks connect.
+2. The browser calls `POST /api/voice/realtime/session` with
+   `thread_id`, optional `user_id`, `memory_mode`, and optional
+   assistant voice.
+3. The backend loads compact voice memory context when the session is
+   persistent.
+4. `agent.voice.realtime.build_realtime_session_config(...)` builds the
+   Realtime session configuration: model, voice, server VAD, input
+   transcription, instructions, and tool schemas.
+5. The backend creates an ephemeral OpenAI Realtime client secret and
+   returns it to the browser.
+6. The browser opens the microphone, creates a WebRTC offer, and
+   exchanges SDP with OpenAI Realtime.
+7. Once the Realtime data channel opens, the page is ready for speech.
+
+## During the call
+
+Realtime emits transcript and function-call events over the data
+channel. The browser handles them in `apps/web/src/lib/realtime-voice-session.ts`:
+
+| Event family | Browser behavior |
+|---|---|
+| Final user transcript | Stores the pending user transcript. Realtime server VAD creates the next response automatically. |
+| Final assistant transcript | Pairs it with the pending user transcript and records the turn. |
+| Function call | Calls `POST /api/voice/realtime/tools` and sends the function-call output back to Realtime. Most tools then ask Realtime to continue; `wait_for_user` intentionally does not. |
+| Agent speaking / ready state | Updates the UI and session store so the page can show listening, warming, and speaking states. |
+
+The live speech loop is Realtime-native. OpenCouch does not run the
+text agent or a per-turn policy endpoint before voice responses.
+App-owned behavior is enforced through the session instructions,
+Realtime function tools, and persisted turn metadata.
+
+## Turn recording
+
+When both sides of a spoken exchange are finalized, the browser calls
+`POST /api/voice/realtime/turn`. The backend calls
+`runtime.voice.record_voice_turn(...)` (the `VoiceRuntimeFacade`), which appends the
+finalized user/assistant transcript entries, inferred route metadata,
+inferred response-style metadata, grounded lookup result metadata, and
+voice-specific diagnostics to the persisted thread state.
+
+Incognito voice skips durable turn recording and returns
+`recorded=false`.
+
+## Disconnect and finalization
+
+Disconnect closes the data channel, peer connection, local microphone
+tracks, and audio element. When `finalize=true`, the browser then calls
+`POST /api/voice/realtime/end`.
+
+Persistent sessions run the same `end_session(...)` finalizer used by
+text sessions. That path may write one episodic session arc and promote
+held semantic/procedural memory candidates. Incognito sessions end
+without durable finalization.
+
+## Key files
+
+| File | Purpose |
+|---|---|
+| `apps/web/src/lib/realtime-voice-session.ts` | WebRTC setup, Realtime data-channel handling, function-call bridge, turn recording, and disconnect finalization. |
+| `apps/web/src/components/realtime-voice-session-provider.tsx` | App-shell provider that stores voice state, transcripts, activity, errors, and finalization status. |
+| `apps/web/src/app/voice/page.tsx` | Production voice UI. |
+| `apps/web/src/app/voice/realtime-dev/page.tsx` | Raw dogfood/debug UI for Realtime events. |
+| `apps/backend/api/routes/voice.py` | FastAPI endpoints for Realtime session creation, tool execution, turn recording, and end-session finalization. |
+| `apps/backend/agent/voice/realtime.py` | Realtime session configuration and client-secret creation. |
+| `apps/backend/agent/voice/runtime_facade.py` | `VoiceRuntimeFacade` (`runtime.voice.*`) — voice memory bootstrap, tool context, and turn recording. |
+| `apps/backend/agent/runtime/runtime.py` | Shared `end_session(...)` session-end path used by both voice and text. |

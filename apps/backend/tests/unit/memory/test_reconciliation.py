@@ -7,9 +7,9 @@ from typing import Any, cast
 
 import pytest
 
-from agent.memory.models import EntityRef, SemanticFact
-from agent.memory.procedural_profile import build_procedural_rule
-from agent.memory.reconciliation import (
+from agent.memory.types import EntityRef, SemanticFact
+from agent.memory.operations.procedural_profile import build_procedural_rule
+from agent.memory.operations.reconciliation import (
     filter_active_semantic_records,
     is_active_semantic_record_value,
     plan_procedural_rule_write_llm_primary,
@@ -408,6 +408,74 @@ async def test_llm_semantic_reconciliation_failure_surfaces() -> None:
 
 
 @pytest.mark.asyncio
+async def test_llm_semantic_reconciliation_missing_client_can_fallback_to_coexist() -> (
+    None
+):
+    existing = _store_record(
+        _semantic_fact(
+            fact_id="fact-old",
+            object_identifier="sister moved out",
+            evidence_quote="My sister moved out last month.",
+        )
+    )
+    new_fact = _semantic_fact(
+        fact_id="fact-new",
+        object_identifier="sister moved back in",
+        evidence_quote="My sister moved back in this week.",
+    )
+    new_fact.category = "context"  # type: ignore[assignment]
+    new_fact.predicate = "EXPERIENCED"  # type: ignore[assignment]
+    new_fact.object.type = "Event"
+    existing.value["category"] = "context"
+    existing.value["predicate"] = "EXPERIENCED"
+    existing.value["object"]["type"] = "Event"
+
+    plan = await plan_semantic_write_llm_primary(
+        new_fact,
+        [existing],
+        llm_client=None,
+        failure_policy="coexist",
+    )
+
+    assert plan.bump_record is None
+    assert plan.supersede_records == []
+
+
+@pytest.mark.asyncio
+async def test_llm_semantic_reconciliation_failure_can_fallback_to_coexist() -> None:
+    existing = _store_record(
+        _semantic_fact(
+            fact_id="fact-old",
+            object_identifier="sister moved out",
+            evidence_quote="My sister moved out last month.",
+        )
+    )
+    new_fact = _semantic_fact(
+        fact_id="fact-new",
+        object_identifier="sister moved back in",
+        evidence_quote="My sister moved back in this week.",
+    )
+    new_fact.category = "context"  # type: ignore[assignment]
+    new_fact.predicate = "EXPERIENCED"  # type: ignore[assignment]
+    new_fact.object.type = "Event"
+    existing.value["category"] = "context"
+    existing.value["predicate"] = "EXPERIENCED"
+    existing.value["object"]["type"] = "Event"
+    llm = _FailingReconciliationLLM({})
+
+    plan = await plan_semantic_write_llm_primary(
+        new_fact,
+        [existing],
+        llm_client=llm,
+        failure_policy="coexist",
+    )
+
+    assert llm.structured_calls == 1
+    assert plan.bump_record is None
+    assert plan.supersede_records == []
+
+
+@pytest.mark.asyncio
 async def test_llm_procedural_reconciliation_can_replace_weaker_rule() -> None:
     existing = build_procedural_rule(
         rule_text="Use a gentle tone.",
@@ -475,3 +543,51 @@ async def test_llm_procedural_reconciliation_failure_surfaces() -> None:
             llm_client=llm,
         )
     assert llm.structured_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_llm_procedural_reconciliation_missing_client_can_fallback_to_append() -> (
+    None
+):
+    existing = build_procedural_rule(
+        rule_text="Use a gentle tone.",
+        evidence=["Please be gentle."],
+    )
+    new_rule = build_procedural_rule(
+        rule_text="Use a direct tone instead of a gentle one.",
+        evidence=["Be direct with me, not gentle."],
+    )
+
+    plan = await plan_procedural_rule_write_llm_primary(
+        new_rule,
+        [existing],
+        llm_client=None,
+        failure_policy="append",
+    )
+
+    assert plan.action == "append"
+    assert plan.replace_indexes == []
+
+
+@pytest.mark.asyncio
+async def test_llm_procedural_reconciliation_failure_can_fallback_to_append() -> None:
+    existing = build_procedural_rule(
+        rule_text="Use a gentle tone.",
+        evidence=["Please be gentle."],
+    )
+    new_rule = build_procedural_rule(
+        rule_text="Use a direct tone instead of a gentle one.",
+        evidence=["Be direct with me, not gentle."],
+    )
+    llm = _FailingReconciliationLLM({})
+
+    plan = await plan_procedural_rule_write_llm_primary(
+        new_rule,
+        [existing],
+        llm_client=llm,
+        failure_policy="append",
+    )
+
+    assert llm.structured_calls == 1
+    assert plan.action == "append"
+    assert plan.replace_indexes == []

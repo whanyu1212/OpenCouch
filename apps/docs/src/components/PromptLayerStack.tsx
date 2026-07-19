@@ -45,7 +45,7 @@ const fileIndex: Record<string, FileInfo> = {
       'Activates when a risk signal is confirmed. Prioritises immediate safety, avoids clinical distance, encourages offline human support and emergency services where appropriate.',
   },
   'sources.py': {
-    name: 'therapeutic/prompting/sources.py',
+    name: 'specialists/therapeutic_prompt_sources.py',
     kind: 'code',
     summary: 'Prompt source selector',
     excerpt:
@@ -80,11 +80,11 @@ const fileIndex: Record<string, FileInfo> = {
       'Acceptance and Commitment Therapy techniques: cognitive defusion, values clarification, willingness over control. Helps users relate differently to difficult thoughts rather than trying to eliminate them.',
   },
   'builders.py': {
-    name: 'therapeutic/prompting/builders.py',
+    name: 'specialists/therapeutic_prompts.py',
     kind: 'code',
-    summary: 'Node task prompt builder',
+    summary: 'Task prompt builder',
     excerpt:
-      'Generates node-specific task instructions in code — the final prompt section that tells the model exactly what to produce for this graph node (reply, classification, orientation question, etc.).',
+      'Generates task instructions in code — the final prompt section that tells the model exactly what to produce for this runtime branch (reply, classification, orientation question, etc.).',
   },
   'support_task': {
     name: 'support_reply_task (builders.py)',
@@ -141,8 +141,8 @@ const layers = [
   {
     n: '2',
     label: 'Response',
-    tag: 'graph-selected',
-    desc: 'The response style selected by the graph. Shapes the goal and tone of the turn — supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, closing, safety_check, or crisis_response.',
+    tag: 'runtime-selected',
+    desc: 'The response style selected by the runtime and specialist agent. Shapes the goal and tone of the turn — supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, closing, safety_check, or crisis_response.',
     files: ['response_styles/support.md', 'crisis_response.md', 'sources.py'],
     dot: '#2d7a74',
   },
@@ -150,15 +150,15 @@ const layers = [
     n: '3',
     label: 'Approach',
     tag: 'optional overlay',
-    desc: 'A therapeutic lens selected by the LLM dispatcher as therapeutic_approach: MI, CBT, ACT, DBT skills, grief support, IPT, or PFA.',
+    desc: 'A therapeutic lens selected by the TherapeuticAgent as therapeutic_approach: MI, CBT, ACT, DBT skills, grief support, IPT, or PFA.',
     files: ['pfa.md', 'cbt.md', 'grief_support.md', 'act.md'],
     dot: '#3d9990',
   },
   {
     n: '4',
     label: 'Task',
-    tag: 'node-specific',
-    desc: 'The exact instruction for this graph node — what to write, what format to use, what constraints apply. Includes response_guidance for turn-specific shaping.',
+    tag: 'task-specific',
+    desc: 'The exact instruction for this runtime task — what to write, what format to use, what constraints apply. Includes response_guidance for turn-specific shaping.',
     files: ['builders.py', 'support_task', 'crisis_task'],
     dot: '#78b8af',
   },
@@ -166,7 +166,7 @@ const layers = [
     n: '5',
     label: 'Context',
     tag: 'runtime',
-    desc: 'Recent conversation history, current user message, and any active crisis signals injected from graph state.',
+    desc: 'Recent conversation history, current user message, and any active crisis signals injected from runtime state.',
     files: ['state.history', 'state.message', 'state.crisis'],
     dot: '#a8cdc9',
   },
@@ -174,9 +174,9 @@ const layers = [
 
 const legend = [
   { color: '#215f5a', label: 'Core — immutable' },
-  { color: '#2d7a74', label: 'Response — graph-selected' },
+  { color: '#2d7a74', label: 'Response — runtime-selected' },
   { color: '#3d9990', label: 'Approach — optional' },
-  { color: '#78b8af', label: 'Task — node-built' },
+  { color: '#78b8af', label: 'Task — runtime-built' },
   { color: '#a8cdc9', label: 'Context — runtime state' },
 ];
 

@@ -1,6 +1,6 @@
-"""Audit backends for always-on operational records.
+"""Safety-event capture and operator audit ledger helpers.
 
-This package holds durable records the agent writes for safety,
-feedback, and operator review. Unlike prompt memory, these backends are
-not loaded into working memory for response generation.
+Runtime code captures only minimal structured safety events. Operator review,
+summaries, exports, and retention work run later over the ledger and are never
+loaded into working memory for response generation.
 """

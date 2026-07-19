@@ -4,89 +4,199 @@ import useBaseUrl from '@docusaurus/useBaseUrl';
 import Layout from '@theme/Layout';
 import {useEffect} from 'react';
 
-type IconProps = {
-  className?: string;
-};
-
-function ArchitectureIcon({className}: IconProps): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-      <path d="M12 3 4 7v10l8 4 8-4V7l-8-4Z" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M4 7l8 4m8-4-8 4m0 10V11" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-function BackendIcon({className}: IconProps): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-      <rect x="3.5" y="4" width="17" height="6" rx="2" stroke="currentColor" strokeWidth="1.5" />
-      <rect x="3.5" y="14" width="17" height="6" rx="2" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="8" cy="7" r="1" fill="currentColor" />
-      <circle cx="8" cy="17" r="1" fill="currentColor" />
-    </svg>
-  );
-}
-
-function SafetyIcon({className}: IconProps): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-      <path
-        d="M12 3s-5 2-8 3v6c0 5.5 4 8 8 9 4-1 8-3.5 8-9V6c-3-1-8-3-8-3Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-      />
-      <path d="m9 12 2 2 4-4" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-function AgentIcon({className}: IconProps): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-      <rect x="5" y="6" width="14" height="12" rx="3" stroke="currentColor" strokeWidth="1.5" />
-      <circle cx="10" cy="12" r="1.2" fill="currentColor" />
-      <circle cx="14" cy="12" r="1.2" fill="currentColor" />
-      <path d="M9 15.2c.9.8 1.9 1.2 3 1.2s2.1-.4 3-1.2" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M12 3v2" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-function PromptIcon({className}: IconProps): JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" className={className} aria-hidden="true">
-      <rect x="4" y="4" width="16" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M8 9h8M8 12h8M8 15h5" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-const cards = [
+const architectureCards = [
   {
-    title: 'Architecture & Backend',
-    href: '/docs/backend/overview',
-    description: 'Turn pipeline, key decisions, persistence, and feature summary.',
-    icon: ArchitectureIcon,
-  },
-  {
-    title: 'Safety',
+    title: 'Safety Runtime',
+    label: 'Start here',
+    description: 'Crisis gate, risk levels, routing policy, and safety boundaries.',
     href: '/docs/philosophy/crisis-gate',
-    description: 'Crisis gate design, risk levels, and routing policy.',
-    icon: SafetyIcon,
+    source: 'apps/backend/agent',
   },
   {
-    title: 'Agent',
+    title: 'Agent Runtime',
+    label: 'Core runtime',
+    description: 'Router topology, app-owned state, tools, flows, and dispatch.',
     href: '/docs/agent/graph',
-    description: 'Response styles, therapeutic approaches, and graph routing.',
-    icon: AgentIcon,
+    source: 'apps/backend/agent',
   },
   {
-    title: 'Prompt Assembly',
-    href: '/docs/agent/prompt-assembly',
-    description: 'How identity, policy, response, approach, memory, and task layers compose.',
-    icon: PromptIcon,
-  }
+    title: 'Memory System',
+    label: 'Context layer',
+    description: 'Semantic, episodic, and procedural memory with retrieval and privacy controls.',
+    href: '/docs/memory/overview',
+    source: 'apps/backend/agent/memory',
+  },
+  {
+    title: 'Voice Runtime',
+    label: 'Realtime',
+    description: 'OpenAI Realtime lifecycle, session policy, tools, and persistence.',
+    href: '/docs/voice',
+    source: 'apps/backend/agent/voice',
+  },
+  {
+    title: 'Web/API Surface',
+    label: 'Product surface',
+    description: 'Backend API contracts and the Next.js web interface.',
+    href: '/docs/system/api-reference',
+    source: 'apps/web · apps/backend',
+  },
+];
+
+const runtimeSteps = [
+  {
+    label: 'User message',
+    detail: 'The current turn enters the backend runtime.',
+  },
+  {
+    label: 'crisis_gate',
+    detail: 'Safety check runs before memory retrieval.',
+    badge: 'required',
+  },
+  {
+    label: 'turn_dispatch',
+    detail: 'Safe turns route to memory, tools, or support.',
+  },
+  {
+    label: 'load_memory',
+    detail: 'Context loads only after safety clears.',
+  },
+  {
+    label: 'TherapeuticAgent',
+    detail: 'Generates bounded support or guided exercise turns.',
+  },
+  {
+    label: 'finalize',
+    detail: 'Appends response, diagnostics, and transcript state.',
+  },
+];
+
+const pathCards = [
+  {
+    title: 'For contributors',
+    description: 'Run the stack locally, understand the backend runtime, and find the main source areas.',
+    href: '/docs/quickstart',
+    links: [
+      {label: 'Quickstart', href: '/docs/quickstart'},
+      {label: 'Backend runtime', href: '/docs/backend/runtime'},
+    ],
+  },
+  {
+    title: 'For safety reviewers',
+    description: 'Review the crisis gate, safety boundaries, and response policy.',
+    href: '/docs/philosophy/crisis-gate',
+    links: [
+      {label: 'Crisis gate', href: '/docs/philosophy/crisis-gate'},
+      {label: 'Approach', href: '/docs/philosophy/approach'},
+    ],
+  },
+  {
+    title: 'For agent developers',
+    description: 'Understand runtime routing, prompt assembly, state, tools, and therapeutic behavior.',
+    href: '/docs/agent/graph',
+    links: [
+      {label: 'Agent runtime', href: '/docs/agent/graph'},
+      {label: 'Prompt assembly', href: '/docs/agent/prompt-assembly'},
+    ],
+  },
+  {
+    title: 'For memory/privacy reviewers',
+    description: 'Inspect semantic, episodic, and procedural memory plus privacy controls.',
+    href: '/docs/memory/overview',
+    links: [
+      {label: 'Memory overview', href: '/docs/memory/overview'},
+      {label: 'Privacy controls', href: '/docs/memory/privacy'},
+    ],
+  },
+  {
+    title: 'For voice developers',
+    description: 'Trace the OpenAI Realtime lifecycle, tool policy, persistence, and dogfood flow.',
+    href: '/docs/voice',
+    links: [
+      {label: 'Voice overview', href: '/docs/voice'},
+      {label: 'Realtime lifecycle', href: '/docs/voice/realtime-lifecycle'},
+    ],
+  },
+];
+
+const trustCards = [
+  {
+    title: 'Safety gate before memory',
+    description: 'Crisis assessment runs before memory retrieval, so unsafe turns do not load contextual memory first.',
+    artifact: 'crisis_gate → turn_dispatch → load_memory',
+    href: '/docs/philosophy/crisis-gate',
+  },
+  {
+    title: 'User-controlled memory',
+    description: 'Memory is documented as inspectable and controllable through explicit user commands and privacy controls.',
+    artifact: 'semantic · episodic · procedural',
+    href: '/docs/memory/privacy',
+  },
+  {
+    title: 'Honest boundaries',
+    description: 'OpenCouch provides support without pretending to be therapy.',
+    artifact: 'onboarding · prompts · crisis responses',
+    href: '/docs/philosophy/approach',
+  },
+  {
+    title: 'Self-hostable infrastructure',
+    description: 'Backend, web, docs, and persistence modes can be run locally or on your own infrastructure.',
+    artifact: 'backend · web · docs',
+    href: '/docs/quickstart',
+  },
+  {
+    title: 'AGPL-3.0 licensed',
+    description: 'Deployment changes must remain visible, reducing the chance that safety mechanisms are stripped in closed forks.',
+    artifact: 'open source safety preservation',
+    href: '/docs/intro',
+  },
+];
+
+const localCommands = [
+  {
+    label: 'Backend API',
+    command: 'cd apps/backend && .venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000',
+  },
+  {
+    label: 'Web app',
+    command: 'cd apps/web && pnpm dev',
+  },
+  {
+    label: 'Docs site',
+    command: 'cd apps/docs && pnpm start',
+  },
+];
+
+const sourceMap = [
+  {
+    label: 'Backend API',
+    path: 'apps/backend',
+    href: '/docs/backend/overview',
+  },
+  {
+    label: 'Agent runtime',
+    path: 'apps/backend/agent',
+    href: '/docs/agent/graph',
+  },
+  {
+    label: 'Voice runtime',
+    path: 'apps/backend/agent/voice',
+    href: '/docs/voice',
+  },
+  {
+    label: 'Web app',
+    path: 'apps/web',
+    href: '/docs/system/web-ui',
+  },
+  {
+    label: 'Docs site',
+    path: 'apps/docs',
+    href: '/docs/intro',
+  },
+  {
+    label: 'Evaluation',
+    path: 'eval',
+    href: '/docs/observability/overview',
+  },
 ];
 
 const flowSteps = [
@@ -108,7 +218,7 @@ const flowSteps = [
   {
     label: 'Where you already are',
     n: '04',
-    body: 'Web chat, LiveKit voice, and Telegram DMs are already dogfood surfaces. WhatsApp and Discord are planned next.'
+    body: 'Web chat and OpenAI Realtime voice are the dogfood surfaces today. Additional messaging channels are on the roadmap.'
   },
   {
     label: 'AGPL-3.0 licensed',
@@ -124,9 +234,34 @@ const stats = [
   { value: 'Multi-surface', label: 'text · voice · messaging' },
 ];
 
+function RuntimePipelineCard(): JSX.Element {
+  return (
+    <div className="runtime-card" aria-label="Safety-first runtime pipeline">
+      <div className="runtime-card__header">
+        <span className="runtime-card__eyebrow">Every turn</span>
+        <strong>Safety-first runtime pipeline</strong>
+      </div>
+      <ol className="runtime-pipeline">
+        {runtimeSteps.map((step, index) => (
+          <li key={step.label} className="runtime-pipeline__step">
+            <span className="runtime-pipeline__index">{String(index + 1).padStart(2, '0')}</span>
+            <div className="runtime-pipeline__copy">
+              <div className="runtime-pipeline__topline">
+                <code className="runtime-pipeline__label">{step.label}</code>
+                {step.badge ? <span className="runtime-pipeline__badge">{step.badge}</span> : null}
+              </div>
+              <p className="runtime-pipeline__detail">{step.detail}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
+      <p className="runtime-card__footer">OpenCouch loads memory only after the safety gate clears the turn.</p>
+    </div>
+  );
+}
+
 export default function Home(): JSX.Element {
   const glyphSrc = useBaseUrl('/img/opencouch-glyph-1024.png');
-  const landingSrc = useBaseUrl('/img/landing.png');
 
   useEffect(() => {
     const nodes = Array.from(
@@ -186,48 +321,48 @@ export default function Home(): JSX.Element {
                 grounded next step — without pretending to be therapy.
               </p>
               <div className="hero-cta-row">
-                <Link className="button button--primary button--lg" to="/docs/intro">
-                  Read the docs
+                <Link className="button button--primary button--lg" to="/docs/quickstart">
+                  Start with Quickstart
                 </Link>
                 <Link className="button button--secondary button--lg" to="/docs/philosophy/crisis-gate">
-                  Safety model
+                  Explore Safety Model
+                </Link>
+                <Link className="hero-inline-link" to="/docs/agent/graph">
+                  View Agent Runtime →
                 </Link>
               </div>
             </div>
 
             <div className="hero-visual">
-              <img className="hero-visual__image" src={landingSrc} alt="OpenCouch landing page" />
+              <RuntimePipelineCard />
             </div>
           </div>
 
           <div className="doc-card-grid">
-            {cards.map((card) => (
+            {architectureCards.map((card) => (
               <Link key={card.title} className="doc-card" to={card.href}>
                 <div className="doc-card__header">
-                  <card.icon className="doc-card__icon" />
-                  <strong>{card.title}</strong>
+                  <div>
+                    <span className="doc-card__label">{card.label}</span>
+                    <strong>{card.title}</strong>
+                  </div>
                 </div>
                 <p>{card.description}</p>
+                <span className="doc-card__source">{card.source}</span>
               </Link>
             ))}
           </div>
         </div>
       </header>
 
-      {/* Stats strip */}
       <section className="stats-strip reveal-on-scroll" data-reveal data-reveal-delay="40">
         <div className="container">
           <div className="stats-shell">
             <div className="stats-grid">
-              {stats.map((s, i) => (
+              {stats.map((s) => (
                 <div
                   key={s.label}
-                  className="stat-item"
-                  style={{
-                    borderRight: i < stats.length - 1
-                      ? '1px solid var(--oc-border)'
-                      : 'none',
-                  }}>
+                  className="stat-item">
                   <div className="stat-item__value">{s.value}</div>
                   <div className="stat-item__label">{s.label}</div>
                 </div>
@@ -238,6 +373,109 @@ export default function Home(): JSX.Element {
       </section>
 
       <main className="landing-shell">
+        <section className="landing-section">
+          <div className="container">
+            <div className="section-heading reveal-on-scroll" data-reveal data-reveal-delay="70">
+              <p className="eyebrow">Choose your path</p>
+              <h2>Start with the docs closest to your work</h2>
+              <p>
+                OpenCouch spans safety policy, backend runtime, memory, voice, and web surfaces.
+                Start with the path closest to what you want to inspect or change.
+              </p>
+            </div>
+            <div className="path-card-grid">
+              {pathCards.map((card, index) => (
+                <article
+                  key={card.title}
+                  className="path-card reveal-on-scroll"
+                  data-reveal
+                  data-reveal-delay={110 + index * 45}>
+                  <Link className="path-card__title" to={card.href}>
+                    {card.title}
+                  </Link>
+                  <p>{card.description}</p>
+                  <div className="path-card__links">
+                    {card.links.map((link) => (
+                      <Link key={link.href} className="path-card__link" to={link.href}>
+                        {link.label}
+                      </Link>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="landing-section landing-section--tinted">
+          <div className="container">
+            <div className="section-heading reveal-on-scroll" data-reveal data-reveal-delay="70">
+              <p className="eyebrow">Trust model</p>
+              <h2>Concrete safety and privacy mechanisms</h2>
+              <p>
+                Each principle is backed by a visible implementation artifact instead of a vague promise.
+              </p>
+            </div>
+            <div className="trust-card-grid">
+              {trustCards.map((card, index) => (
+                <Link
+                  key={card.title}
+                  className="trust-card reveal-on-scroll"
+                  to={card.href}
+                  data-reveal
+                  data-reveal-delay={120 + index * 45}>
+                  <strong>{card.title}</strong>
+                  <p>{card.description}</p>
+                  <code className="trust-card__artifact">{card.artifact}</code>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <section className="landing-section">
+          <div className="container">
+            <div className="section-heading reveal-on-scroll" data-reveal data-reveal-delay="70">
+              <p className="eyebrow">Run locally</p>
+              <h2>Start the stack from your checkout</h2>
+              <p>
+                Use the project virtualenv for backend commands and run each surface from its app directory.
+              </p>
+            </div>
+            <div className="local-command-panel reveal-on-scroll" data-reveal data-reveal-delay="120">
+              {localCommands.map((item) => (
+                <div key={item.label} className="local-command">
+                  <span className="local-command__label">{item.label}</span>
+                  <code className="local-command__code">{item.command}</code>
+                </div>
+              ))}
+            </div>
+            <Link className="section-link" to="/docs/quickstart">
+              Full quickstart →
+            </Link>
+          </div>
+        </section>
+
+        <section className="landing-section">
+          <div className="container">
+            <div className="section-heading reveal-on-scroll" data-reveal data-reveal-delay="70">
+              <p className="eyebrow">Source map</p>
+              <h2>Jump from docs concept to code</h2>
+              <p>
+                The docs map directly to the backend, agent, voice, web, and evaluation areas of the repository.
+              </p>
+            </div>
+            <div className="source-map reveal-on-scroll" data-reveal data-reveal-delay="120">
+              {sourceMap.map((item) => (
+                <Link key={item.label} className="source-map__row" to={item.href}>
+                  <span className="source-map__label">{item.label}</span>
+                  <code className="source-map__path">{item.path}</code>
+                </Link>
+              ))}
+            </div>
+          </div>
+        </section>
+
         <section className="landing-section">
           <div className="container">
             <div className="section-heading reveal-on-scroll" data-reveal data-reveal-delay="70">

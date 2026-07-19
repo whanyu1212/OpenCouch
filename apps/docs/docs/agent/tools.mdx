@@ -7,34 +7,27 @@ import ToolRegistry from '@site/src/components/ToolRegistry';
 
 # Tools
 
-OpenCouch treats tools narrowly: a **tool** is an agent-invokable
-capability that reaches outside the graph's own state — today that
-means provider-native web search, used in two distinct places:
+OpenCouch tools are **app-owned capabilities exposed to model runtimes**.
+Text exposes them as OpenAI Agents SDK function tools. Voice exposes a
+subset as OpenAI Realtime function schemas. Both call the same backend
+service functions so memory, lookup, crisis resources, therapeutic skill
+loading, and guided exercises behave consistently across surfaces.
 
-- `find_crisis_resources` — runs from `crisis_resource_lookup_node`
-  on the crisis branch to surface verified local hotlines before the
-  crisis response is generated.
-- `answer_factual_lookup` — runs from `grounded_answer_node` when the
-  user explicitly asks for a factual lookup ("verify…", "look up…",
-  "search for the latest guidelines on…").
+Tools are deliberately narrow because every tool can change state,
+surface private context, add latency, or expand the safety surface. A
+new tool needs a clear owner, a structured result, explicit failure
+semantics, and tests for the service contract.
 
-Tools are deliberately scarce because every external call is a safety
-surface and adds tail latency. New safe-turn capabilities should go
-through the existing `turn_dispatch_node` route plan plus a dedicated
-worker node when they represent a real lifecycle boundary.
+## Transport bindings
 
-Unlike most LangGraph tutorials, tools here are **not registered
-with the graph as `@tool`-decorated functions**. Instead, a node
-calls the tool function directly when its condition is met. Benefits:
+| Binding | Used by | Where it lives |
+|---|---|---|
+| SDK function tools | Text runtime specialists and safe-turn branches | `agent/tools/*.py` via `@function_tool` builders |
+| Realtime function schemas | Browser voice sessions | `agent/voice/tools.py` |
+| Shared service functions | Text and voice | `execute_*_tool(...)`, memory-control services, guided-exercise services, grounded lookup services |
 
-- **Explicit call sites.** You always know which node will invoke
-  which tool — no LLM-driven tool-selection layer to debug.
-- **Provider-native grounding.** Web search uses Google Search
-  (Gemini) or `web_search` (OpenAI) via `use_search=True` on
-  `generate_text()`, not a custom tool attachment.
-- **Explicit failure semantics.** Missing LLM clients and provider
-  failures retry or surface at the node boundary; verified-but-empty
-  results return explicit status values so callers do not guess.
+The model-facing schemas differ by transport, but the side effects and
+state validation stay backend-owned.
 
 <ToolRegistry />
 
@@ -48,47 +41,50 @@ in OpenCouch:
 | Type | Example | Lives on |
 |---|---|---|
 | **Injected dependency** | `memory_store`, `crisis_log_backend`, `embedding_provider`, `llm_client` | `WorkflowContext` (frozen dataclass) |
-| **Routing node** | `turn_dispatch_node` | `agent/nodes/turn_dispatch.py` — returns `Command(goto=...)` |
-| **Tool** | `find_crisis_resources`, `answer_factual_lookup` | `agent/tools/grounded_search.py`, called from a node |
+| **Gate / policy stage** | crisis guardrail, text turn triage, Realtime voice session policy | `agent/guardrails/`, `agent/specialists/triage.py`, `agent/voice/policy.py` |
+| **Tool** | `lookup_crisis_resources`, `answer_grounded_lookup`, memory-control actions, guided-exercise skill loading | `agent/tools/` plus Realtime schemas in `agent/voice/tools.py` |
 
 A capability qualifies as a **tool** when:
 
-1. It reaches **outside local infrastructure** (public web,
-   third-party API, model-provider search grounding).
-2. It can **fail and must degrade gracefully** without blocking the
-   turn.
-3. It has **conditional invocation** — a node decides at runtime
-   whether to call it, usually from structured LLM routing plus local
-   validation.
+1. It is conditionally invoked by a model runtime or transport policy.
+2. It returns structured data that the model or runtime uses to continue
+   the turn.
+3. It either reaches outside the local model context, reads private
+   app-owned state, or mutates app-owned state.
+4. It has explicit retry, failure, and empty-result semantics.
 
 If a capability is used on every turn (like the memory store) or
 fails hard when unavailable (like the database), it's a dependency,
-not a tool. If it only decides where to route the turn without
-producing user-facing content, it's a gate, not a tool.
+not a tool. If it only decides where to route the turn without producing
+user-facing content, it's a gate or policy stage, not a tool.
+
+## Current tool families
+
+| Family | Text binding | Voice binding | Notes |
+|---|---|---|---|
+| Therapeutic response style guidance | `load_therapeutic_response_skill` | `load_therapeutic_response_skill` | Side-effect-free prompt-local style guidance. |
+| Memory control | SDK memory tools | Realtime persistent-only memory tools | List/status/recall/preference/delete flows with confirmation gates for destructive actions. |
+| Grounded lookup | `answer_grounded_lookup` | `answer_grounded_lookup` | Explicit factual/current/source-backed requests only. |
+| Crisis resources | `lookup_crisis_resources`, `get_crisis_support_template` | `lookup_crisis_resources` | Specific crisis resources must come from verified lookup results. |
+| Guided exercises | Discovery, skill-load, and progress tools | Same core tool set filtered for voice-suitable exercises | Uses the shared exercise catalog and local state validation. |
 
 ## Adding a new tool
 
-1. Create `agent/tools/your_tool.py` with the tool function.
-   Accept the state and the injected deps it needs; return structured
-   data plus a status literal for verified empty/no-result cases.
-   Provider errors should surface to the node retry policy unless the
-   feature has an explicit product reason to continue without the tool.
-2. Export it from `agent/tools/__init__.py`.
-3. Extend `turn_dispatch_node` when the capability is a safe-turn route,
-   or add a dedicated `Command`-returning router only if the capability
-   introduces a true lifecycle boundary. Add a worker node
-   (`agent/nodes/<feature>_node.py`) that calls the tool and writes
-   `response_text`, then register it in `build_agent_workflow()`.
-4. Extend `AgentPrivateState` with any new turn-scoped fields the
-   node owns (query string, status code, found-data list).
-5. Add a `STAGE_LABELS` entry in `agent/models.py` so streaming
-   surfaces show a friendly stage name.
-6. Add focused tests for the routing contract and failure/status
-   behavior. LLM-calling code paths belong in live evals, not the
-   unit test suite.
+1. Create or extend the shared service function under `agent/tools/` or
+   the relevant plain service package. Return a Pydantic result or a
+   plain dict with status fields for empty/no-result cases.
+2. Add an SDK binding when text specialists need the capability.
+3. Add a Realtime schema in `agent/voice/tools.py` only if voice needs
+   the capability.
+4. Put side-effect rules in the service layer, not in prompt text. Mark
+   non-idempotent actions with clear retry semantics.
+5. Extend runtime state only for data that must survive the turn or be
+   visible in diagnostics.
+6. Add focused unit tests for the shared service and transport binding.
+   LLM-calling behavior belongs in live evals or dogfood checks.
 
 ## Related
 
-- [Agent Graph](/docs/agent/graph) — where tools fire from
-- [Nodes](/docs/agent/nodes) — `crisis_resource_lookup_node` and `grounded_answer_node` are the two tool-invoking nodes today
+- [Text Agent Runtime](/docs/agent/graph) — where tools fire from
+- [Voice Tools & Policy](/docs/voice/tools-and-policy) — Realtime tool surface
 - [Crisis Gate philosophy](/docs/philosophy/crisis-gate) — why crisis-resource surfacing is worth an external call

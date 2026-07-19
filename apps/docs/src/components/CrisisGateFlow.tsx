@@ -14,8 +14,8 @@ import styles from './CrisisGateFlow.module.css';
    classifier_path, override_kind, response_style).
 
    This is documentation, not a live classifier — every trace is
-   hand-authored to mirror what `agent/nodes/crisis_gate.py` and
-   `agent/gates/safety/service.py` would actually emit.
+   hand-authored to mirror what `agent/guardrails/assessment.py` and
+   `agent/guardrails/service.py` would actually emit.
    ================================================================ */
 
 type ClassifierPath = 'llm_primary';
@@ -79,7 +79,7 @@ const TRACES: Trace[] = [
       llmFailureOccurred: false,
       responseStyle: 'safety_check',
       pipeline:
-        'crisis_resource_lookup_node → crisis_response_node → crisis_log_node → finalize_turn_node',
+        'crisis_resource_lookup → crisis_response → crisis_log → finalization',
     },
   },
   {
@@ -111,7 +111,7 @@ const TRACES: Trace[] = [
       llmFailureOccurred: false,
       responseStyle: 'safety_check',
       pipeline:
-        'crisis_resource_lookup_node → crisis_response_node → crisis_log_node → finalize_turn_node',
+        'crisis_resource_lookup → crisis_response → crisis_log → finalization',
     },
   },
   {
@@ -142,8 +142,8 @@ const TRACES: Trace[] = [
       classifierPath: 'llm_primary',
       overrideKind: 'none',
       llmFailureOccurred: false,
-      responseStyle: '(picked downstream by therapeutic dispatcher)',
-      pipeline: 'turn_dispatch_node → load_memory_node → therapeutic_subgraph',
+      responseStyle: '(picked downstream by TherapeuticAgent)',
+      pipeline: 'turn_dispatch → load_memory → TherapeuticAgent',
     },
   },
   {
@@ -173,8 +173,8 @@ const TRACES: Trace[] = [
       classifierPath: 'llm_primary',
       overrideKind: 'none',
       llmFailureOccurred: false,
-      responseStyle: '(picked downstream by therapeutic dispatcher)',
-      pipeline: 'turn_dispatch_node → load_memory_node → therapeutic_subgraph',
+      responseStyle: '(picked downstream by TherapeuticAgent)',
+      pipeline: 'turn_dispatch → load_memory → TherapeuticAgent',
     },
   },
   {
@@ -204,8 +204,8 @@ const TRACES: Trace[] = [
       classifierPath: 'llm_primary',
       overrideKind: 'none',
       llmFailureOccurred: false,
-      responseStyle: '(picked downstream by therapeutic dispatcher)',
-      pipeline: 'turn_dispatch_node → load_memory_node → therapeutic_subgraph',
+      responseStyle: '(picked downstream by TherapeuticAgent)',
+      pipeline: 'turn_dispatch → load_memory → TherapeuticAgent',
     },
   },
 ];
@@ -505,7 +505,7 @@ function StatePanel({ trace, stageIdx, phase }: { trace: Trace; stageIdx: number
           comment={
             final.route === 'crisis'
               ? 'safety_check stamped on entry to the crisis branch'
-              : 'left to the therapeutic dispatcher'
+              : 'left to the TherapeuticAgent'
           }
         />
         <div className={styles.stateDivider} />

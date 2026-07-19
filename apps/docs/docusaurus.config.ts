@@ -79,7 +79,7 @@ const config: Config = {
         styles: [],
       },
       darkTheme: {
-        plain: {color: '#c6e8e4', backgroundColor: '#080f0e'},
+        plain: {color: '#d7f5ef', backgroundColor: '#0a1210'},
         styles: [],
       },
       additionalLanguages: ['python', 'bash', 'json', 'yaml', 'toml'],

@@ -28,7 +28,7 @@ const LAYERS: Layer[] = [
     id: 'instructions',
     depth: 2,
     label: '4. Response instructions',
-    source: 'agent/therapeutic/prompting/instructions.py',
+    source: 'agent/specialists/therapeutic_prompt_instructions.py',
     desc: 'Per-response-style behavioral instructions assembled by build_*_system_prompt(). Supportive, reflective, clarifying, psychoeducation, technique, guided_exercise, and closing each have their own instruction block.',
   },
   {
@@ -36,7 +36,7 @@ const LAYERS: Layer[] = [
     depth: 3,
     label: '3. Approach overlay',
     source: 'agent/prompts/sources/therapeutic_approaches/*.md',
-    desc: 'Therapeutic framework overlay — MI, CBT (with cbt_arc), ACT, DBT skills, grief support, IPT, or PFA. Selected per turn as therapeutic_approach by the LLM dispatcher.',
+    desc: 'Therapeutic framework overlay — MI, CBT (with cbt_arc), ACT, DBT skills, grief support, IPT, or PFA. Selected per turn as therapeutic_approach by the TherapeuticAgent.',
   },
   {
     id: 'response',

@@ -13,17 +13,14 @@ What's shipped, what's in progress, and what's planned.
 
 | Feature | What landed |
 |---|---|
-| **Web Frontend** | Next.js chat UI with streaming, persisted setup state, thread management, memory inspection, visible error fallbacks, and LiveKit voice entrypoint. Lives in `apps/web/`, but is temporarily behind the backend refactor and is not the primary dogfood path right now. |
+| **Web Frontend** | Next.js chat UI with streaming, persisted setup state, thread management, memory inspection, visible error fallbacks, and OpenAI Realtime voice entrypoint. Lives in `apps/web/`. |
 | **API Layer** | FastAPI with REST (`POST /api/chat`) and WebSocket (`/api/chat/stream`) endpoints. Thread management, memory status, session end. Lives in `apps/backend/api/`. |
-| **Voice Chat (LiveKit)** | LiveKit-native worker with WebRTC room transport, `TherapeuticAgent` ↔ `CrisisAgent` handoffs, bounded `VoiceExerciseTask` (10 voice-allowlisted exercises), `@function_tool` declarations, and three-phase memory (startup load / mid-session retrieval / shutdown transcript replay). Lives in `apps/backend/agent/voice/`. |
-| **Session Feedback** | End-of-session thumbs rating captured at `/end`, `/exit`, and `POST /api/threads/{id}/end`. Postgres-first durable backend with incognito-safe in-memory mode and legacy SQLite fallback. |
-| **Telegram DM Gateway** | Standalone local dogfood gateway for Telegram DMs. Uses `Channel.TELEGRAM`, persistent text runtime, allowlisted numeric sender IDs, canonical owner ID memory, `/start`, `/help`, `/end`, safe Telegram HTML rendering, optional thread rotation, startup recovery, per-chat locking, lease retry, and closed-thread reclaim. |
-| **Session Trajectory Eval** | Unified runner for short (inline) and long (checkpoint) trajectory datasets covering approach, boundary enforcement, crisis arcs, closing, venting, and response style transitions. Supports concurrent hybrid execution with `--concurrency`, `--case`, and `--verbose`. |
+| **Voice Chat (OpenAI Realtime)** | Browser speech-to-speech over OpenAI Realtime WebRTC with app-owned tools, Realtime session policy, incognito/persistent modes, turn recording, and shared end-session finalization. Lives across `apps/web/src/components/realtime-voice-session-provider.tsx` and `apps/backend/agent/voice/`. |
+| **Session Feedback** | End-of-session thumbs rating captured at `/end`, `/exit`, and `POST /api/threads/{id}/end`. `PostgresSessionFeedbackBackend` is the durable implementation; incognito mode uses `InMemorySessionFeedbackBackend`. The former SQLite feedback implementation has been removed. |
 | **Crisis Gate — LLM-only** | Crisis classification is a structured LLM call with strict truth-table enforcement. Provider failures surface through retries/errors instead of silently degrading to regex rules. |
 | **Routing — LLM-primary** | Crisis, therapeutic dispatch, grounded lookup, memory-control, guided-exercise selection, and memory write policy use LLM-owned classifiers with local validation and hard confirmation gates where needed. |
-| **Eval Harness** | Rebuilt eval suite with thin base runners, reusable LLM judges, standalone node contracts, parent-graph trajectories, runtime persistence/recovery cases, tool-quality checks, and live Postgres LLM smoke coverage. |
 | **Knowledge Overhaul** | `core_identity.md` defines assistant role, product stance, voice, therapeutic grounding, cultural sensitivity, repair patterns, and boundary-setting voice. `boundaries.md` expands redirection patterns and dependency framing. |
-| **OpenAI Embeddings** | `text-embedding-3-large` as default provider, Gemini as fallback. Hybrid RRF retrieval achieves 14/17 recall@5 vs 6/17 token-only. |
+| **OpenAI Embeddings** | `text-embedding-3-large` as the configured provider, with token-only retrieval when no API key is available. Hybrid RRF retrieval achieves 14/17 recall@5 vs 6/17 token-only. |
 
 ---
 
@@ -31,10 +28,10 @@ What's shipped, what's in progress, and what's planned.
 
 | Feature | Status | What's left |
 |---|---|---|
-| **Response quality rubric** | Partially implemented | Generic rubric judge and targeted therapeutic/crisis/grounded-tool judges exist. Needs broader response-quality datasets for ordinary support turns and longer dogfood transcripts. |
-| **Memory integration eval** | Broad coverage, still expanding | Runtime and recall trajectories cover semantic, episodic, procedural, correction, deletion, and cross-feature behavior. Remaining work is wider live dogfood coverage and voice parity. |
+| **Response quality review** | Manual dogfood path | Needs broader review of ordinary support turns and longer dogfood transcripts. |
+| **Memory integration regression coverage** | Pytest-first | Runtime and recall tests cover semantic, episodic, procedural, correction, deletion, and cross-feature behavior. Remaining work is wider live dogfood coverage and voice parity. |
 | **Session feedback — closing mode** | Closing signal wired, feedback UX pending | Closing detection is LLM-primary and emits `session_action=suggest_end_session`; feedback prompt still needs to fire from natural closings, not just CLI/API end commands. |
-| **Session feedback — voice** | Designed, not wired | Voice disconnect bypasses `end_session()` — needs to either route through the runtime or gain its own feedback hook. |
+| **Session feedback — voice** | Designed, not wired | Voice disconnect now routes through `end_session()` in persistent mode; the remaining work is collecting an explicit feedback value from the voice end-state UI. |
 
 ---
 
@@ -42,12 +39,10 @@ What's shipped, what's in progress, and what's planned.
 
 ### Messaging Channels
 
-WhatsApp and Discord adapters. `Channel.WHATSAPP` already exists;
-Discord would need an enum addition. The agent graph is channel-agnostic.
-Each adapter maps platform message formats to `AgentInput` /
-`AgentOutput`. Crisis responses would need channel-specific formatting
-(inline buttons, embeds). Telegram groups, media, and richer Telegram UX
-remain future scope beyond the shipped DM text gateway.
+WhatsApp, Discord, and Telegram adapters. The text runtime contract is
+channel-agnostic; each adapter would map platform message formats
+to `AgentInput` / `AgentOutput`. Crisis responses would need
+channel-specific formatting (inline buttons, embeds).
 
 ### Acoustic Crisis Detection
 
@@ -72,18 +67,16 @@ intentionally disabled pending design.
 Automatic fact merging, dormant marking, and a `consolidation_runs`
 log. Schema is defined (`ConsolidationProposal`,
 `ConsolidationRunRecord` in `agent/memory/models.py`); the
-implementation is planned but not wired into the graph. Adds
+implementation is planned but not wired into the runtime. Adds
 `/memory restore` as an undo for destructive operations.
 
 ### Session Intent, Stage, and Response Guidance
 
 Three state fields (`progress.intent`, `progress.stage`,
 `response.guidance`) are defined in the schema but not yet populated
-by any node. When implemented, they enable session-level steering:
+by the runtime. When implemented, they enable session-level steering:
 the agent knows whether to deepen, stabilize, or close based on
-conversation arc rather than just the current message. The eval
-runner already supports assertions for all three — just re-add the
-dataset expectations.
+conversation arc rather than just the current message.
 
 ### Crisis Gate Production Telemetry
 
@@ -94,7 +87,7 @@ production telemetry layer is not yet in place.
 ### Clinical Review
 
 A trained clinician reviews the `agent/prompts/sources/response_styles/*.md`
-files, the prompt builders in `agent/therapeutic/prompting/`, and
+files, the agent-owned prompt builders in `agent/specialists/`, and
 agent responses across dogfood sessions. This is the gate before
 "a trusted friend could try it" becomes a defensible claim. Calendar
 dependency, not engineering.

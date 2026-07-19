@@ -132,23 +132,6 @@ def test_create_llm_client_routes_openai_with_default_model(monkeypatch) -> None
     ]
 
 
-def test_create_llm_client_routes_gemini_with_model_override(monkeypatch) -> None:
-    """Factory should route Gemini clients and preserve model overrides."""
-
-    monkeypatch.setattr("llm.factory.GeminiLLMClient", _FakeProviderClient)
-
-    client = create_llm_client(
-        provider="gemini",
-        model="gemini-test-model",
-        api_key="gemini-key",
-    )
-
-    assert isinstance(client, _FakeProviderClient)
-    assert _FakeProviderClient.calls == [
-        {"api_key": "gemini-key", "model": "gemini-test-model"}
-    ]
-
-
 def test_create_llm_client_rejects_unknown_provider() -> None:
     """Factory should fail closed for unsupported providers."""
 

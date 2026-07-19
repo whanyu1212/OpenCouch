@@ -587,6 +587,7 @@ export function ConversationShell({
       {/* Inner column: top bar + content + composer (pages provide); on
           mobile we add the bottom tab bar via children layout. */}
       <div
+        className="oc-surface-noise"
         style={{
           flex: 1,
           minWidth: 0,
@@ -608,10 +609,5 @@ export function ConversationShell({
 function prettyThreadName(threadId: string): string {
   if (!threadId) return "—";
   if (threadId.length <= 24) return threadId;
-  // Telegram-style raw IDs: telegram:dn:5376052137:session:abc — keep last 14 chars.
-  if (threadId.includes(":")) {
-    const parts = threadId.split(":");
-    return parts[parts.length - 1].slice(-14);
-  }
   return threadId.slice(0, 10) + "…" + threadId.slice(-8);
 }

@@ -2,22 +2,20 @@
 
 The pre-v0.8 ``run_turn_stream`` was a thin wrapper around ``run_turn``
 that emitted a single ``StatusEvent(stage="load_memory")`` before the
-whole graph ran and a ``DoneEvent`` after. v0.8 replaced it with a
-multi-mode ``graph.astream`` call that emits one ``StatusEvent`` per
-node update, accumulates the final state from the ``values`` chunks,
-stamps the outer ``turn_total_ms`` into diagnostics, and yields a
-``DoneEvent``.
+whole runtime turn ran and a ``DoneEvent`` after. v0.8 replaced it with
+streaming runtime execution that emits one ``StatusEvent`` per stage
+update, accumulates the final state, stamps the outer ``turn_total_ms``
+into diagnostics, and yields a ``DoneEvent``.
 
 These tests cover the new contract:
 
-1. **Per-node StatusEvents.** The stream emits one StatusEvent for
-   each node that runs (crisis_gate, turn_dispatch, load_memory, therapeutic, finalize,
-   extract_facts, extract_procedural) in execution order. v0.9:
-   finalize runs BEFORE extractors. A ResponseReadyEvent is emitted
-   after finalize so the user sees the response while extractors run.
+1. **Per-stage StatusEvents.** The stream emits one StatusEvent for
+   each runtime stage that runs (load_memory, therapeutic, finalize)
+   in execution order. A ResponseReadyEvent is emitted after finalize
+   so the user sees the response before DoneEvent.
 
 2. **DoneEvent carries diagnostics.** The ``DoneEvent.output.diagnostics``
-   dict contains both the per-node timings (stamped by each node) and
+   dict contains both the per-stage timings (stamped by each stage) and
    the outer ``turn_total_ms`` (stamped by ``run_turn_stream`` itself).
 
 3. **Session tracking bookkeeping.** The stream path updates
@@ -37,6 +35,7 @@ from typing import cast
 
 import pytest
 
+from agent.memory.modes import MemoryMode
 from agent.models import (
     ChunkEvent,
     DoneEvent,
@@ -44,8 +43,13 @@ from agent.models import (
     StatusEvent,
     StreamEvent,
 )
-from agent.persistence import PersistentAgentRuntime
+from agent.runtime import PersistentAgentRuntime, RuntimePersistenceConfig
 from llm.base import BaseLLMClient, StructuredResponseT
+from tests.support.persistence import (
+    in_memory_audit_feedback_dependencies,
+    in_memory_runtime_storage_paths,
+    runtime_persistence_config,
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -81,7 +85,7 @@ class _StreamingResponseLLM(BaseLLMClient):
     ) -> StructuredResponseT:
         schema_name = response_schema.__name__
         if schema_name == "CrisisAssessmentSchema":
-            from agent.gates.safety.service import CrisisAssessmentSchema
+            from agent.guardrails.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,
@@ -94,7 +98,7 @@ class _StreamingResponseLLM(BaseLLMClient):
                 ),
             )
         if schema_name == "DispatchDecision":
-            from agent.memory.models import DispatchDecision
+            from agent.memory.types import DispatchDecision
 
             return cast(
                 StructuredResponseT,
@@ -129,6 +133,10 @@ class _StreamingResponseLLM(BaseLLMClient):
                     rules=[],
                     reason="streaming test procedural extraction",
                 ),
+            )
+        if schema_name == "TherapeuticResponseLLMOutput":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                response_text="streamed response"
             )
         raise RuntimeError(f"streaming tests unexpected schema {schema_name}")
 
@@ -173,32 +181,69 @@ async def _collect_stream(
 # ── Tests ────────────────────────────────────────────────────────────────
 
 
+def _runtime(**kwargs) -> PersistentAgentRuntime:
+    kwargs.setdefault(
+        "persistence_config",
+        runtime_persistence_config(MemoryMode.LOCAL),
+    )
+    return PersistentAgentRuntime(
+        dependencies=in_memory_audit_feedback_dependencies(),
+        **kwargs,
+    )
+
+
 class TestRunTurnStreamStages:
     """The stream should emit one StatusEvent per node in execution order."""
+
+    @pytest.mark.asyncio
+    async def test_deterministic_mode_streams_offline_smoke_response(self) -> None:
+        """No-client deterministic turns should stay local and persist transcript state."""
+
+        async with _runtime(
+            storage_paths=in_memory_runtime_storage_paths(),
+            persistence_config=RuntimePersistenceConfig(
+                memory_mode=MemoryMode.LOCAL,
+                memory_backend="postgres",
+                thread_persistence_backend="memory",
+                text_session_backend="disabled",
+            ),
+        ) as runtime:
+            events: list[StreamEvent] = []
+            async for event in runtime.run_turn_stream(
+                thread_id="t-deterministic-smoke",
+                message="I feel stressed about work today.",
+                llm_client=None,
+                response_llm_client=None,
+            ):
+                events.append(event)
+            state = await runtime.get_state("t-deterministic-smoke")
+            history = await runtime.get_history("t-deterministic-smoke")
+
+        statuses = [event.stage for event in events if isinstance(event, StatusEvent)]
+        ready = next(event for event in events if isinstance(event, ResponseReadyEvent))
+        done = next(event for event in events if isinstance(event, DoneEvent))
+
+        assert statuses == ["deterministic", "finalize"]
+        assert ready.output.response_text == done.output.response_text
+        assert "Deterministic smoke mode" in done.output.response_text
+        assert done.output.diagnostics["text_agent_runtime"] == "deterministic_smoke"
+        assert done.output.diagnostics["deterministic_smoke"] is True
+        assert state is not None
+        assert state["route"] == "therapeutic"
+        assert len(history) == 2
+        assert history[0].content == "I feel stressed about work today."
+        assert history[1].content == done.output.response_text
 
     @pytest.mark.asyncio
     async def test_therapeutic_path_emits_expected_stage_sequence(self) -> None:
         """A normal (non-crisis) turn routes through the therapeutic branch.
 
-        Expected stages (in two phases):
-          - Linear (ordered):
-              crisis_gate → turn_dispatch → load_memory → therapeutic → finalize
-          - Parallel (set, order non-deterministic):
-              {extract_semantic_facts, extract_procedural_rules}
-
-        After finalize, the two extractors run on parallel edges, so the
-        relative order of their status events depends on event-loop
-        scheduling and LLM/DB timing. The pre-finalize ordering remains
-        strict.
-
-        A ResponseReadyEvent is emitted after finalize, before the
-        extractors begin.
+        Expected stages are linear: load_memory -> therapeutic -> finalize.
+        A ResponseReadyEvent is emitted after finalize, before DoneEvent.
         """
 
-        async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+        async with _runtime(
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             statuses, chunks, ready, done = await _collect_stream(
                 runtime, thread_id="t-stream-1", message="hi there"
@@ -208,29 +253,22 @@ class TestRunTurnStreamStages:
         assert done is not None
         stage_names = [event.stage for event in statuses]
 
-        # Linear pre-finalize stages must appear in this exact order.
-        # Memory extraction stages are no longer emitted by the graph —
-        # extraction runs as a runtime-managed background task after
-        # finalize, outside the LangGraph status stream. ``finalize`` is
+        # Runtime stages must appear in this exact order. ``finalize`` is
         # the terminal graph stage.
         assert stage_names == [
-            "crisis_gate",
-            "turn_dispatch",
             "load_memory",
             "therapeutic",
             "finalize",
         ]
-        # Response chunks stream during the therapeutic subgraph node and
+        # Response chunks stream during the therapeutic response node and
         # concatenate to the full response.
 
     @pytest.mark.asyncio
     async def test_done_event_comes_last(self) -> None:
         """The DoneEvent must be the terminal event, never interleaved."""
 
-        async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+        async with _runtime(
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             events: list[StreamEvent] = []
             async for event in runtime.run_turn_stream(
@@ -252,10 +290,8 @@ class TestRunTurnStreamStages:
     async def test_response_ready_emits_after_finalize_before_done(self) -> None:
         """The reply-ready marker should surface before terminal completion."""
 
-        async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+        async with _runtime(
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             events: list[StreamEvent] = []
             async for event in runtime.run_turn_stream(
@@ -286,19 +322,10 @@ class TestRunTurnStreamDiagnostics:
 
     @pytest.mark.asyncio
     async def test_diagnostics_carry_per_stage_timings(self) -> None:
-        """Each node stamps its own timing key into diagnostics.
+        """Core runtime stages stamp timing keys into diagnostics."""
 
-        Uses ``extract_in_foreground=True`` so the extraction service
-        timings land in the DoneEvent's diagnostics. In production the
-        runtime runs extraction as a background task and these keys are
-        omitted from per-turn output.
-        """
-
-        async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
-            extract_in_foreground=True,
+        async with _runtime(
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-3", message="hi"
@@ -306,16 +333,16 @@ class TestRunTurnStreamDiagnostics:
 
         assert done is not None
         diag = done.output.diagnostics
-        # Each node's timing key must be present and numeric.
+        # Each retained runtime timing key must be present and numeric.
         for key in (
             "load_memory_ms",
             "crisis_gate_ms",
-            "extract_facts_ms",
-            "extract_procedural_ms",
         ):
             assert key in diag, f"missing {key} from diagnostics"
             assert isinstance(diag[key], (int, float))
             assert diag[key] >= 0.0
+        assert "extract_facts_ms" not in diag
+        assert "extract_procedural_ms" not in diag
 
     @pytest.mark.asyncio
     async def test_diagnostics_carry_turn_total_ms(self) -> None:
@@ -326,10 +353,8 @@ class TestRunTurnStreamDiagnostics:
         forgot to mirror it.
         """
 
-        async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+        async with _runtime(
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-4", message="hi"
@@ -348,8 +373,6 @@ class TestRunTurnStreamDiagnostics:
             for key in (
                 "load_memory_ms",
                 "crisis_gate_ms",
-                "extract_facts_ms",
-                "extract_procedural_ms",
             )
         ]
         assert diag["turn_total_ms"] >= max(stage_times)
@@ -357,14 +380,12 @@ class TestRunTurnStreamDiagnostics:
     @pytest.mark.asyncio
     async def test_diagnostics_carry_post_finalize_ms(self) -> None:
         """``post_finalize_ms`` measures the wall-clock between
-        ``finalize_turn_node`` writing the response and the graph
-        terminating. It quantifies the latency wedge that background
-        extraction (#5) would close — the dashboard reads this to decide
-        whether the optimization is worth the contract churn.
+        turn finalization writing the response and the runtime finishing
+        the turn.
 
         Invariants:
             - The key must be present and numeric on a normal turn.
-            - It must be ≥ 0 (graph cannot terminate before finalize).
+            - It must be ≥ 0 (runtime cannot finish before finalization).
             - It must be ≤ ``turn_total_ms`` (post-finalize is a subset
               of the turn's total wall-clock).
             - The internal scaffolding key
@@ -372,10 +393,8 @@ class TestRunTurnStreamDiagnostics:
               public diagnostics — ``stamp_turn_total_ms`` pops it.
         """
 
-        async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+        async with _runtime(
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-post-finalize", message="hi"
@@ -391,12 +410,10 @@ class TestRunTurnStreamDiagnostics:
 
     @pytest.mark.asyncio
     async def test_diagnostics_include_retrieval_counts(self) -> None:
-        """load_memory_node's retrieval-count diagnostics flow through."""
+        """Turn memory context retrieval-count diagnostics flow through."""
 
-        async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+        async with _runtime(
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             _, _, _, done = await _collect_stream(
                 runtime, thread_id="t-stream-5", message="hi"
@@ -422,10 +439,8 @@ class TestRunTurnStreamSessionTracking:
         for started_at and produce zero-duration session arcs.
         """
 
-        async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+        async with _runtime(
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             # Before: no start time tracked
             assert not runtime._session_tracker.has_tracking("t-stream-6")
@@ -442,10 +457,8 @@ class TestRunTurnStreamSessionTracking:
     async def test_stream_tracks_max_crisis_level(self) -> None:
         """The stream path updates max-crisis tracking like run_turn does."""
 
-        async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+        async with _runtime(
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             await _collect_stream(runtime, thread_id="t-stream-7", message="hi")
 
@@ -464,14 +477,12 @@ class TestRunTurnStreamParity:
 
         This protects against subtle divergence (e.g., one path forgetting
         to stamp turn_total_ms, or one path clobbering state in a way the
-        other doesn't). Uses two separate threads so the checkpoints
+        other doesn't). Uses two separate threads so the state snapshots
         don't interfere.
         """
 
-        async with PersistentAgentRuntime(
-            sqlite_path=":memory:",
-            memory_sqlite_path=":memory:",
-            crisis_log_sqlite_path=":memory:",
+        async with _runtime(
+            storage_paths=in_memory_runtime_storage_paths(),
         ) as runtime:
             monolithic = await runtime.run_turn(
                 thread_id="t-parity-mono",

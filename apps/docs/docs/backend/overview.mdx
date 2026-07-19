@@ -8,17 +8,20 @@ import PromptLayersVisual from '@site/src/components/PromptLayers';
 
 # Architecture
 
-Single Python backend. Explicit LangGraph text-agent graph. Three memory
-layers backed by Postgres-first durable persistence with a legacy SQLite
-fallback. Shared runtime for CLI, API, web text, and Telegram; separate
-LiveKit runtime for voice.
+Single Python backend. OpenAI Agents SDK text runtime with app-owned state and
+deterministic routing stages. OpenAI Realtime powers browser voice through the
+same app-owned memory, policy, and tool boundaries. Three memory layers are
+backed by Postgres, the only supported durable long-term memory backend;
+in-memory stores cover incognito/tests. The legacy SQLite memory backend and
+built-in SQLite memory tools have been removed. Shared runtime for CLI, API, web
+text, and voice persistence.
 
 ---
 
 ## Turn pipeline
 
 :::tip Safety-first ordering
-The crisis gate is the **first node** in the graph. Memory only
+The crisis gate is the **first runtime stage**. Memory only
 loads on the therapeutic branch — and only after two operational
 gates (memory commands, factual lookups) have had a chance to
 short-circuit the turn. If a message triggers a crisis response,
@@ -33,15 +36,15 @@ memory retrieval and all operational gates are skipped entirely.
 
 | Decision | Choice | Why |
 |---|---|---|
-| Execution | LangGraph `StateGraph` with split input/internal/output schemas | Explicit branches, deterministic ordering, checkpoint persistence; narrow output schema avoids reducer double-counting on subgraph completion |
-| LLM | `BaseLLMClient` protocol | Provider-agnostic — Gemini + OpenAI satisfy the same interface; `WorkflowContext` exposes both control LLM and optional response LLM |
-| Embedding | `EmbeddingProvider` protocol | OpenAI `text-embedding-3-large` first, Gemini `gemini-embedding-001` fallback; null provider when no API key |
-| Storage | Postgres-first durable persistence with legacy SQLite fallback | Dockerized Postgres is the recommended local/runtime path; SQLite remains for compatibility fallback and focused tests |
-| Memory | `MemoryStore` protocol | In-memory for incognito/tests; Postgres for durable local/runtime paths; SQLite legacy fallback |
+| Execution | OpenAI Agents SDK runner with app-owned runtime state | `TextTurnGraph` resolves one route plan with deterministic ordering; SDK sessions carry short-term model-visible history while OpenCouch owns product state |
+| LLM | `BaseLLMClient` protocol | OpenAI client behind a thin protocol; `WorkflowContext` exposes both control LLM and optional response LLM |
+| Embedding | `EmbeddingProvider` protocol | OpenAI `text-embedding-3-large` when an API key is present; null provider when no API key |
+| Storage | Postgres durable application persistence | Dockerized Postgres is the supported local/runtime path and the managed-database cloud path |
+| Memory | `MemoryStore` protocol | In-memory for incognito/tests; Postgres is the only supported durable long-term memory backend; the legacy SQLite backend is removed |
 | Retrieval | Hybrid RRF (k=60) | Embedding cosine + token-recall fused via Reciprocal Rank Fusion; degrades gracefully to token-recall on embedding failure |
 | Prompt sources | `agent/prompts/sources/*.md` files | Reviewed prompt fragments; composed at runtime via `compose_sources()` |
 | Context | `WorkflowContext` frozen dataclass | Attribute access, type-safe, immutable per turn; carries `session_memory_buffer` for session-end candidate promotion |
-| Reducers | `operator.add` + `_merge_dicts` | Transcript accumulation + parallel diagnostics + per-channel session-state merging (exercise, progress, procedural profile) |
+| State merging | Explicit runtime merge helpers | App-owned state snapshots preserve transcript, progress, exercise continuity, memory-control confirmations, and diagnostics without a separate graph execution engine |
 | Audit separation | `agent/audit/` package | Crisis log + session feedback live outside prompt memory; cannot be disabled by user recall toggles |
 | Observability | Opik + local diagnostics | Opik for primary trace-level debugging and evaluation review; in-CLI diagnostics for per-turn visibility |
 | Crisis log | Always-on | Privacy asymmetry — incognito scrubs user_id but still records, opaque (SHA-256) session id |
@@ -50,19 +53,76 @@ memory retrieval and all operational gates are skipped entirely.
 
 ## Persistence
 
-:::info Durable persistence backends
-Dockerized Postgres is the recommended local/runtime persistence path for
-thread checkpoints, active-session state, memory, crisis log, session
-feedback, and voice finalization status. Legacy SQLite files under `.store/`
-remain available for compatibility fallback and focused migration tests.
+:::info Durable persistence
+Postgres is the only supported durable application backend for thread state
+snapshots, active-session state, long-term memory, crisis audit, session
+feedback, and voice finalization status. In-memory implementations serve
+incognito mode and tests. The SQLite runtime-state, active-session, crisis-log,
+feedback, and long-term-memory implementations have been removed, along with
+the built-in SQLite memory tools.
+
+Old `memory.sqlite3` files are not imported, copied, or deleted during cutover;
+no importer is provided. Archive or discard them as appropriate. Inspection
+requires an older OpenCouch release or an external read-only SQLite tool. OpenAI
+Agents SDK text sessions are a separate model-visible short-term history
+surface: SDK `SQLiteSession` may use `text_sessions.sqlite3`; that store is
+preserved and is not a durable long-term-memory backend.
 :::
 
-| Store | Primary backend | Legacy fallback | What it persists |
+| Store | Supported implementation | Other mode or separate surface | What it persists |
 |---|---|---|---|
-| Thread checkpoints | Postgres checkpointer | `threads.sqlite3` | Conversation state snapshots |
-| Memory | `PostgresMemoryStore` | `SqliteMemoryStore` | Semantic facts, episodic arcs, procedural profiles |
-| Crisis log | `PostgresCrisisLogBackend` | `SqliteCrisisLogBackend` | Crisis event audit trail |
-| Session feedback | `PostgresSessionFeedbackBackend` | `SqliteSessionFeedbackBackend` | End-of-session thumbs ratings |
+| Runtime thread state | `PostgresRuntimeStateStore` | `InMemoryRuntimeStateStore` for incognito/tests | App-owned conversation state snapshots |
+| Active sessions | `PostgresActiveSessionStore` | In-memory/null stores for non-durable runtimes | Timeout/finalization recovery metadata |
+| Memory | `PostgresMemoryStore` | In-memory for incognito/tests | Semantic facts, episodic arcs, procedural profiles |
+| Crisis log | `PostgresCrisisLogBackend` | In-memory for incognito/tests | Crisis event audit trail |
+| Session feedback | `PostgresSessionFeedbackBackend` | In-memory for incognito/tests | End-of-session thumbs ratings |
+| SDK text sessions | SDK SQLAlchemy session with Postgres | Separate SDK `SQLiteSession` option | Model-visible short-term message history, not long-term memory |
+
+---
+
+## Runtime ownership
+
+Text and voice share product services, but they do not share the same
+transport loop.
+
+| Area | Text agent | Realtime voice |
+|---|---|---|
+| Live turn loop | `OpenAITextRuntime` runs one SDK turn per message through app-owned routing and specialist agents. | OpenAI Realtime owns the live speech loop; the browser returns tool outputs over the data channel and posts finalized transcripts to the backend. |
+| Short-term conversation | SDK session plus app-owned runtime state snapshot. | Realtime session context plus final transcript recording after each exchange. |
+| Safety and lookup policy | Crisis gate and turn triage run before the text specialist response. | Compact session instructions and Realtime tool schemas require crisis-resource or grounded-lookup tools when needed. |
+| Tools | SDK function tools attached to the owning specialist agent or runtime branch. | Realtime function schemas that call the same backend service functions. |
+| Persistence | `run_turn` / `run_turn_stream` save text state and emit streaming status events. | `record_voice_turn` appends finalized transcript entries; `end_session` finalizes persistent voice sessions. |
+
+The practical rule: **shared services live under `agent/tools`,
+`agent/memory`, `agent/skills`, and `agent/runtime`; transport-specific
+orchestration lives under `agent/runtime/openai_text_runtime.py` for
+text and `agent/voice/` plus `api/routes/voice.py` for voice.**
+
+---
+
+## Provider adapter layer
+
+The runtime never calls a model provider directly. It depends on the
+abstract `BaseLLMClient` (`llm/base.py`), which defines three methods:
+`generate_text`, `generate_text_stream`, and `generate_structured`. A single
+factory, `create_llm_client(provider)` (`llm/factory.py`), returns the
+concrete client for the normalized provider name (`OpenAILLMClient` for
+`openai`) and raises on an unsupported provider. Swapping or adding a provider
+means implementing `BaseLLMClient` and extending the factory — no runtime or
+flow code changes.
+
+This is the **control-plane LLM**: crisis classification, structured outputs,
+and the response-LLM fallback path all go through it. It is distinct from the
+OpenAI Agents SDK runner that drives ordinary response generation — the
+[execution flows](/docs/agent/flows) use the SDK for replies and fall back to
+this control LLM only when an SDK turn fails for a recoverable infrastructure
+reason.
+
+| File | Purpose |
+|---|---|
+| `llm/base.py` | `BaseLLMClient` ABC — the provider-agnostic interface |
+| `llm/factory.py` | `create_llm_client(provider)` — provider selection |
+| `llm/openai_client.py` | `OpenAILLMClient` — the OpenAI implementation |
 
 ---
 
@@ -79,21 +139,21 @@ composition logic.
 
 | Package | Owns |
 |---|---|
-| `agent/` | Graph entrypoint, state schema, models, runtime context, persistence |
-| `agent/nodes/` | Thin LangGraph orchestration boundaries — one file per graph node for routing, state deltas, and service invocation (`crisis_gate`, `turn_dispatch`, `memory_control`, `grounded_answer`, `load_memory`, etc.) |
-| `agent/therapeutic/` | Subgraph: LLM-primary dispatcher, shared therapeutic response node, guided-exercise node, exercise registry/state machine, and prompt builders |
-| `agent/memory/` | Store protocol, Postgres/SQLite backends, embeddings, retrieval, dedup, LLM-primary write policy, reconciliation, procedural profile, and service-backed memory logic |
-| `agent/audit/` | Always-on safety records — crisis log and session feedback with in-memory, Postgres, and SQLite backends |
-| `agent/gates/safety/` | LLM-only crisis classification, prompts, and truth-table normalization |
-| `agent/gates/memory_control/` | User-facing memory-control actions and operations |
+| `agent/` | State schema, models, and runtime context |
+| `agent/runtime/` | OpenAI Agents SDK text runtime, SDK sessions, persistence, and lifecycle orchestration |
+| `agent/specialists/` | Triage, therapeutic, crisis, and guided-exercise specialist agent definitions |
+| `agent/tools/` | SDK tool surfaces and fallback deltas for memory control, crisis, guided exercise, and grounded lookup |
+| `agent/skills/` | Guided-exercise catalog, lifecycle, and prompt-local rendering; see `agent/skills/README.md` for package boundaries |
+| `agent/memory/` | Store protocol, Postgres durable backend, embeddings, retrieval, dedup, LLM-primary write policy, reconciliation, procedural profile, and service-backed memory logic |
+| `agent/audit/` | Minimal safety-event capture plus operator-facing crisis ledger backends |
+| `agent/feedback/` | Session feedback records plus in-memory and Postgres backends |
+| `agent/memory/control/` | User-facing memory-control actions and operations |
 | `agent/prompts/` | Markdown prompt sources + composition helpers + crisis prompt builders |
-| `agent/tools/` | `find_crisis_resources` (grounded search for hotlines), `answer_factual_lookup` (factual search grounding) |
-| `llm/` | `BaseLLMClient` + Gemini + OpenAI clients |
+| `llm/` | `BaseLLMClient` protocol, factory, and OpenAI client |
 | `opencouch_cli/` | Rich-based interactive CLI |
-| `channels/` | Standalone channel adapters, currently Telegram DM polling |
-| `agent/voice/` | LiveKit-Agents voice runtime — worker process, agent handoffs, bounded tasks, room transport, and transcript finalization |
-| `api/` | FastAPI routes (chat, threads, memory, voice token/finalization) |
-| `tests/` | Pytest suites for nodes, memory, retrieval, dispatcher, persistence |
+| `agent/voice/` | OpenAI Realtime voice policy, session config, tool schemas, tool execution, inferred turn metadata, and transcript finalization helpers |
+| `api/` | FastAPI routes (chat, threads, memory, Realtime voice session/tools/turns/finalization) |
+| `tests/` | Pytest suites for runtime stages, memory, retrieval, dispatcher, persistence |
 
 ---
 
@@ -101,8 +161,7 @@ composition logic.
 
 | Topic | Page |
 |---|---|
-| Agent graph | [Graph](/docs/agent/graph) |
-| Node catalog | [Nodes](/docs/agent/nodes) |
+| Agent runtime | [Runtime](/docs/agent/graph) |
 | Tools | [Tools](/docs/agent/tools) |
 | State schema | [State](/docs/agent/state) |
 | Memory | [Memory](/docs/memory/overview) |

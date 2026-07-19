@@ -1,6 +1,6 @@
 ---
 title: Scenarios
-sidebar_position: 5
+sidebar_position: 7
 ---
 
 import ScenarioReplay from '@site/src/components/ScenarioReplay';
@@ -8,23 +8,24 @@ import ScenarioReplay from '@site/src/components/ScenarioReplay';
 # Scenarios
 
 Eight conversations showing how the agent routes, responds, and
-adapts turn by turn. Each turn shows the actual chat, the graph
-routing path, and why the dispatcher made its decision.
+adapts turn by turn. Each turn shows the actual chat, the runtime
+routing path, and why the runtime or specialist agent made its decision.
 
-All response-style names match the shipped graph nodes. Routing traces show
-the actual node sequence the turn would follow through the
-pipeline. For the full catalog of 13 guided exercises with steps
+All response-style names match the shipped TherapeuticAgent styles. Routing traces show
+the actual runtime stage sequence the turn would follow through the
+pipeline — see [Execution Flows](/docs/agent/flows) for what runs inside each
+stage. For the full catalog of 13 guided exercises with steps
 and trigger keywords, see [Guided Exercises](/docs/agent/guided-exercises).
 
 :::note Routing traces are illustrative
 The routing traces below are written for clarity, not strict
-parity with what the LLM dispatcher chooses on a given turn. The
+parity with what the TherapeuticAgent chooses on a given turn. The
 crisis gate, the exercise step-state classifier, and the active-exercise
 fast path are all deterministic — those traces are accurate. The
 specific style picks (`supportive` vs. `reflective` vs.
 `psychoeducation`) are LLM-primary, so the live agent could land
 on a slightly different style for the same input. The annotations
-explain the dispatcher's decision rule, not a guarantee of which
+explain the agent's decision rule, not a guarantee of which
 response style fires every time.
 :::
 

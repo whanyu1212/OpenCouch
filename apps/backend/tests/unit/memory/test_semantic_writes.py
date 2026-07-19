@@ -5,8 +5,8 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from typing import Any
 
-from agent.memory.models import EntityRef, MemoryWrite
-from agent.memory.semantic_writes import (
+from agent.memory.types import EntityRef, MemoryWrite
+from agent.memory.operations.semantic_writes import (
     apply_semantic_write,
     bump_semantic_last_referenced_at,
     fetch_existing_semantic_records,
@@ -214,6 +214,32 @@ async def test_apply_semantic_write_bumps_duplicate_without_new_record() -> None
     updated = await store.aget(("user-1", "semantic"), fact.id)
     assert updated is not None
     assert updated.value["last_referenced_at"] != "2026-01-01T00:00:00Z"
+
+
+async def test_apply_semantic_write_dedups_user_subject_alias_to_owner() -> None:
+    store = OpenCouchMemoryStore()
+    fact = memory_write_to_semantic_fact(_memory_write())
+    await write_new_semantic_fact(store, owner_id="user-1", fact=fact)
+    existing_records = await fetch_existing_semantic_records(store, owner_id="user-1")
+    alias_write = _memory_write().model_copy(
+        update={"subject": EntityRef(type="User", identifier="test-user")}
+    )
+
+    outcome = await apply_semantic_write(
+        store,
+        owner_id="user-1",
+        write=alias_write,
+        existing_records=existing_records,
+        llm_client=None,
+        write_timing="session_end",
+        write_reason="duplicate alias",
+        policy_version="test_v1",
+    )
+
+    assert outcome.written == 0
+    assert outcome.bumped == 1
+    assert outcome.skipped == 0
+    assert len(await fetch_existing_semantic_records(store, owner_id="user-1")) == 1
 
 
 async def test_apply_semantic_write_supersedes_stale_same_slot_record() -> None:

@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import cast
+from typing import Callable, cast
 
-from agent.memory.models import (
+import pytest
+
+from agent.audit.crisis_log import CrisisLogBackend, InMemoryCrisisLogBackend
+from agent.feedback.session_feedback import (
+    InMemorySessionFeedbackBackend,
+    SessionFeedbackBackend,
+)
+from agent.memory.types import (
     EntityRef,
     ExtractionResult,
     MemoryWrite,
@@ -15,7 +23,62 @@ from agent.memory.models import (
     SessionArc,
     SummarizationResult,
 )
+from agent.memory.modes import MemoryMode
+from agent.memory.providers.embeddings import EmbeddingProvider
+from agent.memory.store import MemoryStore, OpenCouchMemoryStore
+from agent.runtime import (
+    RuntimeDependencies,
+    RuntimePersistenceConfig,
+    RuntimeStoragePaths,
+)
 from llm.base import BaseLLMClient, StructuredResponseT
+
+_POSTGRES_TEST_URL_ENV = "OPENCOUCH_TEST_POSTGRES_URL"
+_POSTGRES_TESTS_ENABLED_ENV = "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS"
+
+
+def postgres_database_url() -> str | None:
+    """Return the explicitly enabled DSN for opt-in Postgres tests."""
+
+    if os.getenv(_POSTGRES_TESTS_ENABLED_ENV) != "1":
+        return None
+    return os.getenv(_POSTGRES_TEST_URL_ENV)
+
+
+async def truncate_postgres_tables(dsn: str, *tables: str) -> None:
+    """Truncate the named Postgres tables, skipping any that do not exist.
+
+    Used to isolate opt-in Postgres integration tests that share one database:
+    each test starts from empty shared tables instead of inheriting rows from
+    whatever ran before. Absent tables are skipped so the helper is safe to call
+    before any schema has been created.
+
+    Args:
+        dsn (str): PostgreSQL connection string.
+        tables (str): Table names to truncate (identity sequences are reset).
+    """
+
+    import psycopg
+    from psycopg.rows import dict_row
+
+    async with await psycopg.AsyncConnection.connect(
+        dsn, autocommit=True, row_factory=dict_row
+    ) as conn:
+        async with conn.cursor() as cursor:
+            present_tables: list[str] = []
+            for table in tables:
+                await cursor.execute(
+                    "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+                    "WHERE table_name = %s) AS present",
+                    (table,),
+                )
+                row = await cursor.fetchone()
+                if row and row["present"]:
+                    present_tables.append(table)
+            if present_tables:
+                await cursor.execute(
+                    f"TRUNCATE TABLE {', '.join(present_tables)} RESTART IDENTITY"
+                )
 
 
 class FakeCrossRestartLLM(BaseLLMClient):
@@ -74,12 +137,13 @@ class FakeCrossRestartLLM(BaseLLMClient):
         prompt: str,
         response_schema: type[StructuredResponseT],
         system_instruction: str | None = None,
+        use_search: bool = False,
     ) -> StructuredResponseT:
         schema_name = response_schema.__name__
 
         if schema_name == "CrisisAssessmentSchema":
             self.crisis_calls += 1
-            from agent.gates.safety.service import CrisisAssessmentSchema
+            from agent.guardrails.service import CrisisAssessmentSchema
 
             return cast(
                 StructuredResponseT,
@@ -94,7 +158,7 @@ class FakeCrossRestartLLM(BaseLLMClient):
 
         if schema_name == "DispatchDecision":
             self.dispatch_calls += 1
-            from agent.memory.models import DispatchDecision
+            from agent.memory.types import DispatchDecision
 
             return cast(
                 StructuredResponseT,
@@ -168,6 +232,11 @@ class FakeCrossRestartLLM(BaseLLMClient):
             self.summarization_calls += 1
             return cast(StructuredResponseT, self.summarization_result)
 
+        if schema_name == "TherapeuticResponseLLMOutput":
+            return response_schema(  # type: ignore[call-arg,return-value]
+                response_text="I hear you. Tell me more about what's on your mind."
+            )
+
         raise RuntimeError(f"FakeCrossRestartLLM: unexpected schema {schema_name}")
 
     def _active_flow_action_for_prompt(self, prompt: str) -> str:
@@ -187,21 +256,70 @@ class FakeCrossRestartLLM(BaseLLMClient):
         return "none"
 
 
-def runtime_paths(tmp_path: Path) -> dict[str, Path]:
-    """Return the three SQLite paths for a persistence runtime test.
+def runtime_persistence_config(memory_mode: MemoryMode) -> RuntimePersistenceConfig:
+    """Return non-durable application-store settings for a runtime test."""
 
-    Args:
-        tmp_path (Path): Pytest temporary directory.
+    return RuntimePersistenceConfig(
+        memory_mode=memory_mode,
+        memory_backend="postgres",
+        thread_persistence_backend="memory",
+        # Local behavior tests intentionally retain disk-backed SDK sessions.
+        allow_legacy_sqlite=memory_mode is MemoryMode.LOCAL,
+    )
 
-    Returns:
-        dict[str, Path]: Keyword arguments accepted by ``PersistentAgentRuntime``.
-    """
 
-    return {
-        "sqlite_path": tmp_path / "threads.sqlite3",
-        "memory_sqlite_path": tmp_path / "memory.sqlite3",
-        "crisis_log_sqlite_path": tmp_path / "crisis.sqlite3",
-    }
+def in_memory_audit_feedback_dependencies(
+    *,
+    default_llm_client: BaseLLMClient | None = None,
+    memory_store: MemoryStore | None = None,
+    crisis_log_backend: CrisisLogBackend | None = None,
+    session_feedback_backend: SessionFeedbackBackend | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
+    auto_finalize_excluded: Callable[[str], bool] | None = None,
+) -> RuntimeDependencies:
+    """Return fresh non-durable application stores for a test runtime."""
+
+    return RuntimeDependencies(
+        memory_store=memory_store or OpenCouchMemoryStore(),
+        crisis_log_backend=crisis_log_backend or InMemoryCrisisLogBackend(),
+        session_feedback_backend=(
+            session_feedback_backend or InMemorySessionFeedbackBackend()
+        ),
+        embedding_provider=embedding_provider,
+        default_llm_client=default_llm_client,
+        auto_finalize_excluded=auto_finalize_excluded,
+    )
+
+
+def postgres_thread_persistence_config() -> RuntimePersistenceConfig:
+    """Return local test settings with durable Postgres persistence."""
+
+    dsn = postgres_database_url()
+    if not dsn:
+        pytest.skip(
+            "Postgres integration tests are disabled; set "
+            "OPENCOUCH_ENABLE_POSTGRES_INTEGRATION_TESTS=1 and "
+            "OPENCOUCH_TEST_POSTGRES_URL"
+        )
+    return RuntimePersistenceConfig.for_shared_backend(
+        memory_mode=MemoryMode.LOCAL,
+        persistence_backend="postgres",
+        database_url=dsn,
+    )
+
+
+def runtime_storage_paths(tmp_path: Path) -> RuntimeStoragePaths:
+    """Return SDK text-session paths for a persistence runtime test."""
+
+    return RuntimeStoragePaths(
+        text_session_sqlite_path=tmp_path / "text_sessions.sqlite3",
+    )
+
+
+def in_memory_runtime_storage_paths() -> RuntimeStoragePaths:
+    """Return an in-memory SDK text-session path for runtime tests."""
+
+    return RuntimeStoragePaths(text_session_sqlite_path=":memory:")
 
 
 def _default_cross_restart_extraction_result() -> ExtractionResult:

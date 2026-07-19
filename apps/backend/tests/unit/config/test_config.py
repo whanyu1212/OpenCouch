@@ -13,33 +13,60 @@ def test_get_settings_defaults_to_postgres_backend(
     """Unset persistence env vars resolve to the Postgres backend with a null URL.
 
     The postgres-without-URL combination is rejected later by the runtime
-    constructor (see `validate_thread_checkpointer_config`); `get_settings`
+    constructor (see `validate_thread_state store_config`); `get_settings`
     itself returns a DTO and does not enforce the URL contract.
     """
 
     monkeypatch.setattr(config, "_DOTENV_LOADED", True)
     monkeypatch.delenv("OPENCOUCH_PERSISTENCE_BACKEND", raising=False)
     monkeypatch.delenv("OPENCOUCH_MEMORY_DATABASE_URL", raising=False)
+    monkeypatch.delenv("OPENCOUCH_ALLOW_LEGACY_SQLITE", raising=False)
+    monkeypatch.delenv("OPENCOUCH_TEXT_SESSION_BACKEND", raising=False)
+    monkeypatch.delenv("OPENCOUCH_TEXT_SESSION_DATABASE_URL", raising=False)
 
     settings = config.get_settings()
 
     assert settings.persistence_backend == "postgres"
     assert settings.memory_database_url is None
+    assert settings.allow_legacy_sqlite is False
+    assert settings.text_session_backend == "auto"
+    assert settings.text_session_database_url is None
 
 
-def test_get_settings_reads_sqlite_backend_override(
+@pytest.mark.parametrize("legacy_opt_in", [None, "1"])
+def test_get_settings_rejects_sqlite_backend_even_with_legacy_opt_in(
     monkeypatch: pytest.MonkeyPatch,
+    legacy_opt_in: str | None,
 ) -> None:
-    """SQLite remains an explicit fallback via the env override."""
+    """Application persistence no longer accepts SQLite selection."""
 
     monkeypatch.setattr(config, "_DOTENV_LOADED", True)
     monkeypatch.setenv("OPENCOUCH_PERSISTENCE_BACKEND", "sqlite")
+    if legacy_opt_in is None:
+        monkeypatch.delenv("OPENCOUCH_ALLOW_LEGACY_SQLITE", raising=False)
+    else:
+        monkeypatch.setenv("OPENCOUCH_ALLOW_LEGACY_SQLITE", legacy_opt_in)
+    monkeypatch.delenv("OPENCOUCH_MEMORY_DATABASE_URL", raising=False)
+
+    with pytest.raises(ValueError, match="sqlite is no longer supported"):
+        config.get_settings()
+
+
+def test_get_settings_retains_legacy_opt_in_for_sdk_sqlite_compatibility(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The legacy flag remains available for SDK-session SQLite selection."""
+
+    monkeypatch.setattr(config, "_DOTENV_LOADED", True)
+    monkeypatch.setenv("OPENCOUCH_PERSISTENCE_BACKEND", "postgres")
+    monkeypatch.setenv("OPENCOUCH_ALLOW_LEGACY_SQLITE", "1")
     monkeypatch.delenv("OPENCOUCH_MEMORY_DATABASE_URL", raising=False)
 
     settings = config.get_settings()
 
-    assert settings.persistence_backend == "sqlite"
+    assert settings.persistence_backend == "postgres"
     assert settings.memory_database_url is None
+    assert settings.allow_legacy_sqlite is True
 
 
 def test_get_settings_reads_postgres_backend_and_database_url(
@@ -62,6 +89,38 @@ def test_get_settings_reads_postgres_backend_and_database_url(
     )
 
 
+def test_get_settings_reads_text_session_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """OpenAI SDK session storage can be enabled independently."""
+
+    monkeypatch.setattr(config, "_DOTENV_LOADED", True)
+    monkeypatch.setenv("OPENCOUCH_TEXT_SESSION_BACKEND", "sqlalchemy")
+    monkeypatch.setenv(
+        "OPENCOUCH_TEXT_SESSION_DATABASE_URL",
+        "postgresql+asyncpg://opencouch:opencouch@postgres:5432/opencouch",
+    )
+
+    settings = config.get_settings()
+
+    assert settings.text_session_backend == "sqlalchemy"
+    assert settings.text_session_database_url == (
+        "postgresql+asyncpg://opencouch:opencouch@postgres:5432/opencouch"
+    )
+
+
+def test_get_settings_rejects_invalid_text_session_backend(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unsupported OpenAI SDK session backends should raise eagerly."""
+
+    monkeypatch.setattr(config, "_DOTENV_LOADED", True)
+    monkeypatch.setenv("OPENCOUCH_TEXT_SESSION_BACKEND", "bogus")
+
+    with pytest.raises(ValueError, match="OPENCOUCH_TEXT_SESSION_BACKEND"):
+        config.get_settings()
+
+
 def test_get_settings_rejects_invalid_persistence_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -71,4 +130,28 @@ def test_get_settings_rejects_invalid_persistence_backend(
     monkeypatch.setenv("OPENCOUCH_PERSISTENCE_BACKEND", "bogus")
 
     with pytest.raises(ValueError, match="OPENCOUCH_PERSISTENCE_BACKEND"):
+        config.get_settings()
+
+
+def test_get_settings_rejects_unsupported_control_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only OpenAI is supported as a control-plane provider."""
+
+    monkeypatch.setattr(config, "_DOTENV_LOADED", True)
+    monkeypatch.setenv("LLM_PROVIDER", "legacy")
+
+    with pytest.raises(ValueError, match="LLM_PROVIDER"):
+        config.get_settings()
+
+
+def test_get_settings_rejects_unsupported_response_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only OpenAI is supported as a response-writer provider."""
+
+    monkeypatch.setattr(config, "_DOTENV_LOADED", True)
+    monkeypatch.setenv("RESPONSE_FAST_LLM_PROVIDER", "legacy")
+
+    with pytest.raises(ValueError, match="RESPONSE_FAST_LLM_PROVIDER"):
         config.get_settings()

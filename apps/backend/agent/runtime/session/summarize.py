@@ -1,36 +1,25 @@
 """Session summarizer that runs once per session at session end.
 
-Unlike the other files in ``agent/nodes/``, this module does NOT export
-a LangGraph node function. It exports a standalone async function
-:func:`run_summarize_session` that's invoked directly by
-:class:`agent.persistence.PersistentAgentRuntime` when a session ends
+This module exports a standalone async function
+:func:`run_summarize_session` invoked directly by
+:class:`agent.runtime.PersistentAgentRuntime` when a session ends
 (via the CLI's ``/end`` command or a ``/exit`` confirmation).
 
-Why not a graph node:
+Summarization runs at **session boundaries**, not per-turn. The runtime already
+owns the store, state snapshot, and LLM client, so a direct service call keeps
+the boundary explicit.
 
-    Summarization runs at **session boundaries**, not per-turn. LangGraph's
-    value - multi-node orchestration, per-turn state reducers, conditional
-    routing - does not apply to a single end-of-session LLM call. Compiling
-    a throwaway one-node graph for this work would add ceremony without
-    any benefit. A bare async function with the same signature pattern as
-    the extraction node is cleaner. The runtime already owns the store
-    and the LLM client, so it can invoke the summarizer directly.
-
-    This file lives in ``agent/nodes/`` anyway (not ``agent/memory/``)
-    because it participates in the node-layer memory workflow alongside
-    the per-turn extractor.
-
-Design rules (mirror the extract_facts conventions):
+Design rules:
 
 1. **Conservative summarization.** The system prompt tells the LLM to
    return ``arc=None`` for sessions that don't have enough content
    (pure small talk, <3 substantive turns, no emotional arc). A missing
    summary is better than a fabricated one.
 
-2. **Silent skip on incognito or no LLM.** Same contract as
-   ``extract_facts`` — if the memory mode is INCOGNITO or no LLM client
-   is available, the summarizer returns ``None`` without touching the
-   store. The runtime should not treat either case as an error.
+2. **Silent skip on incognito or no LLM.** If the memory mode is
+   INCOGNITO or no LLM client is available, the summarizer returns
+   ``None`` without touching the store. The runtime should not treat
+   either case as an error.
 
 3. **Failures degrade silently.** LLM errors, schema validation errors,
    and store write errors are all logged at WARNING level but never
@@ -51,24 +40,28 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from agent.memory.episodic import (
+from agent.memory.operations.episodic import (
     prepare_session_summary_metadata,
     session_arc_to_stored,
     write_session_arc,
 )
 from agent.memory.hashing import iso_now as _iso_now
-from agent.memory.models import StoredSessionArc, SummarizationResult
+from agent.memory.types import StoredSessionArc, SummarizationResult
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
 from agent.memory.prompts.summarization import (
     build_summarization_system_prompt,
     build_summarization_user_prompt,
 )
+from agent.runtime.session.history import (
+    SessionConversation,
+    session_conversation_from_transcript,
+)
 from agent.state import AgentState, resolve_owner_id
 from llm.base import BaseLLMClient
 
 if TYPE_CHECKING:
-    from agent.memory.embeddings import EmbeddingProvider
+    from agent.memory.providers.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -85,11 +78,11 @@ async def run_summarize_session(
     crisis_level_max: int = 0,
     embedding_provider: "EmbeddingProvider | None" = None,
     approach_hint: str | None = None,
+    conversation: SessionConversation | None = None,
 ) -> StoredSessionArc | None:
     """Summarize a completed session and write the arc to episodic memory.
 
-    Runs once per session at session end, invoked by the runtime rather
-    than by the LangGraph compiled graph. Returns the written
+    Runs once per session at session end, invoked by the runtime. Returns the written
     :class:`StoredSessionArc` on success, or ``None`` on any of the
     legitimate skip conditions: incognito mode, no LLM client, LLM
     returned ``arc=None``, LLM call failed, store write failed.
@@ -99,12 +92,12 @@ async def run_summarize_session(
     in the common case.
 
     Args:
-        state: Current graph state at session end. Reads ``transcript``
-            and ``user_id`` / ``session_id``. The transcript is the full
-            session history (checkpointer-restored), not a window.
+        state: Current runtime state at session end. Reads ``user_id`` /
+            ``session_id`` and, for legacy direct callers without an explicit
+            conversation, ``transcript``.
         llm_client: The runtime's LLM client, passed explicitly rather
-            than pulled from ``runtime.context`` (since this isn't a
-            graph node). When ``None``, the summarizer skips silently.
+            than pulled from ``runtime.context``. When ``None``, the
+            summarizer skips silently.
         memory_store: The runtime's memory store. The written arc lands
             in ``(owner_id, "episodic")``.
         memory_mode: The runtime's active memory mode. When INCOGNITO,
@@ -128,6 +121,9 @@ async def run_summarize_session(
             summarization prompt so the LLM extracts approach-specific
             structured context. When None, the summarizer produces a
             general arc (backward-compatible behavior).
+        conversation: Canonical public conversation projection for the
+            completed session. When omitted, the service derives it from
+            ``state["transcript"]`` for direct callers.
 
     Returns:
         The written :class:`StoredSessionArc` on success, or ``None`` on
@@ -148,12 +144,15 @@ async def run_summarize_session(
         return None
 
     owner_id = resolve_owner_id(state)
+    session_conversation = conversation or session_conversation_from_transcript(
+        state.get("transcript", [])
+    )
+    transcript_entries = session_conversation.transcript_entries()
 
-    transcript = state.get("transcript", [])
     duration_seconds, user_turn_count = prepare_session_summary_metadata(
         started_at=started_at,
         ended_at=ended_at,
-        transcript=transcript,
+        transcript=transcript_entries,
     )
 
     try:
@@ -166,6 +165,7 @@ async def run_summarize_session(
                 duration_seconds=duration_seconds,
                 turn_count=user_turn_count,
                 approach_hint=approach_hint,
+                transcript_entries=transcript_entries,
             ),
             response_schema=SummarizationResult,
             system_instruction=build_summarization_system_prompt(),

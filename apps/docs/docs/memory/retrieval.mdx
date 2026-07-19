@@ -74,13 +74,11 @@ visited in months.
 | `embedding_model` | TEXT | Model migration detection |
 
 The provider factory (`create_configured_embedding_provider` in
-`agent/memory/embeddings.py`) picks:
+`agent/memory/providers/embeddings.py`) picks:
 
 1. **OpenAI** `text-embedding-3-large` (3072 dims) when
    `OPENAI_API_KEY` is set.
-2. **Gemini** `gemini-embedding-001` (3072 dims) when
-   `GEMINI_API_KEY` or `GOOGLE_API_KEY` is set.
-3. **`NullEmbeddingProvider`** otherwise — retrieval degrades to
+2. **`NullEmbeddingProvider`** otherwise — retrieval degrades to
    token-recall only.
 
 Mismatched-dimension records are skipped during dense rank, so
@@ -89,18 +87,17 @@ records re-embed lazily on the next write.
 
 ---
 
-## load_memory structure
+## Turn Memory Structure
 
-`load_memory_node` owns the turn-level retrieval orchestration:
+`agent.runtime.memory_context` owns turn-level retrieval orchestration:
 semantic and episodic search, procedural profile loading, first-turn
-episodic catch-up, and diagnostics. A `test_memory_retrieval_parity.py`
-suite verifies that the in-memory and SQLite stores produce the same
-ranked results for the same input — so the retrieval algorithm is
-backend-agnostic by contract, not by accident.
+episodic catch-up, and diagnostics. The retrieval algorithm itself stays
+in `agent.memory.recall`, so the memory package owns memory semantics while
+the runtime owns how memory becomes model-visible context for a runner turn.
 
 ---
 
 ## Regression coverage
 
-The eval harness is being rebuilt. Until the replacement lands, retrieval
-changes should be covered with backend tests and targeted manual trace review.
+Retrieval changes should be covered with backend tests and targeted manual
+trace review.

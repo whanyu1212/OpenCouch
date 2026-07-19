@@ -1,7 +1,7 @@
 """Shared text tokenization helpers for the memory layer.
 
 This module exists as a tiny, dependency-free seam so that both the hot-
-path dedup helper (:mod:`agent.memory.dedup`) and the store's search
+path dedup helper (:mod:`agent.memory.operations.dedup`) and the store's search
 layer (:mod:`agent.memory.store`) can tokenize text the same way without
 either importing the other. Having a single canonical tokenizer matters
 because retrieval and dedup have to agree on what a "token" is — if they

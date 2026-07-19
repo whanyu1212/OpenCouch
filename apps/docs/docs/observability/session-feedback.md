@@ -7,9 +7,8 @@ sidebar_position: 2
 
 An explicit end-of-session feedback collector that captures a thumbs
 rating when the user finishes a session. The data is stored in a
-dedicated persistence backend — Postgres for the recommended local
-Docker path, SQLite only as a legacy compatibility fallback —
-always-on, session-opaque, incognito-safe.
+dedicated persistence backend: Postgres for durable modes and in-memory
+for incognito. Collection is always-on, session-opaque, and incognito-safe.
 
 ---
 
@@ -24,7 +23,7 @@ A single `SessionFeedbackRecord` per end-session event, containing:
 | `user_id_or_null` | `state.user_id` (LOCAL/SYNCED) or `None` (incognito) | Server-derived, scrubbed in incognito |
 | `recorded_at` | ISO-8601 with `Z` suffix | `iso_now()` at write time |
 | `label` | `"positive"` / `"negative"` / `"skip"` | User's explicit choice |
-| `turn_count_at_end` | `session_progress.turn_count` from the latest checkpoint | Read from checkpoint |
+| `turn_count_at_end` | `session_progress.turn_count` from the latest runtime state snapshot | Read from runtime state |
 | `source` | `"cli_end"` / `"cli_exit"` / `"api_end"` | Which end-session surface captured it |
 | `schema_version` | `1` | Fixed for Phase 1 |
 
@@ -37,12 +36,12 @@ privacy boundary — mirroring the crisis log's
 
 | Memory mode | Backend | Persistence |
 |---|---|---|
-| **LOCAL / SYNCED** | `PostgresSessionFeedbackBackend` when `OPENCOUCH_PERSISTENCE_BACKEND=postgres`; otherwise `SqliteSessionFeedbackBackend` fallback | Survives CLI / server restarts |
+| **LOCAL / SYNCED** | `PostgresSessionFeedbackBackend` | Survives CLI / server restarts |
 | **INCOGNITO** | `InMemorySessionFeedbackBackend` | Dies at process exit |
 
-For the recommended local Docker setup, feedback lives in the shared
-Postgres persistence layer. The `.store/session_feedback.sqlite3` file
-remains only for legacy SQLite compatibility.
+For the recommended local Docker setup and managed deployments, feedback
+lives in the shared Postgres persistence layer. Existing legacy SQLite
+files are not read or migrated by the current runtime.
 
 Default retention: **180 days** (wider than crisis log's 90 because
 feedback analytics benefit from a longer lookback). Enforced via
@@ -99,12 +98,10 @@ unaffected by the feedback write (no status surfaced).
   termination. If we later want in-conversation feedback hints, the
   same `record_session_feedback()` method works — the closing node
   would call the runtime directly.
-- **Voice disconnect** — the LiveKit voice runtime
-  (`agent/voice/`) bypasses `PersistentAgentRuntime.end_session()`
-  and uses its own `runtime.end_transcript_session(...)` path to
-  replay the room transcript. Voice feedback would need to be
-  collected through that path (or a dedicated voice-side prompt)
-  rather than the text-mode `record_session_feedback()` flow.
+- **Voice disconnect** — persistent OpenAI Realtime voice sessions
+  now finalize through `PersistentAgentRuntime.end_session()`. Voice
+  feedback still needs product UI to collect a rating before the
+  `/api/voice/realtime/end` path runs.
 
 ## Inspection
 
@@ -136,8 +133,8 @@ records = await runtime.session_feedback_backend.alist_by_session(session_id_opa
 
 | Failure | Behavior |
 |---|---|
-| Backend write error (SQLite outage, disk full) | `record_session_feedback()` returns `None`, logs WARNING, caller continues to summarization |
-| State lookup error (checkpointer crash) | Same — returns `None`, logs WARNING |
+| Backend write error (database outage) | `record_session_feedback()` returns `None`, logs WARNING, caller continues to summarization |
+| State lookup error (runtime state store failure) | Same — returns `None`, logs WARNING |
 | Invalid label via HTTP | 422 before any code runs |
 | CLI prompt interrupted (Ctrl-C, EOF) | No record, summarization proceeds |
 | Incognito mode | Records written to in-memory backend, scrubbed of user_id, ephemeral |
@@ -163,11 +160,10 @@ constraint on the opaque `id`.
 
 | File | What it does |
 |---|---|
-| `agent/audit/models.py` | `FeedbackLabel`, `FeedbackSource`, `SessionFeedbackRecord`, plus crisis-log models |
-| `agent/audit/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory + null backends |
-| `agent/audit/postgres_session_feedback.py` | Primary durable Postgres feedback backend |
-| `agent/audit/sqlite_session_feedback.py` | SQLite fallback backend with CHECK constraints and retention purge |
-| `agent/persistence.py` | `record_session_feedback()` method, backend selection, lifecycle |
+| `agent/feedback/models.py` | `FeedbackLabel`, `FeedbackSource`, `SessionFeedbackRecord` |
+| `agent/feedback/session_feedback.py` | `SessionFeedbackBackend` protocol + in-memory + null backends |
+| `agent/feedback/postgres_session_feedback.py` | Durable Postgres feedback backend |
+| `agent/runtime/runtime.py` | `record_session_feedback()` method, backend selection, lifecycle |
 | `api/models.py` | `EndSessionRequest.feedback`, `MemoryStatusResponse.session_feedback_count` |
 | `api/routes/threads.py` | `POST /api/threads/{id}/end` body handling |
-| `opencouch_cli/app.py` | `_prompt_for_session_feedback`, `_summarize_and_render` |
+| `opencouch_tui/` | TUI session-end flow: prompts for a feedback label and renders the session summary on `/end` and exit |

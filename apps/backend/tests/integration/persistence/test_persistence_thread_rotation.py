@@ -1,39 +1,53 @@
-"""Runtime liveness contracts used by Telegram thread rotation."""
+"""Runtime liveness contracts for channel thread rotation."""
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from pathlib import Path
-from types import SimpleNamespace
+from typing import Any, cast
 
 import pytest
 
-from agent.persistence import (
+from agent.memory.modes import MemoryMode
+from agent.runtime import (
     ActiveSessionExists,
     PersistentAgentRuntime,
+    RuntimeBehaviorConfig,
     SessionInterrupted,
     SessionLeaseExpired,
     SessionStatus,
 )
-from tests.support.persistence import FakeCrossRestartLLM, runtime_paths
+from tests.support.persistence import (
+    FakeCrossRestartLLM,
+    in_memory_audit_feedback_dependencies,
+    postgres_thread_persistence_config,
+    runtime_persistence_config,
+    runtime_storage_paths,
+)
 
 
-class _FailingGraph:
-    async def aget_state(self, config):  # noqa: ANN001
-        return SimpleNamespace(values=None)
+class _FailingTextRuntime:
+    async def run_turn(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError("runtime failed")
 
-    async def ainvoke(self, *args, **kwargs):  # noqa: ANN002, ANN003
-        raise RuntimeError("graph failed")
-
-    async def astream(self, *args, **kwargs):  # noqa: ANN002, ANN003
-        raise RuntimeError("graph failed")
+    async def run_turn_stream(
+        self,
+        *args: Any,
+        **kwargs: Any,
+    ) -> AsyncIterator[Any]:
+        raise RuntimeError("runtime failed")
         yield
 
 
 @pytest.mark.asyncio
 async def test_soft_limit_marks_session_rotation_required(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
-        finalize_active_sessions_on_close=False,
+        storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-rotation",
@@ -57,10 +71,62 @@ async def test_soft_limit_marks_session_rotation_required(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
+async def test_soft_limit_marks_session_rotation_required_in_postgres(
+    tmp_path: Path,
+) -> None:
+    """Postgres-backed thread state should preserve rotation-required liveness."""
+    storage_paths = runtime_storage_paths(tmp_path)
+
+    async with PersistentAgentRuntime(
+        storage_paths=storage_paths,
+        persistence_config=postgres_thread_persistence_config(),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    ) as runtime:
+        await runtime.run_turn(
+            thread_id="thread-rotation-postgres",
+            message="hello",
+            llm_client=FakeCrossRestartLLM(),
+            session_transcript_soft_limit=1,
+        )
+
+        assert await runtime.session_status("thread-rotation-postgres") == (
+            SessionStatus.ROTATION_REQUIRED
+        )
+
+    async with PersistentAgentRuntime(
+        storage_paths=storage_paths,
+        persistence_config=postgres_thread_persistence_config(),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    ) as runtime:
+        assert await runtime.session_status("thread-rotation-postgres") == (
+            SessionStatus.ROTATION_REQUIRED
+        )
+        with pytest.raises(SessionLeaseExpired):
+            await runtime.run_turn(
+                thread_id="thread-rotation-postgres",
+                message="reuse should fail",
+                expected_liveness="active",
+            )
+
+        await runtime.end_session("thread-rotation-postgres")
+        assert await runtime.session_status("thread-rotation-postgres") == (
+            SessionStatus.ABSENT
+        )
+
+
+@pytest.mark.asyncio
 async def test_reset_thread_refuses_active_sessions(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
-        finalize_active_sessions_on_close=False,
+        storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-reset",
@@ -79,8 +145,12 @@ async def test_reset_thread_refuses_active_sessions(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_foreign_mutation_marker_reports_interrupted(tmp_path: Path) -> None:
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
-        finalize_active_sessions_on_close=False,
+        storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
     ) as runtime:
         await runtime.run_turn(
             thread_id="thread-interrupted",
@@ -112,17 +182,20 @@ async def test_foreign_mutation_marker_reports_interrupted(tmp_path: Path) -> No
 @pytest.mark.asyncio
 async def test_failed_run_turn_leaves_interrupted_marker(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(
-        "agent.persistence.build_agent_workflow", lambda checkpointer: _FailingGraph()
-    )
-
     async with PersistentAgentRuntime(
-        **runtime_paths(tmp_path),
-        finalize_active_sessions_on_close=False,
+        storage_paths=runtime_storage_paths(tmp_path),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
     ) as runtime:
-        with pytest.raises(RuntimeError, match="graph failed"):
+        runtime._sdk_bridge._openai_text_runtime = cast(  # noqa: SLF001
+            Any, _FailingTextRuntime()
+        )
+
+        with pytest.raises(RuntimeError, match="runtime failed"):
             await runtime.run_turn(thread_id="thread-failed-turn", message="hello")
 
         assert await runtime.session_status("thread-failed-turn") == (

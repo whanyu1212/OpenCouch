@@ -85,7 +85,7 @@ export default function ThreadLifecycle() {
             {i < TURNS.length - 1 && (
               <div className={styles.checkpoint}>
                 <div className={styles.checkpointLine} />
-                <div className={styles.checkpointIcon} title="SQLite checkpoint">
+                <div className={styles.checkpointIcon} title="runtime checkpoint">
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                     <rect x="2" y="1" width="10" height="12" rx="2" stroke="currentColor" strokeWidth="1.2" />
                     <line x1="2" y1="4.5" x2="12" y2="4.5" stroke="currentColor" strokeWidth="1" />

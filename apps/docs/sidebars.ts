@@ -17,7 +17,6 @@ const sidebars: SidebarsConfig = {
         'backend/runtime',
         'system/api-reference',
         'system/web-ui',
-        'system/telegram',
       ]
     },
     {
@@ -26,13 +25,13 @@ const sidebars: SidebarsConfig = {
       items: [
         {
           type: 'category',
-          label: 'Agent Graph',
+          label: 'Agent Runtime',
           collapsed: false,
           items: [
             'agent/graph',
             'agent/state',
-            'agent/nodes',
             'agent/tools',
+            'agent/flows',
           ],
         },
         'agent/routing-classifiers',
@@ -51,7 +50,17 @@ const sidebars: SidebarsConfig = {
       label: 'Memory',
       items: ['memory/why-memory', 'memory/overview', 'memory/retrieval', 'memory/privacy']
     },
-    'voice/overview',
+    {
+      type: 'category',
+      label: 'Voice',
+      items: [
+        'voice/overview',
+        'voice/realtime-lifecycle',
+        'voice/tools-and-policy',
+        'voice/persistence',
+        'voice/dogfood',
+      ],
+    },
     {
       type: 'category',
       label: 'Observability & Evaluation',

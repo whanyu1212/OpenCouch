@@ -1,9 +1,12 @@
-"""Structured routing trace helpers for graph diagnostics."""
+"""Structured routing trace helpers for runtime diagnostics."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, TypedDict
+
+from agent.observability.decorators import trace_event
+from agent.observability.events import ROUTING_DECISION
 
 ROUTING_TRACE_KEY = "routing_trace"
 
@@ -50,6 +53,7 @@ def append_routing_trace(
     normalized_entry = _normalize_trace_entry(entry)
     if normalized_entry is not None:
         trace.append(normalized_entry)
+        trace_event(ROUTING_DECISION, _trace_event_entry(normalized_entry))
 
     return {ROUTING_TRACE_KEY: trace}
 
@@ -76,6 +80,12 @@ def routing_trace_from_diagnostics(
         if normalized is not None:
             entries.append(normalized)
     return tuple(entries)
+
+
+def _trace_event_entry(entry: RoutingTraceEntry) -> dict[str, str]:
+    """Return a privacy-safe routing entry for generic trace exporters."""
+
+    return {key: value for key, value in entry.items() if key != "reason"}
 
 
 def _normalize_trace_entry(value: Any) -> RoutingTraceEntry | None:

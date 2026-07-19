@@ -6,33 +6,22 @@ requires-python = ">=3.11"
 dependencies = [
   "aiosqlite>=0.22,<1.0",
   "fastapi>=0.115,<1.0",
-  "google-genai>=1.0,<2.0",
   "graphiti-core>=0.28.2",
-  "langgraph>=1.0,<2.0",
-  "langgraph-checkpoint-postgres>=3.0,<4.0",
-  "langgraph-checkpoint-sqlite>=3.0,<4.0",
+  "greenlet>=3.0,<4.0",
   "openai>=2.0",
+  "openai-agents[sqlalchemy]>=0.17.2",
+  "opentelemetry-api>=1.29,<2.0",
+  "opentelemetry-exporter-otlp-proto-http>=1.29,<2.0",
+  "opentelemetry-sdk>=1.29,<2.0",
   "opik>=2.0.15",
   "prompt-toolkit>=3.0,<4.0",
   "psycopg-binary>=3.2,<4.0",
   "psycopg[pool]>=3.2,<4.0",
   "pydantic>=2.8,<3.0",
   "python-dotenv>=1.0,<2.0",
-  "python-telegram-bot[socks]>=22.7,<23.0",
   "rich>=13.0,<14.0",
+  "textual>=0.89,<1.0",
   "uvicorn>=0.30,<1.0",
-]
-
-[project.optional-dependencies]
-# Lightweight: just the JWT/room-admin client so the API can mint
-# LiveKit tokens for the browser without pulling torch/livekit-agents.
-voice-api = [
-  "livekit-api~=1.0",
-]
-# Heavy: the agent worker runtime (models, audio, turn detection).
-voice = [
-  "livekit-agents[openai,silero,turn-detector]~=1.5",
-  "torch>=2.11.0",
 ]
 
 [dependency-groups]
@@ -67,9 +56,7 @@ source = [
   "api",
   "channels",
   "core",
-  "opencouch_cli",
   "services",
-  "voice",
 ]
 
 [tool.coverage.report]
@@ -81,7 +68,6 @@ python_version = "3.12"
 
 [[tool.mypy.overrides]]
 module = [
-  "aiosqlite",
   "google",
   "google.*",
   "openai",

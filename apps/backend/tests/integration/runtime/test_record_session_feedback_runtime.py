@@ -1,7 +1,7 @@
 """Tests for :meth:`PersistentAgentRuntime.record_session_feedback`.
 
 The runtime method is the only path that should produce
-:class:`SessionFeedbackRecord` instances in production. Graph nodes
+:class:`SessionFeedbackRecord` instances in production. OpenAI agents
 don't touch this — end-session surfaces (CLI ``/end`` / ``/exit``,
 HTTP ``POST /threads/{id}/end``) call it directly.
 
@@ -28,11 +28,16 @@ from typing import Any
 
 import pytest
 
+from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
-from agent.audit.session_feedback import SessionFeedbackBackend
-from agent.persistence import PersistentAgentRuntime
-from tests.support.persistence import FakeCrossRestartLLM
+from agent.runtime import PersistentAgentRuntime
+from tests.support.persistence import (
+    FakeCrossRestartLLM,
+    in_memory_audit_feedback_dependencies,
+    in_memory_runtime_storage_paths,
+    runtime_persistence_config,
+)
 
 
 # ─── Failing-backend fixture ─────────────────────────────────────────
@@ -66,11 +71,9 @@ _: type[SessionFeedbackBackend] = _FailingFeedbackBackend  # type: ignore[assign
 def _runtime(memory_mode: MemoryMode = MemoryMode.LOCAL) -> PersistentAgentRuntime:
     """Construct a runtime that keeps everything in memory."""
     return PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
-        memory_mode=memory_mode,
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(memory_mode),
+        dependencies=in_memory_audit_feedback_dependencies(),
     )
 
 
@@ -92,17 +95,18 @@ async def test_writes_record_with_server_derived_session_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_writes_record_with_caller_supplied_label_and_source() -> None:
-    """``label`` and ``source`` are the only caller-controlled fields
+async def test_writes_record_with_caller_supplied_label_source_and_modality() -> None:
+    """``label``, ``source``, and ``modality`` are caller-controlled fields
     that flow into the record as-is."""
 
     async with _runtime() as rt:
         record = await rt.record_session_feedback(
-            "t", label="negative", source="api_end"
+            "t", label="negative", source="api_end", modality="voice"
         )
         assert record is not None
         assert record.label == "negative"
         assert record.source == "api_end"
+        assert record.modality == "voice"
 
 
 @pytest.mark.asyncio
@@ -141,13 +145,13 @@ async def test_zero_state_thread_records_turn_count_zero() -> None:
 
 @pytest.mark.asyncio
 async def test_incognito_scrubs_user_id_to_null() -> None:
-    """Even if the checkpointed state somehow carries a user_id (via
+    """Even if runtime state somehow carries a user_id (via
     a caller passing one to ``run_turn``), the feedback record must
     scrub it to ``None`` in incognito mode. This matches the
     crisis_log incognito contract."""
 
     async with _runtime(memory_mode=MemoryMode.INCOGNITO) as rt:
-        # Simulate a turn that wrote user_id into the checkpoint.
+        # Simulate a turn that wrote user_id into runtime state.
         await rt.run_turn(
             thread_id="incog",
             message="hi",
@@ -194,16 +198,16 @@ async def test_backend_failure_returns_none_and_does_not_raise(
     caller (CLI or API handler) continues to summarization."""
 
     rt = PersistentAgentRuntime(
-        sqlite_path=":memory:",
-        memory_sqlite_path=":memory:",
-        crisis_log_sqlite_path=":memory:",
-        feedback_sqlite_path=":memory:",
-        session_feedback_backend=_FailingFeedbackBackend(),  # type: ignore[arg-type]
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        dependencies=in_memory_audit_feedback_dependencies(
+            session_feedback_backend=_FailingFeedbackBackend(),  # type: ignore[arg-type]
+        ),
     )
     async with rt:
         import logging
 
-        with caplog.at_level(logging.WARNING, logger="agent.persistence"):
+        with caplog.at_level(logging.WARNING, logger="agent.runtime.session_feedback"):
             result = await rt.record_session_feedback(
                 "t", label="positive", source="cli_end"
             )
@@ -218,19 +222,19 @@ async def test_backend_failure_returns_none_and_does_not_raise(
 async def test_state_lookup_failure_returns_none_and_does_not_raise(
     monkeypatch, caplog
 ) -> None:
-    """If ``get_state`` itself raises (e.g., a checkpointer issue),
+    """If ``get_state`` itself raises (e.g., a state-store issue),
     the method must still return ``None`` rather than propagate."""
 
     async with _runtime() as rt:
 
         async def _raising_get_state(thread_id: str) -> Any:
-            raise RuntimeError("simulated checkpointer crash")
+            raise RuntimeError("simulated state-store crash")
 
         monkeypatch.setattr(rt, "get_state", _raising_get_state)
 
         import logging
 
-        with caplog.at_level(logging.WARNING, logger="agent.persistence"):
+        with caplog.at_level(logging.WARNING, logger="agent.runtime"):
             result = await rt.record_session_feedback(
                 "t", label="positive", source="cli_end"
             )

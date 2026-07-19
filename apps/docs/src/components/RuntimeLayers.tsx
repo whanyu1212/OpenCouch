@@ -25,8 +25,8 @@ const LAYERS: LayerDef[] = [
     id: 'persistent',
     label: 'Persistent',
     entry: 'PersistentAgentRuntime.run_turn()',
-    desc: 'Thread-aware runtime with SQLite checkpoint persistence. Conversations resume across sessions. Also exposes run_turn_stream() for real-time token streaming.',
-    usedBy: ['CLI', 'API (WebSocket)', 'Multi-turn sessions'],
+    desc: 'Thread-aware runtime with Postgres-backed application state. Conversations resume across sessions. OpenAI Agents SDK text-session storage is a separate short-term history surface. Also exposes run_turn_stream() for text-token streaming.',
+    usedBy: ['CLI', 'Web/API text', 'Multi-turn sessions'],
     persists: true,
   },
 ];
@@ -54,7 +54,7 @@ export default function RuntimeLayers() {
                 <code className={styles.layerEntry}>{l.entry}</code>
                 <div className={styles.layerTags}>
                   {l.usedBy.map(u => <span key={u} className={styles.tag}>{u}</span>)}
-                  {l.persists && <span className={[styles.tag, styles.tagSqlite].join(' ')}>SQLite</span>}
+                  {l.persists && <span className={[styles.tag, styles.tagSqlite].join(' ')}>Postgres</span>}
                 </div>
               </div>
             </button>
@@ -64,8 +64,8 @@ export default function RuntimeLayers() {
         {/* ── Center: shared core ────────────────── */}
         <div className={styles.core}>
           <div className={styles.coreInner}>
-            <span className={styles.coreTitle}>Same graph</span>
-            <span className={styles.coreSub}>Same nodes · same order · same safety</span>
+            <span className={styles.coreTitle}>Same text pipeline</span>
+            <span className={styles.coreSub}>Same stages · same order · same safety</span>
           </div>
           <svg className={styles.coreArrow} viewBox="0 0 40 24" fill="none">
             <path d="M 2 12 H 32 M 28 6 L 36 12 L 28 18" stroke="var(--oc-accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
@@ -92,7 +92,7 @@ export default function RuntimeLayers() {
           </div>
           <div className={styles.detailMeta}>
             <span className={styles.metaKey}>Persists</span>
-            <span className={styles.metaVal}>{layer.persists ? 'Yes — SQLite via LangGraph checkpointer' : 'No — caller manages history'}</span>
+            <span className={styles.metaVal}>{layer.persists ? 'Yes — Postgres is the only supported durable application backend; SDK text-session SQLite is separate' : 'No — caller manages history'}</span>
           </div>
         </div>
       )}

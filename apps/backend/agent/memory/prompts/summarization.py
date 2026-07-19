@@ -246,7 +246,7 @@ def build_summarization_system_prompt() -> str:
 
 
 def build_summarization_user_prompt(
-    state: AgentState,
+    state: AgentState | None = None,
     *,
     session_id: str,
     started_at: str,
@@ -254,23 +254,31 @@ def build_summarization_user_prompt(
     duration_seconds: int,
     turn_count: int,
     approach_hint: str | None = None,
+    transcript_entries: list[dict[str, str]] | None = None,
 ) -> str:
     """Build the session-summarizer user prompt.
 
     Args:
-        state (AgentState): Current graph state with the full transcript.
+        state (AgentState | None): Current runtime state with the full transcript.
+            Used only when ``transcript_entries`` is not supplied.
         session_id (str): Session identifier copied into the summary payload.
         started_at (str): ISO-8601 session start timestamp.
         ended_at (str): ISO-8601 session end timestamp.
         duration_seconds (int): Session duration in seconds.
         turn_count (int): Total number of user turns in the session.
         approach_hint (str | None): Dominant therapeutic approach hint for approach-context extraction.
+        transcript_entries (list[dict[str, str]] | None): Explicit canonical
+            public conversation transcript for the completed session.
 
     Returns:
         str: User prompt for a single session-summarization call.
     """
 
-    transcript = state.get("transcript", [])
+    transcript = (
+        transcript_entries
+        if transcript_entries is not None
+        else (state.get("transcript", []) if state is not None else [])
+    )
     if not transcript:
         transcript_block = "(empty transcript — the session had no turns)"
     else:

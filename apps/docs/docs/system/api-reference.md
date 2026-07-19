@@ -11,7 +11,7 @@ Run locally:
 
 ```bash
 cd apps/backend
-uv run uvicorn main:app --port 8000 --reload
+.venv/bin/python -m uvicorn main:app --port 8000 --reload
 ```
 
 ## Text chat
@@ -33,10 +33,33 @@ long-term memory.
 | Route | Method | Purpose |
 |---|---|---|
 | `/api/threads` | `GET` | List known text threads |
-| `/api/threads/{thread_id}/state` | `GET` | Return raw graph state for a thread |
+| `/api/threads/{thread_id}/state` | `GET` | **Debug/internal.** Return raw implementation state for a thread |
 | `/api/threads/{thread_id}/history` | `GET` | Return user/assistant transcript turns |
 | `/api/threads/{thread_id}/session-status` | `GET` | Return active-session tracking status |
 | `/api/threads/{thread_id}/end` | `POST` | Finalize a text session and persist session-end memory |
+| `/api/threads/{thread_id}/feedback` | `POST` | Record post-session feedback without re-finalizing the session (body: `feedback`, optional `memory_mode`, `modality: text\|voice`) |
+
+:::caution Debug state endpoint
+`/api/threads/{thread_id}/state` powers the local State Inspector and mirrors the TUI's `/debug state` command. It returns raw runtime implementation state, including transcript, memory, safety, routing, and diagnostics fields. It is useful for development and dogfooding, but product clients should use typed endpoints such as `/history`, `/session-status`, `/memory/*`, and `/chat/stream`.
+:::
+
+Text session finalization returns the same stable envelope shape as voice finalization:
+
+```json
+{
+  "finalized": true,
+  "summary": "Session summary text",
+  "detail": "Session finalized.",
+  "themes": ["stress", "sleep"],
+  "mood_opened": "tense",
+  "mood_closed": "calmer",
+  "turn_count": 4,
+  "open_loops": [],
+  "resolved_threads": []
+}
+```
+
+When no durable summary is produced, `finalized` is `false`, `summary` is `null`, list fields are empty, and `detail` explains why.
 
 ## Memory
 
@@ -51,21 +74,108 @@ long-term memory.
 | `/api/memory/sessions/{index}` | `DELETE` | Delete one episodic arc by displayed index |
 | `/api/memory/rules/{index}` | `DELETE` | Delete one procedural rule by displayed index |
 
+Memory endpoints are scoped by `thread_id`, optional `user_id`, and optional `memory_mode`. In incognito mode, user-memory reads return empty counts/lists for semantic facts, episodic sessions, and procedural rules. Saved-memory mutation endpoints reject with `409` and a structured detail payload:
+
+```json
+{
+  "detail": {
+    "code": "incognito_memory_mutation_unavailable",
+    "message": "Saved-memory controls are unavailable in incognito mode."
+  }
+}
+```
+
+Audit-oriented counts such as crisis logs and session feedback may still be non-zero because those stores are always-on and privacy-scrubbed in incognito mode.
+
 ## Voice
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/api/voice/livekit/token` | `POST` | Create a LiveKit participant token and optional agent dispatch config |
-| `/api/voice/livekit/finalization-status/{thread_id}` | `GET` | Poll disconnect-time memory finalization status |
-| `/api/voice/livekit/test` | `GET` | Serve the standalone LiveKit browser test page |
+| `/api/voice/realtime/session` | `POST` | Create an OpenAI Realtime client secret for browser WebRTC voice |
+| `/api/voice/realtime/tools` | `POST` | Execute one app-owned Realtime function tool call |
+| `/api/voice/realtime/turn` | `POST` | Persist a finalized voice user/assistant turn in app-owned history |
+| `/api/voice/realtime/end` | `POST` | Finalize a persistent voice session through the runtime session finalizer |
 
-Voice is LiveKit-native. The worker lives under `agent/voice/`; the
-FastAPI routes only mint room tokens, expose a standalone LiveKit test
-page, and report transcript-finalization status after disconnect.
+Voice is OpenAI Realtime-native. The browser owns WebRTC audio, while
+the backend owns session configuration, memory bootstrap, function-tool
+execution, route/style inference during turn persistence, and
+end-session memory finalization.
+
+Session creation request:
+
+```json
+{
+  "thread_id": "web-voice-abc123",
+  "user_id": "alice",
+  "memory_mode": "persistent",
+  "assistant_voice": "marin"
+}
+```
+
+`assistant_voice` is optional. When omitted (or `null`), the backend applies
+the default (`alloy`). The value is normalized (trimmed, lower-cased) and must
+be one of the ten supported Realtime voices: `alloy`, `ash`, `ballad`, `cedar`,
+`coral`, `echo`, `marin`, `sage`, `shimmer`, `verse`. An unsupported name is
+rejected.
+
+Tool execution request:
+
+```json
+{
+  "thread_id": "web-voice-abc123",
+  "user_id": "alice",
+  "memory_mode": "persistent",
+  "current_user_message": "Can you look up the official guidance?",
+  "transcript": [
+    {"role": "user", "content": "Can you look up the official guidance?"}
+  ],
+  "tool_name": "answer_grounded_lookup",
+  "arguments": {"query": "official guidance"}
+}
+```
+
+Turn recording request:
+
+```json
+{
+  "thread_id": "web-voice-abc123",
+  "user_id": "alice",
+  "memory_mode": "persistent",
+  "user_text": "Can you look up the official guidance?",
+  "assistant_text": "I found the official source...",
+  "tool_calls": [
+    {
+      "tool_name": "answer_grounded_lookup",
+      "status": "completed",
+      "output": {"response_text": "I found the official source..."}
+    }
+  ]
+}
+```
+
+The backend infers the recorded `route` and `response_style` from the
+tool calls that occurred during the Realtime turn.
+
+End-session request:
+
+```json
+{
+  "thread_id": "web-voice-abc123",
+  "memory_mode": "persistent",
+  "feedback": "positive"
+}
+```
+
+Both `/api/threads/{thread_id}/end` and `/api/voice/realtime/end` accept an
+optional `feedback` label (`positive` / `negative` / `skip`) that is written
+to the session-feedback store before summarization. Omit it (or send `null`)
+to skip the feedback step.
+
+Voice end-session responses use the same `finalized`, `summary`, `detail`, and session-arc envelope documented for text sessions.
 
 ## Client contracts
 
-The response schema exposes the user-visible text plus routing
+The text chat response schema exposes the user-visible text plus routing
 metadata:
 
 | Field | Meaning |
@@ -75,4 +185,22 @@ metadata:
 | `response_style` | More specific style or operational branch, such as supportive, memory_control, grounded_lookup, or crisis_response |
 | `therapeutic_approach` | Therapeutic approach overlay when applicable |
 | `crisis` | Normalized crisis assessment |
+| `session_action` | UI hint: `suggest_end_session` when the assistant produced a closing reply, otherwise `none` |
 | `diagnostics` | Per-turn timings and routing metadata |
+
+The WebSocket stream emits status, chunk, done, and terminal error events:
+
+```json
+{"type": "status", "stage": "loading memory", "detail": ""}
+{"type": "chunk", "text": "That sounds heavy."}
+{"type": "done", "response": {"response_text": "..."}}
+{"type": "error", "code": "agent_turn_failed", "message": "The turn could not be completed."}
+```
+
+Frontend clients should treat `error` as terminal and display `message` to the user.
+
+WebSocket clients receive the assistant's final text through `chunk` events
+(incremental) and the `done` payload (complete). The runtime's internal stream
+also produces a `response_ready` event, but the WebSocket handler does **not**
+forward it — it is consumed by the TUI to render the reply early. Integrators
+should not wait for a `response_ready` message over the socket.

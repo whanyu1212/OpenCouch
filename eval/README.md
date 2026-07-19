@@ -1,277 +1,537 @@
-# OpenCouch Eval Harness
+# Eval README
 
-This directory is being rebuilt from scratch.
+This directory contains deterministic evaluation assets for OpenCouch routing, runtime behavior, and crisis-response flows.
 
-The shared runner code lives in `eval/runners/base.py`. It intentionally owns
-only the generic mechanics:
+## Purpose
 
-- load a JSON dataset from a top-level list or `{ "cases": [...] }`
-- run cases asynchronously
-- time each case
-- capture unexpected exceptions as case errors
-- aggregate pass/fail/error counts
-- print a compact summary
-- optionally write the full JSON summary
+The eval suite helps answer four questions:
 
-Domain evaluators should own their own case schema, app/runtime setup, model
-configuration, and grading rules. Keep the base class thin; add shared helpers
-beside it only when multiple evaluators need the same behavior.
+1. **Did the runtime route to the right path?**
+2. **Did it select the right specialist agent?**
+3. **Did it call the right tool, preserve state correctly, and apply the expected side effects?**
+4. **Did crisis-specific helpers produce safe and grounded outputs?**
 
-## LLM judges
+Most routing and behavior evals are designed to run without a live provider by using scripted LLM and SDK responses.
 
-Reusable LLM-as-judge code lives in `eval/judges/`.
+## Datasets
 
-- `BaseLLMJudge`: abstract base for concrete judges. It owns prompt execution
-  and combining deterministic failures with structured judge verdicts.
-- `JudgeVerdict`: common verdict schema with `passed`, `score`, `reasoning`,
-  `strengths`, `failures`, and `safety_concerns`.
-- `RubricLLMJudge`: generic rubric judge for artifacts that can be described as
-  input, output, hard failures, and qualitative dimensions.
+### `datasets/routing_matrix.jsonl`
+Baseline single-turn routing coverage.
 
-Evaluators should still run hard checks first for state machines, routing,
-schema contracts, and invariants. Use LLM judges for qualitative questions such
-as pacing, coherence, adaptation, and therapeutic usefulness.
+Covers:
+- safe therapeutic turns
+- memory control turns
+- grounded lookup turns
+- guided exercise start / continue
+- crisis clarification
+- crisis response
 
-## Evaluators
+Use this file to verify the main route/runtime-mode backbone.
 
-Evals are split by purpose:
+### `datasets/routing_boundaries.jsonl`
+Boundary and precedence coverage for ambiguous inputs.
 
-- `therapeutic_contract_eval.py`: small CI-safe checks for graph boundary,
-  routing contract, state transitions, and expected hard failures.
-- `therapeutic_behavior_eval.py`: broader routing, exercise selection, and
-  lifecycle behavior cases. Defaults to scripted mode; `--mode live` uses the
-  configured LLM clients.
-- `therapeutic_quality_eval.py`: response-quality checks with hard rubrics for
-  concision, concrete exercise guidance, and avoiding menu-style fallbacks.
-  Defaults to scripted mode; `--mode live` uses the configured LLM clients.
-- `therapeutic_exercise_trajectory_eval.py`: multi-turn guided-exercise
-  trajectory checks. It always applies hard state/progression checks and can
-  add an LLM judge with `--judge-mode live`.
-- `therapeutic_path_trajectory_eval.py`: parent-graph therapeutic trajectory
-  checks for the normal non-crisis path through turn dispatch, memory loading,
-  therapeutic subgraph execution, guided-exercise continuity, cross-branch
-  interruptions, and finalization.
-- `crisis_topology_eval.py`: CI-safe parent-graph checks for the LLM-only
-  crisis gate, crisis/non-crisis branch isolation, and visible failure when the
-  classifier LLM is unavailable or fails.
-- `crisis_node_eval.py`: standalone crisis-node contract checks for crisis
-  gate routing, resource lookup state, response quality, and full crisis-log
-  payloads with mocked input state.
-- `crisis_classifier_quality_eval.py`: direct `CrisisRiskService` classifier
-  checks. Defaults to scripted mode; `--mode live` evaluates the configured
-  control model on level 0/1/2/3 and edge-case safety cases.
-- `crisis_branch_quality_eval.py`: full crisis-branch response-quality checks
-  with controlled classifier verdicts and controlled resource lookup results.
-  `--mode live` uses the configured model for crisis response text, and
-  `--judge-mode live` adds an LLM judge.
-- `turn_dispatch_eval.py`: standalone safe-turn dispatch checks for
-  therapeutic, grounded lookup, and memory-control routing. Defaults to
-  scripted mode; `--mode live` evaluates the configured control model.
-- `memory_control_node_eval.py`: standalone memory-control node contracts with
-  seeded semantic, episodic, and procedural memory fixtures. It verifies
-  listing, status, recall toggles, preference saves, deletion confirmation, and
-  durable store changes.
-- `memory_control_trajectory_eval.py`: multi-turn memory-control trajectories
-  that run through turn dispatch and memory-control/load-memory branches. It
-  checks memory-admin boundaries, pending deletion lifecycle, and whether saved
-  procedural settings are visible to later memory loads.
-- `tool_usage_eval.py`: parent-graph checks for turn-level dispatch and
-  grounded-search tool invocation. It verifies that factual lookup,
-  memory-control, therapeutic, and crisis-resource routes call only the
-  expected tools.
-- `grounded_tool_quality_eval.py`: output-quality checks for grounded factual
-  lookup and crisis-resource lookup. It applies hard source/actionability
-  checks and can add an LLM judge with `--judge-mode live`.
-- `agent_session_trajectory_eval.py`: full parent-graph multi-turn session
-  trajectories across therapeutic, grounded lookup, memory-control, and crisis
-  branches. Defaults to scripted mode and can add a live session judge.
-- `text_agent_harness_trajectory_eval.py`: full text-agent harness trajectories
-  over `PersistentAgentRuntime`, covering production runtime wiring, routing,
-  tools, memory writes, streaming, crisis interruption/logging, failure
-  surfacing, and lifecycle state. Defaults to Postgres; use `--backend sqlite`
-  for fallback compatibility coverage.
-- `runtime_persistence_trajectory_eval.py`: Postgres-first
-  `PersistentAgentRuntime` trajectory checks for checkpoint resume, memory
-  extraction durability, active-session liveness, streaming persistence, crisis
-  logs, feedback, and incognito isolation. Defaults to Postgres; use
-  `--backend sqlite` only for fallback compatibility coverage. It also accepts
-  focused runtime datasets such as `memory_lifecycle_trajectory_v1.json` for
-  write, recall, correction, deletion, and fresh-thread absence checks, and
-  `memory_cross_feature_trajectory_v1.json` for memory behavior while guided
-  exercise or grounded lookup flows are active. Use
-  `memory_recall_robustness_v1.json` for indirect recall phrasing,
-  correction/current-fact recall, and no-memory or unrelated-memory boundaries.
-  Use `memory_episodic_recall_robustness_v1.json` for session-summary catch-up,
-  query-driven episodic recall, and mixed semantic plus episodic continuity.
-  Use `session_summary_write_recall_v1.json` for conversation-to-session-arc
-  writes and later recall of generated episodic memory.
-- `runtime_recovery_trajectory_eval.py`: Postgres-first runtime recovery checks
-  for thread-lock serialization, cross-thread isolation, interrupted mutation
-  recovery, rotation-required leases, foreign mutation markers, and
-  auto-finalization exclusions.
-- `text_surface_runtime_eval.py`: text API, WebSocket, and CLI surface checks
-  against the real persistent runtime, covering `/api/chat`, `/api/chat/stream`,
-  history, end-session feedback, memory status, CLI `/end` finalization, and
-  explicit failure/recovery contracts.
-- `memory_write_policy_eval.py`: direct semantic/procedural write-policy checks
-  for LLM-primary decisions, hard safety guards, and visible failure when the
-  policy LLM is unavailable.
-- `memory_extraction_quality_eval.py`: direct semantic/procedural extractor
-  quality checks. Defaults to scripted mode for evaluator mechanics; `--mode
-  live` evaluates the configured control model on precision-first extraction
-  cases.
-- `runtime_stress_eval.py`: manual long-session stress checks over the
-  persistent runtime. This reports turn timing and verifies transcript/session
-  growth without making normal CI evals slow.
+Covers:
+- metaphorical distress staying non-crisis
+- explicit vs implicit memory-reference boundaries
+- crisis overriding grounded lookup
+- grounded lookup preserving guided-exercise state
+
+Use this file to catch false positives and route-priority regressions.
+
+### `datasets/ambiguous_intents.jsonl`
+Mixed-intent clarification coverage for non-voice text routing.
+
+Covers:
+- blocking clarification when multiple safe actions are plausible
+- competing specialist actions such as grounded lookup vs guided exercise
+- soft clarification that preserves the selected primary route
+- explicit privacy / saved-memory controls that should not be clarified before being respected
+- explicit safe action requests that should not be blocked by generic support clarification
+- legacy low-confidence ambiguity fallback behavior
+
+Use this file to verify the clarification policy and its routing metadata:
+`clarification_needed`, `clarification_kind`, `secondary_route`,
+`tentative_route`, `triage_confidence`, and `no_clarification_reason`.
+
+### `datasets/multiturn_routing.jsonl`
+Multiturn routing and state-preservation coverage.
+
+Covers:
+- guided exercise → grounded lookup → resume
+- memory cancel → safe therapeutic follow-up
+- crisis clarification → crisis escalation
+- therapeutic → crisis switch
+- grounded lookup → therapeutic follow-up
+- guided exercise → memory control → resume
+- therapeutic → grounded lookup switch
+- therapeutic → guided exercise switch
+- pending memory action preservation across safe / grounded / crisis side turns
+- crisis de-escalation back to therapeutic flow
+- repeated high-risk follow-up consistency
+- guided exercise interrupted by crisis → explicit resume
+
+Use this file to verify specialist switching and resume behavior across turns.
+
+### `datasets/behavior_matrix.jsonl`
+Behavioral and side-effect coverage for runtime contracts.
+
+Covers:
+- grounded lookup success
+- grounded lookup missing-tool fallback
+- guided exercise step advancement
+- crisis no-verified-resources behavior
+- memory deletion confirmation side effects
+- crisis clarification without resource lookup
+- crisis clarification with location still avoiding resource lookup
+- guided exercise preserve-without-advance
+- memory missing-tool safety
+- proactive recall enable / disable side effects
+- save-preference and forget-by-query memory-tool execution
+
+Use this file when validating state transitions, diagnostics, and response constraints.
+
+### `datasets/trajectory_memory_modes.jsonl`
+Longer trajectory coverage for durable-memory mode behavior.
+
+Covers:
+- persistent mode with matching durable memory available on the first turn
+- persistent mode retaining seeded durable memory across later turns in the same eval case
+- persistent "memory-light" baselines with no seed or no useful matching seed
+- incognito mode suppressing durable-memory recall even when matching memory exists
+- incognito mode preventing seeded durable memory from leaking into later turns
+
+Use this file to compare persistent vs incognito memory behavior over short trajectories rather than single-turn routing alone.
+
+### `datasets/trajectory_interruptions.jsonl`
+Trajectory coverage for interruption, recovery, and resume behavior across memory modes.
+
+Covers:
+- guided exercise interrupted by crisis, then explicit resume
+- crisis de-escalation back to safe therapeutic flow
+- guided exercise preserved across a grounded side turn, then resumed
+- recovery / relapse sequences that return from safe therapeutic flow to crisis response
+- persistent-vs-incognito recall contrast on the non-crisis turns inside those trajectories
+
+Use this file to verify that active-flow continuity and crisis precedence remain correct while memory mode still controls durable recall.
+
+### `datasets/trajectory_endurance.jsonl`
+Longer 5-7 turn endurance trajectories across memory modes.
+
+Covers:
+- incognito no-leak endurance across repeated named-entity turns
+- persistent long-session continuity with relevant recall
+- persistent memory-light control sessions without relevant recall
+- longer guided-exercise arcs with multiple continue / preserve / clear transitions
+- ambiguous recovery / relapse arcs that move through safe therapeutic, crisis clarification, and crisis response
+- extended recovery / relapse arcs with persistent-vs-incognito recall contrast
+- multi-seed retrieval specificity with required and forbidden working-memory matches
+
+Use this file to catch drift that only appears after several turns rather than in shorter trajectory checks.
+
+### `datasets/session_quality_trajectories.jsonl`
+Optional judged full-session quality trajectories.
+
+Covers:
+- persistent vs incognito support-session quality on the same durable-memory scenario
+- persistent vs incognito relationship-tension quality on the same scenario
+- persistent vs incognito work-stress quality
+- persistent vs incognito self-criticism quality
+- exercise side-turn + resume qualitative smoothness
+- exercise interruption/resume and exercise restart quality
+- crisis clarification → de-escalation quality
+- recovery / relapse and repeated high-risk follow-up qualitative safety handling
+- extended recovery / relapse quality across seven turns
+- retrieval-specificity quality when several durable memories compete
+
+Use this file with `run_routing_eval.py --judge` to score whole-session coherence, memory appropriateness, workflow smoothness, and safety handling after deterministic checks pass.
+
+### `datasets/crisis_response_events.jsonl`
+End-to-end crisis-response event coverage.
+
+Covers:
+- imminent risk with verified resources
+- imminent risk without location
+- high risk with refused location
+- imminent risk with search failure fallback
+
+Use this file to verify crisis-response routing, resource handling, and safety language.
+
+### `datasets/crisis_templates.jsonl`
+Crisis response template coverage.
+
+Covers:
+- moderate / high / imminent template variants
+- verified-resource vs no-resource branches
+- safe wording constraints
+- phone-number preservation constraints
+
+Use this file to validate generated crisis copy independently from runtime routing.
+
+### `datasets/crisis_resources.jsonl`
+Crisis resource lookup coverage.
+
+Covers:
+- structured location extraction
+- verified resource lookup
+- no-location cases
+- refused-location cases
+- no-verified-result cases
+- search-failure fallback
+- ambiguous-location cases
+- selected live checks
+
+Use this file to validate the crisis resource lookup layer directly.
+
+### `datasets/live_text_runtime_smoke.jsonl`
+Opt-in live LLM smoke coverage for real runtime paths.
+
+Covers:
+- OpenAI Agents SDK therapeutic response generation
+- OpenAI Agents SDK guided-exercise tool use
+- OpenAI Agents SDK grounded-lookup tool use
+- OpenAI Agents SDK crisis response with resource lookup and audit logging
+- OpenAI response-LLM override for persistent memory
+- OpenAI response-LLM override for incognito privacy behavior
+
+Use this file with `run_live_text_runtime_eval.py --live` when credentials are
+configured and you want live provider coverage beyond deterministic fakes.
+
+### `datasets/live_mixed_intent_clarification.jsonl`
+Opt-in live LLM coverage for mixed-intent clarification routing.
+
+Covers:
+- blocking clarification for competing safe actions
+- soft clarification that preserves grounded lookup or guided exercise while acknowledging support needs
+- explicit safe action requests that should not be blocked by possible follow-up actions
+- explicit privacy control plus support or memory-status requests without unnecessary clarification
+
+Run this file with:
 
 ```bash
-apps/backend/.venv/bin/python -m eval.runners.therapeutic_contract_eval
-apps/backend/.venv/bin/python -m eval.runners.therapeutic_behavior_eval
-apps/backend/.venv/bin/python -m eval.runners.therapeutic_quality_eval
-apps/backend/.venv/bin/python -m eval.runners.therapeutic_exercise_trajectory_eval
-apps/backend/.venv/bin/python -m eval.runners.therapeutic_path_trajectory_eval
-apps/backend/.venv/bin/python -m eval.runners.crisis_node_eval
-apps/backend/.venv/bin/python -m eval.runners.crisis_topology_eval
-apps/backend/.venv/bin/python -m eval.runners.crisis_classifier_quality_eval
-apps/backend/.venv/bin/python -m eval.runners.crisis_classifier_quality_eval --dataset eval/datasets/crisis/classifier_ambiguity_v1.json
-apps/backend/.venv/bin/python -m eval.runners.crisis_branch_quality_eval
-apps/backend/.venv/bin/python -m eval.runners.turn_dispatch_eval
-apps/backend/.venv/bin/python -m eval.runners.turn_dispatch_eval --dataset eval/datasets/turn_dispatch/routing_quality_v1.json
-apps/backend/.venv/bin/python -m eval.runners.memory_control_node_eval
-apps/backend/.venv/bin/python -m eval.runners.memory_control_trajectory_eval
-apps/backend/.venv/bin/python -m eval.runners.tool_usage_eval
-apps/backend/.venv/bin/python -m eval.runners.grounded_tool_quality_eval
-apps/backend/.venv/bin/python -m eval.runners.agent_session_trajectory_eval
-apps/backend/.venv/bin/python -m eval.runners.text_agent_harness_trajectory_eval
-apps/backend/.venv/bin/python -m eval.runners.text_agent_harness_trajectory_eval --backend sqlite
-apps/backend/.venv/bin/python -m eval.runners.text_agent_harness_trajectory_eval --mode live --judge-mode live
-apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval
-apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --backend sqlite
-apps/backend/.venv/bin/python -m eval.runners.runtime_recovery_trajectory_eval
-apps/backend/.venv/bin/python -m eval.runners.text_surface_runtime_eval
-apps/backend/.venv/bin/python -m eval.runners.memory_write_policy_eval
-apps/backend/.venv/bin/python -m eval.runners.memory_extraction_quality_eval
-apps/backend/.venv/bin/python -m eval.runners.runtime_stress_eval
-apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_lifecycle_trajectory_v1.json --mode live --judge-mode live
-apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_cross_feature_trajectory_v1.json --mode live --judge-mode live
-apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_recall_robustness_v1.json --mode live --judge-mode live
-apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/memory_episodic_recall_robustness_v1.json --mode live --judge-mode live
-apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/session_summary_write_recall_v1.json --mode live --judge-mode live
-apps/backend/.venv/bin/python -m eval.runners.runtime_persistence_trajectory_eval --dataset eval/datasets/runtime/live_session_trajectory_v1.json --mode live --judge-mode live
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai \
+  --dataset ../../eval/datasets/live_mixed_intent_clarification.jsonl
 ```
 
-Useful flags:
+### `datasets/live_text_runtime_trajectories.jsonl`
+Opt-in live LLM trajectory coverage for real OpenAI runtime paths.
 
-- `--plain`: disable Rich output.
-- `--json-output eval/reports/therapeutic_contract.json`: write the full result
-  payload.
-- `--dataset eval/datasets/therapeutic/contract_v1.json`: override the dataset.
-- `--mode live`: run behavior or quality cases with configured provider-backed
-  LLM clients.
-- `--judge-mode live`: run exercise trajectory, crisis node, crisis branch, or
-  grounded-tool LLM judges. Memory-control trajectory evals also support this
-  for response-quality judging.
-- `--backend postgres|sqlite`: select the persistence backend for runtime
-  trajectory evals. Postgres is the primary application backend and the
-  default.
-- `--dataset eval/datasets/runtime/live_session_trajectory_v1.json --mode live
-  --judge-mode live`: run the small live LLM session suite over the primary
-  runtime persistence backend.
+Covers:
+- OpenAI Agents SDK guided-exercise start / resume continuity
+- OpenAI Agents SDK grounded lookup followed by ordinary support
+- OpenAI Agents SDK repeated crisis-resource handling
+- OpenAI response-LLM persistent-memory trajectory quality
+- OpenAI response-LLM incognito-memory privacy behavior
 
-Current coverage:
+Run these cases with `run_live_text_runtime_eval.py --live --suite trajectories`.
 
-- non-exercise response routing through the shared response node
-- guided exercise start
-- guided exercise step advance
-- guided exercise hold and stuck behavior
-- guided exercise exit and state clearing
-- guided exercise completion and state clearing
-- clarifying side turns that preserve active exercise continuity
-- active exercise clearing when dispatch leaves the exercise flow
-- expected hard failures when the control LLM is missing or returns an
-  unavailable exercise
-- LLM-only crisis-gate topology, including no deterministic fallback on missing
-  or failing classifier LLM
-- crisis classifier quality for ordinary distress, ambiguous distress, explicit
-  ideation, imminent risk, third-party crisis text, post-safety denial,
-  history-dependent references, and prompt-injection attempts
-- crisis classifier ambiguity boundaries for false-positive idioms, passive
-  death wishes, intrusive thoughts, sarcasm, safety denial, and context-dependent
-  references
-- full crisis-branch response quality across found resources, missing location,
-  location refusal, no verified lookup results, imminent means, and ideation
-  without a stated plan
-- standalone crisis node contracts for crisis-gate routing, resource lookup
-  state, response quality, response-LLM selection, and audit-log payloads
-- standalone turn-dispatch contracts for therapeutic routing, grounded lookup
-  query creation, memory-control actions, pending-action clearing, and visible
-  invalid-output failures
-- turn-dispatch routing quality for memory-adjacent support, source-backed
-  lookup, non-crisis resources, mixed-intent turns, and pending-action ambiguity
-- standalone memory-control node contracts using manually seeded realistic
-  semantic facts, session summaries, procedural rules, and proactive-recall
-  state
-- multi-turn memory-control trajectories for inspect-vs-support boundaries,
-  deletion confirmation, abandoned deletion, preference saves, recall toggles,
-  and ambiguous "remember" wording
-- broader scripted behavior cases for exercise selection and state changes
-- hard response-quality checks for concise, concrete, non-menu output
-- multi-turn exercise trajectories with optional LLM-as-judge scoring
-- parent-graph therapeutic trajectories across memory-conditioned support,
-  guided exercise start/continue, exercise exit, turn finalization, crisis
-  interruption, grounded lookup side-trips, and memory-control interruptions
-- narrowed subgraph output keys
-- parent-graph turn dispatch to therapeutic, grounded lookup, memory control,
-  and crisis branches
-- grounded factual lookup and crisis resource tools invoked exactly on their
-  intended routes
-- grounded factual lookup answers stay source-backed, concise, and scoped to
-  verifiable facts
-- mental-health-adjacent lookup cases for reading resources, psychoeducation,
-  and non-crisis support directories
-- crisis-resource outputs contain location-appropriate, actionable contact
-  details without guessed resources
-- crisis-resource lookup respects explicit location refusal without guessing
-  localized resources
-- full parent-graph session trajectories across branch transitions, including
-  exercise interruption, lookup side-trips, memory-control pending actions,
-  crisis logging, and later safe follow-up turns
-- cross-branch interruption matrix coverage for exercise ↔ memory-control,
-  pending memory deletion → therapeutic/crisis, grounded lookup → crisis,
-  crisis → grounded lookup, and interrupted lookup recovery
-- full text-agent harness trajectories over `PersistentAgentRuntime`, including
-  support-memory recall, exercise/lookup/streaming continuity, crisis
-  interruption and per-session audit logging, preference saves, mental-health
-  resource lookup, ambiguous non-crisis distress, explicit tool failure
-  surfacing, and live smoke coverage with optional LLM-as-judge grading
-- Postgres-first runtime persistence trajectories for checkpoint resume,
-  background extraction drain, cross-thread/user memory scoping, streaming
-  single-write behavior, session finalization cleanup, crisis-log persistence,
-  feedback persistence, and incognito non-persistence
-- focused memory lifecycle trajectories for fresh-thread write/recall,
-  correction, deletion, and cross-feature behavior during guided exercise,
-  memory-control, and grounded lookup side turns
-- focused memory recall robustness trajectories for indirect support-person
-  recall, support-plan recall without exact naming, correction/current-memory
-  recall, no-memory transparency, and unrelated-memory hygiene
-- focused episodic recall robustness trajectories for latest-session catch-up,
-  older-session query recall after an opening turn, no-session transparency,
-  unrelated-session hygiene, and combined semantic plus episodic recall
-- focused session-summary write and recall trajectories for generated
-  `StoredSessionArc` quality, thin-session no-write behavior, side-trip
-  summary hygiene, and later recall of finalized episodic memory
-- runtime recovery trajectories for same-thread concurrency serialization,
-  cross-thread isolation, failed-turn interruption, foreign mutation markers,
-  rotation-required session leases, explicit recovery, and auto-finalization
-  exclusions
-- text API, WebSocket, and CLI surface trajectories that verify production
-  wiring into the persistent runtime, including feedback writes, end-session
-  cleanup, explicit runtime failure surfacing, interrupted-session blocking,
-  and recovery after `/end`
-- direct memory write-policy decisions for semantic and procedural candidates,
-  including LLM-primary paths, local hard safety guards, and no silent fallback
-  on policy-LLM failure
-- manual runtime stress coverage for long scripted sessions over the persistent
-  backend
-- a small live LLM Postgres session dataset for support and guided-exercise
-  trajectories with optional LLM-as-judge grading
+### `datasets/live_memory_write_quality.jsonl`
+Opt-in live LLM coverage for saved-memory quality.
+
+Covers:
+- semantic memory candidate extraction from real support transcripts
+- procedural preference extraction from repeated user preferences
+- paraphrased semantic/procedural repetition under live extraction
+- semantic/procedural overlap authority at session end
+- write-policy timing decisions for save, hold, drop, and promotion paths
+- session-end memory commit behavior
+- transient mood not becoming durable memory
+- privacy override and incognito no-write behavior
+- Postgres-backed saved-memory readback when `--persistence-backend postgres` is used
+
+Run these cases with `run_live_text_runtime_eval.py --live --suite memory_writes`.
+
+## Runners
+
+### `runners/run_routing_eval.py`
+Primary deterministic runtime eval runner for routing, behavior, and multiturn datasets.
+
+Example usage from repo root:
+
+```bash
+apps/backend/.venv/bin/python eval/runners/run_routing_eval.py
+```
+
+Run a different dataset:
+
+```bash
+apps/backend/.venv/bin/python eval/runners/run_routing_eval.py \
+  --dataset eval/datasets/behavior_matrix.jsonl
+```
+
+Run a specific case:
+
+```bash
+apps/backend/.venv/bin/python eval/runners/run_routing_eval.py \
+  --dataset eval/datasets/behavior_matrix.jsonl \
+  --case-id grounded_lookup_missing_tool_falls_back
+```
+
+Optional judge mode for full-session qualitative scoring:
+
+```bash
+apps/backend/.venv/bin/python eval/runners/run_routing_eval.py \
+  --dataset eval/datasets/session_quality_trajectories.jsonl \
+  --judge --provider openai
+```
+
+Deterministic cases can also assert order-independent working-memory retrieval with:
+- `expected.working_memory.min_count`
+- `expected.working_memory.max_count`
+- `expected.working_memory.must_include`
+- `expected.working_memory.must_not_include`
+
+Use these when a case should prove that one specific memory was retrieved while unrelated memories were kept out.
+
+### `runners/run_live_text_runtime_eval.py`
+Opt-in live runtime runner for broader OpenAI-backed smoke coverage.
+
+Run from `apps/backend` with OpenAI:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai
+```
+
+Run the trajectory suite:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai --suite trajectories
+```
+
+Run smoke and trajectory cases together:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai --suite all
+```
+
+Run saved-memory quality cases:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai --suite memory_writes
+```
+
+Run with LLM-as-judge scoring for cases that define `session_expected`:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai --suite trajectories --judge \
+  --judge-model gpt-5.4 --min-judge-score 4
+```
+
+For `memory_writes`, `--judge` also scores the saved records themselves for
+grounding, usefulness, specificity, sensitivity, and privacy-mode correctness.
+
+Run repeated judged samples to inspect transcript-quality variance:
+
+```bash
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai --suite trajectories --judge \
+  --judge-model gpt-5.4 --min-judge-score 4 --samples 3
+```
+
+With `--samples` greater than `1`, each result includes a per-sample payload
+with its own checks, failures, output transcript, and judge result.
+
+Run against the local Docker Compose Postgres memory backend:
+
+```bash
+docker compose -f ../../compose.yml up -d postgres --wait
+.venv/bin/python ../../eval/runners/run_live_text_runtime_eval.py \
+  --live --provider openai --suite memory_writes \
+  --persistence-backend postgres \
+  --memory-database-url postgresql://opencouch:opencouch@localhost:5432/opencouch
+```
+
+The default `--persistence-backend memory` keeps live eval runs isolated in an
+in-memory store. Use `postgres` only for opt-in persistence parity checks.
+
+The pytest wrappers are additionally gated by explicit flags:
+- `RUN_LIVE_OPENAI_RUNTIME_EVALS=1`
+- `RUN_LIVE_OPENAI_TRAJECTORY_EVALS=1`
+- `RUN_LIVE_OPENAI_TRAJECTORY_JUDGE_EVALS=1`
+- `RUN_LIVE_OPENAI_MEMORY_WRITE_EVALS=1`
+- `RUN_LIVE_OPENAI_MEMORY_WRITE_JUDGE_EVALS=1`
+
+The trajectory judge pytest wrapper uses OpenAI as judge, defaults to the
+configured OpenAI model, and requires every qualitative judge dimension to score
+at least `4`. Override those defaults with:
+- `OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MODEL`
+- `OPENCOUCH_LIVE_TRAJECTORY_JUDGE_MIN_SCORE`
+- `OPENCOUCH_LIVE_TRAJECTORY_JUDGE_SAMPLES`
+
+This is separate from the older classifier/style live-test flags so enabling
+basic live tests does not unexpectedly run tool-using runtime evals.
+
+The runner also accepts `--dataset path/to/custom.jsonl`, which overrides
+`--suite` for ad-hoc live eval files.
+
+## Coverage matrix
+
+| Area | Route / Mode focus | Main datasets |
+| --- | --- | --- |
+| Safe therapeutic | `therapeutic` / `safe_therapeutic` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl` |
+| Mixed-intent clarification | `therapeutic` / `safe_therapeutic` with `clarifying` style, or primary route with soft clarification metadata | `ambiguous_intents.jsonl`, `routing_boundaries.jsonl` |
+| Memory control | `memory_control` / `memory_control` | `routing_matrix.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl` |
+| Grounded lookup | `grounded_lookup` / `grounded_lookup` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl`, `ambiguous_intents.jsonl` |
+| Guided exercise | `therapeutic` / `guided_exercise` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl`, `trajectory_interruptions.jsonl`, `ambiguous_intents.jsonl` |
+| Crisis clarification | `therapeutic` / `crisis_clarification` | `routing_matrix.jsonl`, `behavior_matrix.jsonl`, `multiturn_routing.jsonl` |
+| Crisis response | `crisis` / `crisis_response` | `routing_matrix.jsonl`, `routing_boundaries.jsonl`, `multiturn_routing.jsonl`, `behavior_matrix.jsonl`, `crisis_response_events.jsonl`, `trajectory_interruptions.jsonl`, `trajectory_endurance.jsonl` |
+| Trajectory memory modes | persistent vs incognito durable recall behavior | `trajectory_memory_modes.jsonl` |
+| Trajectory interruptions | exercise/crisis/recovery trajectories across memory modes | `trajectory_interruptions.jsonl` |
+| Trajectory endurance | longer multi-turn continuity / no-leak / relapse coverage | `trajectory_endurance.jsonl` |
+| Session quality trajectories | judged full-session coherence / memory / safety quality | `session_quality_trajectories.jsonl` |
+| Crisis templates | copy + safety constraints | `crisis_templates.jsonl` |
+| Crisis resources | lookup + normalization | `crisis_resources.jsonl` |
+| Live text runtime | OpenAI-backed Agents SDK / response-LLM smoke and trajectory paths | `live_text_runtime_smoke.jsonl`, `live_text_runtime_trajectories.jsonl` |
+| Live memory write quality | OpenAI-backed extraction, write policy, session commit, and saved-record judging | `live_memory_write_quality.jsonl` |
+
+## Current known gaps
+
+### 1. No dedicated eval index existed before this README
+The JSONL files were the practical source of truth, but there was no single document explaining:
+- what each dataset covers
+- how to run it
+- where coverage is intentionally incomplete
+
+### 2. Memory-control breadth is stronger, but conflicting-intent depth is still limited
+Current evals now cover:
+- enable/disable proactive recall
+- save-preference memory-tool execution
+- forget-by-query memory-tool execution
+- preservation of pending memory actions across safe, grounded, and crisis side turns
+
+Additional coverage now includes:
+- conflicting memory save / forget precedence
+- forget-by-query followed by cancel
+- forget-by-query followed by confirm
+- repeated confirm with no pending memory action
+- grounded and crisis side turns preserving pending memory actions without running memory tools
+
+Still weak or missing:
+- broader ambiguous natural-language memory-control phrasing under live LLM classification
+- qualitative judgment of whether memory-control replies feel clear enough in long sessions
+
+### 3. Guided-exercise lifecycle coverage is broad, but some edge cases remain
+Covered:
+- start
+- continue
+- preserve
+- resume
+- explicit exit
+- restart with a different exercise mid-flow
+- invalid continue when no exercise is active
+- crisis interruption during an active exercise
+- explicit post-crisis resume
+
+Additional coverage now includes:
+- soft abandon wording
+- explicit pause / preserve wording
+- conflicting stop / continue cue where stop wins
+- restart wording variants that switch exercise type
+- negated confirmation cue unit tests for "not ready to move on" and "can't keep going"
+
+Still light:
+- live LLM wording diversity for abandon, pause, restart, and continue decisions
+- judged quality of how natural the transitions feel, beyond deterministic state correctness
+
+### 4. Grounded missing-tool fallback behavior is documented but semantically odd
+The current contract for `grounded_lookup_missing_tool_falls_back` is:
+
+- route falls back to `therapeutic`
+- runtime mode becomes `safe_therapeutic`
+- response uses the scripted final output
+- grounded lookup state remains `not_attempted`
+- grounded-tool diagnostics keys are absent
+
+This is now covered by evals, but may still deserve a future product/runtime decision.
+
+### 5. Crisis progression coverage is much better, but ambiguous safety signals remain
+Current evals now cover:
+- de-escalation back to therapeutic flow
+- crisis interruption while another workflow is active
+- repeated high-risk follow-up turns
+- clarification with location still avoiding lookup
+- extended recovery / relapse paths across seven turns
+- persistent-vs-incognito recall contrast on safe and clarification turns inside crisis trajectories
+
+Still light:
+- live LLM samples for ambiguous or conflicting safety signals
+- broader 10+ turn mixed recovery / relapse sequences
+
+### 6. Mixed-intent precedence and clarification have stronger deterministic coverage
+Additional deterministic coverage now includes:
+- crisis + memory control in the same turn
+- crisis + pending memory confirmation in the same turn
+- crisis + guided exercise start / continue in the same turn
+- crisis + grounded lookup in the same turn
+- grounded lookup + memory action in the same turn
+- grounded lookup preserving pending memory deletion
+- blocking clarification for competing safe action routes
+- soft clarification that proceeds with the selected primary route
+- explicit privacy / memory-control requests that should not be clarified before being respected
+- explicit safe action requests that should not be blocked by generic clarification
+
+Clarification policy:
+- crisis remains application-owned and preempts generic mixed-intent clarification
+- blocking clarification asks before taking route-specific action
+- soft clarification records metadata but does not force the clarifying response style
+- explicit privacy and safe action requests record why clarification was not needed
+
+Still light:
+- live LLM samples for naturally worded mixed-intent turns
+- longer sessions with multiple active cues before the mixed-intent turn
+
+### 7. Full session trajectories are still only partially covered
+The trajectory memory-mode, interruption, endurance, and judged session-quality datasets
+now improve persistent-vs-incognito coverage for durable recall behavior plus longer
+exercise/crisis/recovery switching, retrieval-specificity assertions, and whole-session quality scoring, but the eval suite
+is still lighter on:
+- 10+ turn conversational endurance checks across broader topics
+- live judged retrieval-specificity samples beyond deterministic memory assertions
+- judged coverage for additional nuanced scenarios beyond the current curated sixteen full-session cases
+
+### 8. Live LLM coverage is opt-in smoke coverage, not a full benchmark
+The live runtime eval runner now covers real provider paths for SDK response
+generation, tool use, crisis response, grounded lookup, memory-mode behavior, and
+saved-memory write quality.
+Remaining gaps:
+- no automated live CI budget or scheduled cadence
+- repeated live judged sampling is supported, but the curated case set is still small
+
+## Conventions for adding cases
+
+When adding a new eval case:
+
+1. Put it in the dataset that matches its primary purpose:
+   - route selection → `routing_matrix.jsonl`
+   - boundary/precedence → `routing_boundaries.jsonl`
+   - mixed-intent clarification metadata → `ambiguous_intents.jsonl`
+   - multiturn switching/resume → `multiturn_routing.jsonl`
+   - side effects / diagnostics / state mutation → `behavior_matrix.jsonl`
+   - crisis-specific subsystems → crisis datasets
+
+2. Prefer small, surgical cases.
+   - One case should usually validate one contract or one precedence rule.
+
+3. Include only the assertions needed to lock the intended behavior.
+   - route
+   - runtime mode
+   - selected agent
+   - key state fields
+   - key diagnostics
+   - required / forbidden response text
+
+4. If a case captures surprising behavior, document it here under **Current known gaps** or update the relevant section.
+
+## Suggested next additions
+
+Priority candidates:
+- live LLM samples for naturally worded mixed-intent and crisis-ambiguity turns
+- 10+ turn endurance trajectories across broader support topics
+- live judged retrieval-specificity samples with competing durable memories
+- scheduled or manually approved live runtime eval runs with saved artifacts

@@ -1,23 +1,23 @@
 ---
 title: Agent State
-sidebar_position: 1
+sidebar_position: 2
 ---
 
 import StateFields from '@site/src/components/StateFields';
 
 # Agent State
 
-One `AgentState` dict flows through every node. Nodes read from it
-and return **partial deltas**; LangGraph merges those deltas back
-in — using a reducer when one is declared, or last-write-wins
-otherwise.
+One `AgentState` dict is the app-owned turn snapshot. Runtime stages read from
+it and return **partial deltas**. Explicit runtime merge helpers preserve the
+long-lived dict channels that need cross-turn continuity, while ordinary fields
+are last-write-wins.
 
 ## Mental model
 
 | Lifecycle | What it means | Examples |
 |---|---|---|
 | **input** | Set once by the caller at turn start | `message`, `user_id`, `channel` |
-| **reducer** | Annotated with a reducer; survives the turn and accumulates across turns via the checkpointer | `history`, `session_progress`, `exercise_state`, `diagnostics` |
+| **persisted/merged** | Saved in the app-owned state snapshot and shallow-merged when a stage returns a partial nested update | `transcript`, `session_progress`, `exercise_state`, `diagnostics` |
 | **loaded** | Re-fetched each turn from the memory store | `working_memory`, `procedural_profile.*` |
 | **turn-scoped** | Fresh each turn, last-write-wins | `crisis`, `route`, `response_text` |
 
@@ -43,20 +43,24 @@ strings. Two entry types:
 
 Formatting via `format_working_memory_entries()` happens at three
 surfaces only: the therapeutic prompt builder, the dispatcher
-prompt, and the CLI's context panel. Legacy `str` entries from
-older checkpoints pass through unchanged.
+prompt, and the CLI's context panel. Legacy `str` entries from older state
+snapshots pass through unchanged.
 
 ## Public contract
 
 The external API only sees `AgentInput` and `AgentOutput` — the
-state itself is internal to the graph.
+state itself is internal to the runtime.
 
 | Model | Public fields |
 |---|---|
 | `AgentInput` | `message`, `channel`, `user_id`, `session_id`, `history`, `working_memory`, `installed_skills` |
 | `AgentOutput` | `response_text`, `response_type`, `crisis`, `response_style`, `response_style_type`, `response_style_source`, `therapeutic_approach`, `should_persist_memory`, `diagnostics` |
 | `CrisisAssessment` | `level` (0–3), `confidence`, `reason`, `needs_crisis_response`, `needs_clarification` |
-| `Message` | `role`, `content`, `response_style` (optional — stamped onto assistant turns by `finalize_turn_node`) |
+| `Message` | `role`, `content`, `response_style` (optional — stamped onto assistant turns by turn finalization) |
+
+`installed_skills` is retained as the external field name for compatibility.
+The runtime treats these strings as capability keys for capability-aware
+routing and guided-exercise catalog filtering.
 
 ## Runtime context
 
@@ -75,27 +79,28 @@ attribute access only.
 | `session_memory_buffer` | `SessionMemoryBuffer \| None` | `None` |
 
 `session_memory_buffer` is set by `PersistentAgentRuntime` so that
-the runtime extraction coordinator can park session-end candidates
-in a per-thread buffer that persists across restarts.
+session-end candidates can be carried in a per-thread buffer that
+persists across restarts.
 
 <details>
 <summary>Schema implementation detail</summary>
 
-The schema is built from six TypedDict fragments — `AgentIdentityState`,
+The schema is built from TypedDict fragments — `AgentIdentityState`,
 `AgentConversationState`, `AgentPersistentState`, `AgentCrisisState`,
-`AgentGraphOutputState`, and `AgentPrivateState`. The parent graph
-declares three views over them:
+`AgentTurnOutputState`, and `AgentPrivateState`. The runtime declares two main
+views over them:
 
 | Schema | Used as |
 |---|---|
-| `AgentGraphInputState` | Input — what `build_initial_state()` emits |
-| `AgentState` | Internal — the full union, used by every node |
-| `AgentGraphOutputState` | Output — what `state_to_output()` reads back |
+| `AgentTurnInputState` | Input — what `build_initial_state()` emits |
+| `AgentState` | Internal — the full state used by runtime stages, prompt builders, tests, and evals |
 
-You don't need to think about the fragments to use the agent —
-they exist so the parent graph can give LangGraph distinct input
-and output schemas, which prevents reducer double-counting when the
-therapeutic subgraph completes.
+`state_to_output()` reads the relevant output fields from `AgentState` and
+normalizes them into the public `AgentOutput` contract.
+
+You don't need to think about the fragments to use the agent — they exist so
+the runtime can keep input, internal state, and public output boundaries
+explicit.
 
 </details>
 
@@ -103,9 +108,9 @@ therapeutic subgraph completes.
 
 | File | Defines |
 |---|---|
-| `agent/state.py` | All TypedDict fragments and the `AgentGraphInputState` / `AgentState` / `AgentGraphOutputState` schemas |
+| `agent/state.py` | All TypedDict fragments plus `AgentTurnInputState` and `AgentState` schemas |
 | `agent/memory/entries.py` | `WorkingMemoryEntry` types and `format_working_memory_entry/entries()` |
 | `agent/models.py` | `AgentInput`, `AgentOutput`, `Message`, `CrisisAssessment`, `Channel`, `MessageRole`, `ResponseCategory`, `ResponseStyleType`, stream events, `STAGE_LABELS` |
 | `agent/audit/models.py` | `CrisisOverrideOutcome` and `CrisisClassifierPath` (used inside `CrisisAuditState`), plus `CrisisLogRecord` and feedback types |
-| `agent/graph.py` | `build_initial_state()` (input → state) and `state_to_output()` (state → output) |
-| `agent/runtime_context.py` | `WorkflowContext` frozen dataclass — runtime dependencies via `runtime.context` |
+| `agent/runtime/turn.py` | `build_initial_state()` (input → state) and `state_to_output()` (state → output) |
+| `agent/runtime/workflow_context.py` | `WorkflowContext` frozen dataclass — runtime dependencies via `runtime.context` |

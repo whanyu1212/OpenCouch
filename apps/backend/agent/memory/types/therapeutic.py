@@ -1,4 +1,4 @@
-"""Therapeutic-dispatch models used by the memory-aware subgraph."""
+"""Therapeutic response-style models used by memory-aware response planning."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from agent.memory.types.primitives import ConfidenceLevel
-from agent.therapeutic_policy import (
+from agent.models import (
     GuidancePermission,
     SessionIntent,
     TherapeuticApproach,
@@ -22,6 +22,14 @@ TherapeuticResponseStyle = Literal[
     "clarifying",
     "technique",
 ]
+TherapeuticResponseGuidanceStyle = Literal[
+    "supportive",
+    "reflective",
+    "psychoeducation",
+    "closing",
+    "clarifying",
+    "technique",
+]
 
 SessionStage = Literal["opening", "deepening", "stabilizing", "closing"]
 
@@ -30,10 +38,80 @@ ExerciseStartBasis = Literal[
     "accepted_assistant_offer",
     "ambiguous_or_none",
 ]
+TurnRoute = Literal[
+    "therapeutic",
+    "memory_control",
+    "grounded_lookup",
+    "guided_exercise",
+]
+ActiveFlowAction = Literal["none", "continue", "preserve", "clear"]
+ClarificationKind = Literal["none", "blocking", "soft"]
+NoClarificationReason = Literal[
+    "none",
+    "safety_precedence",
+    "explicit_privacy_control",
+    "explicit_action_request",
+    "clear_single_intent",
+]
+
+
+class TurnDispatchDecision(BaseModel):
+    """Structured turn-level routing decision for runtime-owned dispatch."""
+
+    route: TurnRoute
+    therapeutic_response_style: TherapeuticResponseGuidanceStyle = Field(
+        default="supportive",
+        description=(
+            "Private response-style guidance to inject when route is therapeutic. "
+            "Use supportive, reflective, psychoeducation, closing, clarifying, "
+            "or technique. Do not use this field to start guided exercises; route "
+            "explicit exercises to guided_exercise instead."
+        ),
+    )
+    therapeutic_approach: TherapeuticApproach = Field(
+        default="none",
+        description=(
+            "Optional private therapeutic approach label for ordinary therapeutic "
+            "response guidance, such as cbt, act, dbt_skills, grief_support, or none."
+        ),
+    )
+    active_flow_action: ActiveFlowAction = "none"
+    clarification_needed: bool = False
+    clarification_kind: ClarificationKind = "none"
+    secondary_route: TurnRoute | None = None
+    intent_summary: str = Field(
+        default="",
+        max_length=300,
+        description=(
+            "Compact private summary of mixed or ambiguous user intent for "
+            "clarification-aware response planning. Do not script user-visible text."
+        ),
+    )
+    clarification_question: str = Field(
+        default="",
+        max_length=240,
+        description=(
+            "Optional concise user-facing clarification question when "
+            "clarification_kind is blocking."
+        ),
+    )
+    no_clarification_reason: NoClarificationReason = "none"
+    memory_reference_mode: Literal["none", "explicit"] = "none"
+    query: str = Field(
+        default="",
+        description=(
+            "Lookup query for grounded_lookup when the user's request needs "
+            "external or source-backed information."
+        ),
+    )
+    exercise_start_basis: ExerciseStartBasis = "ambiguous_or_none"
+    exercise_type: str = ""
+    reasoning: str = Field(min_length=1, max_length=240)
+    confidence: ConfidenceLevel
 
 
 class DispatchDecision(BaseModel):
-    """The structured output of the therapeutic_dispatch_node LLM call."""
+    """Legacy structured response-style decision used by test fixtures."""
 
     response_style: TherapeuticResponseStyle
     therapeutic_approach: TherapeuticApproach = "none"
@@ -82,10 +160,16 @@ class DispatchDecision(BaseModel):
 
 __all__ = [
     "TherapeuticResponseStyle",
+    "TherapeuticResponseGuidanceStyle",
     "TherapeuticApproach",
     "SessionIntent",
     "SessionStage",
     "GuidancePermission",
     "ExerciseStartBasis",
+    "TurnRoute",
+    "ActiveFlowAction",
+    "ClarificationKind",
+    "NoClarificationReason",
+    "TurnDispatchDecision",
     "DispatchDecision",
 ]

@@ -13,7 +13,7 @@ export default function TurnPipeline() {
       <div className={styles.section}>
         <Node
           num="1"
-          label="crisis_gate_node"
+          label="crisis_gate"
           desc="Every message — no exceptions. LLM-only classifier with local truth-table normalization."
           accent="var(--gate-color)"
         />
@@ -27,9 +27,9 @@ export default function TurnPipeline() {
             <span className={styles.branchDot} style={{ background: 'var(--crisis-color)' }} />
             crisis path
           </div>
-          <Node num="2a" label="crisis_resource_lookup_node" desc="Region-aware hotline lookup via web search grounding" accent="var(--crisis-color)" compact />
-          <Node num="3a" label="crisis_response_node" desc="Crisis reply with optional resource overlay" accent="var(--crisis-color)" compact />
-          <Node num="4a" label="crisis_log_node" desc="Always-on audit trail — writes regardless of memory mode" accent="var(--crisis-color)" compact />
+          <Node num="2a" label="crisis_resource_lookup" desc="Region-aware hotline lookup via web search grounding" accent="var(--crisis-color)" compact />
+          <Node num="3a" label="CrisisAgent" desc="Crisis reply with optional resource overlay" accent="var(--crisis-color)" compact />
+          <Node num="4a" label="crisis_log" desc="Always-on audit trail — writes regardless of memory mode" accent="var(--crisis-color)" compact />
         </div>
 
         <div className={styles.branchCard + ' ' + styles.safeCard}>
@@ -37,20 +37,20 @@ export default function TurnPipeline() {
             <span className={styles.branchDot} style={{ background: 'var(--safe-color)' }} />
             safe-turn path
           </div>
-          <Node num="2b" label="turn_dispatch_node" desc="LLM routes safe turns to memory control, grounded lookup, or therapeutic flow" accent="var(--safe-color)" compact />
-          <Node num="3b" label="memory_control_node" desc="Operational memory replies for list/status/forget/recall/preference turns" accent="var(--safe-color)" compact />
-          <Node num="3b" label="grounded_answer_node" desc="Search-grounded answer for explicit factual lookup turns" accent="var(--safe-color)" compact />
-          <Node num="4b" label="load_memory_node" desc="Hybrid RRF retrieval across 3 namespaces for ordinary support" accent="var(--safe-color)" compact />
-          <Node num="5b" label="therapeutic_subgraph" desc="LLM dispatcher → shared response node or guided exercise node" accent="var(--safe-color)" compact />
+          <Node num="2b" label="turn_dispatch" desc="LLM routes safe turns to memory control, grounded lookup, or therapeutic flow" accent="var(--safe-color)" compact />
+          <Node num="3b" label="memory_control" desc="Operational memory replies for list/status/forget/recall/preference turns" accent="var(--safe-color)" compact />
+          <Node num="3b" label="grounded_lookup" desc="Search-grounded answer for explicit factual lookup turns" accent="var(--safe-color)" compact />
+          <Node num="4b" label="turn_memory_context" desc="Runtime-owned retrieval across 3 namespaces for ordinary support" accent="var(--safe-color)" compact />
+          <Node num="5b" label="TherapeuticAgent" desc="Response style selection or guided-exercise handoff" accent="var(--safe-color)" compact />
         </div>
       </div>
 
       {/* ── Shared terminal ────────────────────────────── */}
       <div className={styles.section}>
         <div className={styles.sectionHeader}>both paths converge</div>
-        <Node num="6" label="finalize_turn_node" desc="Append response to transcript via operator.add reducer. No I/O — no retry. Stream emits response_ready here." accent="var(--oc-accent)" />
+        <Node num="6" label="turn_finalization" desc="Append response to the app-owned transcript snapshot. No I/O — no retry. Stream emits response_ready here." accent="var(--oc-accent)" />
         <div className={styles.parallelGroup}>
-          <div className={styles.parallelTag}>runtime side effects after graph END</div>
+          <div className={styles.parallelTag}>runtime side effects after response</div>
           <div className={styles.parallelNodes}>
             <Node num="7" label="semantic extraction" desc="Candidate extraction → LLM-primary write policy → commit-now / hold / require-repetition / drop" accent="var(--oc-accent)" compact />
             <Node num="7" label="procedural extraction" desc="Style rules → immediate commit or session-end hold. Safety-conflict requests dropped." accent="var(--oc-accent)" compact />
@@ -69,7 +69,7 @@ export default function TurnPipeline() {
       </div>
 
       <p className={styles.footnote}>
-        Every I/O node has <code>RetryPolicy(max_attempts=2)</code> as defense-in-depth.
+        Every I/O stage has <code>RetryPolicy(max_attempts=2)</code> as defense-in-depth.
       </p>
     </div>
   );

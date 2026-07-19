@@ -4,6 +4,7 @@ sidebar_position: 2
 ---
 
 import TherapyApproach from '@site/src/components/TherapyApproach';
+import AxisCombination from '@site/src/components/AxisCombination';
 
 # Therapeutic Approach
 
@@ -24,7 +25,7 @@ clinical authority.
 | Attuned acknowledgment | Reflects the user's specific situation — no generic empathy |
 | Psychoeducation | Brief normalizing explanations of anxiety, stress, grief, and somatic reactions |
 | Pattern reflection | Connects themes across a conversation, never inventing patterns the user hasn't named |
-| Crisis routing | Region-aware hotline lookup overlaid onto the crisis reply via a dedicated graph node |
+| Crisis routing | Region-aware hotline lookup overlaid onto the crisis reply via the `lookup_crisis_resources` tool attached to the CrisisAgent |
 
 ## What AI should not attempt
 
@@ -37,72 +38,63 @@ clinical authority.
 
 ---
 
-## Response styles vs. therapeutic approaches
+## How the two axes combine
 
-Two axes, selected independently per turn by the LLM dispatcher:
+The interactive panel above lists both axes in full. What matters here is how
+they relate: **every therapeutic turn is one response style overlaid with one
+therapeutic approach.** They are orthogonal and chosen at different points in
+the pipeline.
 
-| Axis | What it is | How many | Selected by |
-|---|---|---|---|
-| **Response style** | Turn shape (`supportive`, `reflective`, `clarifying`, `psychoeducation`, `technique`, `guided_exercise`, `closing`) | 7 | LLM structured-output classifier with local active-flow validation |
-| **Therapeutic approach** | Framework overlay (MI, CBT, ACT, DBT skills, grief support, IPT, PFA) | 7 | LLM dispatcher, alongside the response style |
+<AxisCombination />
 
-**Response styles** shape *what* the agent does this turn.
-**Therapeutic approaches** shape *how* — which knowledge file
-loads into the system prompt. In `technique` style, the approach
-drives the response shape directly (e.g., CBT Socratic questioning
-rhythm or ACT defusion language).
+- **Response style** is the *shape* of the turn — what the agent does. The
+  TherapeuticAgent picks it (LLM-owned), with local validation against active
+  exercise and flow state.
+- **Therapeutic approach** is the *framework* underneath — how it does it,
+  which knowledge file loads into the system prompt. `therapeutic_policy`
+  selects it and passes it through prompt context.
+
+The two compose. A `supportive` reply might run an MI stance; a `technique`
+turn might run CBT. `technique` is the special case where the approach drives
+the response shape directly — it is the only style with no style-specific
+knowledge file, so the approach overlay (CBT's Socratic questioning rhythm,
+ACT's defusion language) carries all the shape.
 
 Two style families have hard structural contracts: `guided_exercise`
 must produce a step (and pin its approach so it can't drift on
 mid-exercise side-turns), `closing` must wrap up. Crisis reply has
-its own contract handled outside this subgraph by the crisis gate.
-The remaining styles form a soft continuum where label fuzziness at
-the edges is by design — the dispatcher prompt teaches the LLM how
-to distinguish them, and ambiguous cases default to `supportive`.
+its own contract handled outside the TherapeuticAgent by the crisis
+gate and the dedicated CrisisAgent. The remaining styles form a
+soft continuum where label fuzziness at the edges is by design — the
+dispatcher prompt teaches the LLM how to distinguish them, and
+ambiguous cases default to `supportive`.
+
+When the crisis gate raises level 1 (ambiguous distress, not a clear
+crisis), the active style — usually `clarifying` — is augmented with
+a `safety_check.md` overlay that forces exactly one safety probe
+before ordinary support resumes. The overlay isn't a separate style;
+it sits on top of whichever style was selected for the turn.
 
 ---
 
 ## Safety contract
 
-The crisis gate is the **first node in the graph** — it runs before
-memory loading, before any operational gate, before any therapeutic
-response.
+Safety is non-negotiable and comes first. Three promises hold on every
+turn regardless of mode or response style:
 
-```mermaid
-flowchart LR
-    classDef gate fill:#EF44441A,stroke:#EF4444,stroke-width:2px
-    classDef safe fill:#10B9811A,stroke:#10B981,stroke-width:2px
-    classDef action fill:#F59E0B1A,stroke:#F59E0B,stroke-width:2px
-    classDef warn  fill:#F59E0B1A,stroke:#F59E0B,stroke-width:2px
+- **Safety runs before everything.** The crisis gate is the first runtime
+  stage — it precedes memory loading, every operational gate, and all
+  therapeutic response generation. No turn reaches the rest of the pipeline
+  without clearing it.
+- **Clear risk bypasses the normal flow.** When the gate detects clear
+  ideation or imminent risk, the turn skips ordinary memory and therapeutic
+  processing entirely and produces a calm, direct acknowledgement paired with
+  verified resources — never evasion or minimizing. Ambiguous distress instead
+  adds one focused safety check on top of the active response.
+- **Crisis events are always logged.** The audit write happens regardless of
+  memory mode — even in incognito — without storing user-identifying text.
 
-    IN["User message"] --> CG{"Crisis gate"}:::gate
-    CG -->|Level 0| TH["Therapeutic pipeline"]:::safe
-    CG -->|Level 1 — ambiguous| SC["safety_check overlay<br/>inside therapeutic"]:::warn
-    CG -->|Level ≥ 2| RES["Crisis Resource Lookup"]:::action
-    RES --> ACK["Crisis reply<br/>(acknowledge + resources)"]:::action
-    ACK --> LOG["Crisis log (always-on)"]:::action
-    LOG --> STOP(("End turn")):::gate
-```
-
-**When the gate raises level ≥ 2 (clear ideation or imminent risk),
-the agent:**
-
-1. **Skips** memory retrieval and the therapeutic subgraph entirely
-   — no operational gates, no mode dispatch.
-2. **Looks up** verified hotlines for the user's inferred region
-   first, so resources land in the same reply.
-3. **Acknowledges** the distress directly and calmly, without
-   evasion or minimizing.
-4. **Asks at most one** safety question (e.g., "Are you safe right
-   now?").
-5. **Logs** the event to the always-on audit store — even in
-   incognito, with `user_id` scrubbed and `session_id` opaqued.
-
-**At level 1 (ambiguous distress with `needs_clarification = true`),
-the agent stays inside the therapeutic branch** but uses the
-`safety_check` response shape to ask one focused safety probe
-before any therapeutic work. Memory retrieval still runs.
-
-See [Crisis Gate](/docs/philosophy/crisis-gate) for the full
-detection architecture (LLM classifier + truth-table normalization +
-audit log).
+These are guarantees about *what* the runtime promises. For *how* the gate
+detects, normalizes, routes, and logs — the LLM classifier, the truth-table
+normalization, the level-by-level routing, and the privacy-scrubbed audit
+record — see [Crisis Gate](/docs/philosophy/crisis-gate).

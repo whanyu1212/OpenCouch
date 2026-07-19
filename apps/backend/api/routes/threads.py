@@ -8,17 +8,21 @@ POST /api/threads/{id}/end: end session and summarize.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 
-from agent.persistence import PersistentAgentRuntime
-from api.dependencies import get_llm_client, get_runtime
+from api.dependencies import get_llm_client, get_runtime_selection
 from api.models import (
+    ApiMemoryMode,
     EndSessionRequest,
+    EndSessionResponse,
     MessageResponse,
-    SessionArcResponse,
+    SessionFeedbackRequest,
+    SessionFeedbackResponse,
     ThreadSessionStatusResponse,
     ThreadSummaryResponse,
 )
+from api.session_feedback import record_runtime_feedback
+from api.session_end import end_runtime_session
 from llm.base import BaseLLMClient
 
 router = APIRouter(prefix="/threads", tags=["threads"])
@@ -26,20 +30,21 @@ router = APIRouter(prefix="/threads", tags=["threads"])
 
 @router.get("", response_model=list[ThreadSummaryResponse])
 async def list_threads(
-    limit: int = 20,
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
+    limit: int = Query(default=20, ge=1, le=100),
+    memory_mode: ApiMemoryMode | None = Query(default=None),
 ) -> list[ThreadSummaryResponse]:
     """List persisted threads, most recent first.
 
     Args:
         limit: Maximum number of threads to return.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for thread lookup.
 
     Returns:
         Persisted thread summaries.
     """
 
-    summaries = await runtime.list_threads(limit=limit)
+    selection = get_runtime_selection(memory_mode)
+    summaries = await selection.runtime.list_threads(limit=limit)
     return [
         ThreadSummaryResponse(
             thread_id=s.thread_id,
@@ -54,25 +59,29 @@ async def list_threads(
 @router.get("/{thread_id}/state")
 async def get_thread_state(
     thread_id: str,
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
+    memory_mode: ApiMemoryMode | None = Query(default=None),
 ) -> dict:
-    """Return the raw graph state for a thread.
+    """Return the raw persisted runtime state for a thread.
 
-    This is the API equivalent of the CLI's ``/debug state``
-    command. Returns the full state dict including diagnostics,
-    routing, memory, crisis assessment, and transcript.
+    This is a local developer/debug endpoint equivalent to the TUI's
+    ``/debug state`` command. It returns implementation-level state,
+    including diagnostics, routing, memory, crisis assessment, and
+    transcript. Product clients should prefer the typed chat, history,
+    session-status, and memory endpoints instead of treating this raw
+    payload as a stable public contract.
 
     Returns 404 if the thread has no persisted state.
 
     Args:
         thread_id: Thread identifier to inspect.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for thread lookup.
 
     Returns:
-        JSON-serializable graph state.
+        JSON-serializable persisted runtime state.
     """
 
-    state = await runtime.get_state(thread_id)
+    selection = get_runtime_selection(memory_mode)
+    state = await selection.runtime.get_state(thread_id)
     if state is None:
         raise HTTPException(status_code=404, detail=f"No state for thread {thread_id}")
 
@@ -88,7 +97,7 @@ async def get_thread_state(
 @router.get("/{thread_id}/history", response_model=list[MessageResponse])
 async def get_thread_history(
     thread_id: str,
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
+    memory_mode: ApiMemoryMode | None = Query(default=None),
 ) -> list[MessageResponse]:
     """Return the transcript for a thread.
 
@@ -100,13 +109,14 @@ async def get_thread_history(
 
     Args:
         thread_id: Thread identifier to inspect.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for thread lookup.
 
     Returns:
         Transcript messages for the thread.
     """
 
-    messages = await runtime.get_history(thread_id)
+    selection = get_runtime_selection(memory_mode)
+    messages = await selection.runtime.get_history(thread_id)
     return [
         MessageResponse(
             role=m.role.value,
@@ -120,30 +130,30 @@ async def get_thread_history(
 @router.get("/{thread_id}/session-status", response_model=ThreadSessionStatusResponse)
 async def get_thread_session_status(
     thread_id: str,
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
+    memory_mode: ApiMemoryMode | None = Query(default=None),
 ) -> ThreadSessionStatusResponse:
     """Return whether this thread currently has an active session.
 
     Args:
         thread_id: Thread identifier to inspect.
-        runtime: Shared persistent agent runtime.
+        memory_mode: Optional runtime selector for thread lookup.
 
     Returns:
         Active-session status for the thread.
     """
 
+    selection = get_runtime_selection(memory_mode)
     return ThreadSessionStatusResponse(
-        has_active_session=await runtime.has_active_session(thread_id)
+        has_active_session=await selection.runtime.has_active_session(thread_id)
     )
 
 
-@router.post("/{thread_id}/end")
+@router.post("/{thread_id}/end", response_model=EndSessionResponse)
 async def end_session(
     thread_id: str,
     body: EndSessionRequest = Body(default_factory=EndSessionRequest),
-    runtime: PersistentAgentRuntime = Depends(get_runtime),
     llm_client: BaseLLMClient | None = Depends(get_llm_client),
-) -> SessionArcResponse | dict:
+) -> EndSessionResponse:
     """End the session for a thread and produce an episodic summary.
 
     Triggers the session summarizer which reads the full transcript
@@ -160,14 +170,13 @@ async def end_session(
     and summarization runs unchanged. Feedback write failures are
     best-effort and never block summarization.
 
-    The response shape is unchanged from prior versions: feedback
-    write status is not surfaced. Feedback persistence is orthogonal
-    to summarization.
+    The response always includes a stable finalization envelope.
+    Feedback write status is not surfaced. Feedback persistence is
+    orthogonal to summarization.
 
     Args:
         thread_id: Thread identifier to end.
         body: Optional session-ending request body.
-        runtime: Shared persistent agent runtime.
         llm_client: Optional control-plane LLM client.
 
     Returns:
@@ -175,29 +184,51 @@ async def end_session(
         no summary was produced.
     """
 
-    # Optional best-effort feedback capture. Runtime outages do not block summary.
-    if body.feedback is not None:
-        await runtime.record_session_feedback(
-            thread_id,
-            label=body.feedback,
-            source="api_end",
+    selection = get_runtime_selection(body.memory_mode)
+    result = await end_runtime_session(
+        runtime=selection.runtime,
+        thread_id=thread_id,
+        feedback=body.feedback,
+        llm_client=llm_client,
+        memory_mode=selection.memory_mode,
+    )
+
+    if not result.finalized:
+        return EndSessionResponse(
+            finalized=False,
+            summary=None,
+            detail=result.detail,
         )
 
-    # Existing summarization flow.
-    arc = await runtime.end_session(thread_id, llm_client=llm_client)
-
-    if arc is None:
-        return {
-            "summary": None,
-            "detail": "No summary produced (session too short, no LLM, or incognito mode).",
-        }
-
-    return SessionArcResponse(
-        summary=arc.summary,
-        themes=list(arc.primary_themes),
-        mood_opened=arc.mood_arc.opened,
-        mood_closed=arc.mood_arc.closed,
-        turn_count=arc.turn_count,
-        open_loops=list(arc.open_loops),
-        resolved_threads=list(arc.resolved_threads),
+    assert result.summary is not None
+    assert result.mood_opened is not None
+    assert result.mood_closed is not None
+    assert result.turn_count is not None
+    return EndSessionResponse(
+        finalized=True,
+        summary=result.summary,
+        detail=result.detail,
+        themes=result.themes,
+        mood_opened=result.mood_opened,
+        mood_closed=result.mood_closed,
+        turn_count=result.turn_count,
+        open_loops=result.open_loops,
+        resolved_threads=result.resolved_threads,
     )
+
+
+@router.post("/{thread_id}/feedback", response_model=SessionFeedbackResponse)
+async def record_session_feedback(
+    thread_id: str,
+    body: SessionFeedbackRequest,
+) -> SessionFeedbackResponse:
+    """Record explicit post-session feedback without finalizing the session again."""
+
+    selection = get_runtime_selection(body.memory_mode)
+    recorded = await record_runtime_feedback(
+        runtime=selection.runtime,
+        thread_id=thread_id,
+        feedback=body.feedback,
+        modality=body.modality,
+    )
+    return SessionFeedbackResponse(recorded=recorded)
