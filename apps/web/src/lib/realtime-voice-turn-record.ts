@@ -44,7 +44,7 @@ type TrackedTurn = RealtimeVoiceTrackedTurn & {
   responseIds: Set<string>;
   activeResponseIds: Set<string>;
   activeToolCallCount: number;
-  expectedResponseCount: number;
+  expectedResponseEventIds: Set<string>;
   recording: boolean;
 };
 
@@ -59,7 +59,8 @@ export class RealtimeVoiceTurnTracker {
   private readonly turns: TrackedTurn[] = [];
   private readonly responseTurns = new Map<string, TrackedTurn>();
   private readonly userItemTurns = new Map<string, TrackedTurn>();
-  private readonly expectedResponseTurns: TrackedTurn[] = [];
+  private readonly expectedResponseTurns = new Map<string, TrackedTurn>();
+  private readonly ignoredResponseIds = new Set<string>();
 
   constructor(
     createClientTurnId: () => string = () => globalThis.crypto.randomUUID()
@@ -67,13 +68,24 @@ export class RealtimeVoiceTurnTracker {
     this.createClientTurnId = createClientTurnId;
   }
 
-  responseCreated(responseId: string): string {
+  responseCreated(
+    responseId: string,
+    requestEventId?: string
+  ): string | undefined {
     const existing = this.responseTurns.get(responseId);
     if (existing) return existing.clientTurnId;
 
-    const expected = this.nextExpectedResponseTurn();
+    if (requestEventId) {
+      const expected = this.takeExpectedResponse(requestEventId);
+      if (!expected) {
+        this.ignoredResponseIds.add(responseId);
+        return undefined;
+      }
+      this.attachResponse(expected, responseId);
+      return expected.clientTurnId;
+    }
+
     const turn =
-      expected ??
       this.turns.find(
         (candidate) => candidate.userItemId && candidate.responseIds.size === 0
       ) ??
@@ -100,7 +112,12 @@ export class RealtimeVoiceTurnTracker {
   }
 
   responseFinished(responseId: string): void {
+    if (this.ignoredResponseIds.delete(responseId)) return;
     this.responseTurns.get(responseId)?.activeResponseIds.delete(responseId);
+  }
+
+  isResponseIgnored(responseId: string | undefined): boolean {
+    return Boolean(responseId && this.ignoredResponseIds.has(responseId));
   }
 
   addFinalUserTranscript({
@@ -168,11 +185,29 @@ export class RealtimeVoiceTurnTracker {
     if (turn) turn.toolCalls.push(toolCall);
   }
 
-  expectNextResponseForTurn(clientTurnId: string | undefined): void {
+  expectNextResponseForTurn(
+    clientTurnId: string | undefined,
+    requestEventId: string
+  ): boolean {
     const turn = this.turnById(clientTurnId);
-    if (turn) {
-      turn.expectedResponseCount += 1;
-      this.expectedResponseTurns.push(turn);
+    if (!turn) return false;
+    turn.expectedResponseEventIds.add(requestEventId);
+    this.expectedResponseTurns.set(requestEventId, turn);
+    return true;
+  }
+
+  failExpectedResponse(requestEventId: string): boolean {
+    return this.takeExpectedResponse(requestEventId) !== undefined;
+  }
+
+  transportClosed(): void {
+    for (const turn of this.turns) {
+      turn.awaitingInitialResponse = false;
+      turn.activeResponseIds.clear();
+      for (const requestEventId of turn.expectedResponseEventIds) {
+        this.expectedResponseTurns.delete(requestEventId);
+      }
+      turn.expectedResponseEventIds.clear();
     }
   }
 
@@ -244,6 +279,7 @@ export class RealtimeVoiceTurnTracker {
     responseId: string | undefined,
     preferWithoutAssistant: boolean
   ): TrackedTurn | undefined {
+    if (responseId && this.ignoredResponseIds.has(responseId)) return undefined;
     if (responseId) {
       const existing = this.responseTurns.get(responseId);
       if (existing) return existing;
@@ -268,7 +304,7 @@ export class RealtimeVoiceTurnTracker {
       responseIds: new Set(),
       activeResponseIds: new Set(),
       activeToolCallCount: 0,
-      expectedResponseCount: 0,
+      expectedResponseEventIds: new Set(),
       recording: false,
     };
     this.turns.push(turn);
@@ -282,24 +318,21 @@ export class RealtimeVoiceTurnTracker {
     this.responseTurns.set(responseId, turn);
   }
 
-  private nextExpectedResponseTurn(): TrackedTurn | undefined {
-    while (this.expectedResponseTurns.length > 0) {
-      const turn = this.expectedResponseTurns.shift();
-      if (turn && this.turns.includes(turn)) {
-        turn.expectedResponseCount = Math.max(0, turn.expectedResponseCount - 1);
-        return turn;
-      }
-    }
-    return undefined;
+  private takeExpectedResponse(requestEventId: string): TrackedTurn | undefined {
+    const turn = this.expectedResponseTurns.get(requestEventId);
+    if (!turn) return undefined;
+    this.expectedResponseTurns.delete(requestEventId);
+    turn.expectedResponseEventIds.delete(requestEventId);
+    return this.turns.includes(turn) ? turn : undefined;
   }
 
   private removeExpectedResponseTurn(turn: TrackedTurn): void {
-    for (let index = this.expectedResponseTurns.length - 1; index >= 0; index -= 1) {
-      if (this.expectedResponseTurns[index] === turn) {
-        this.expectedResponseTurns.splice(index, 1);
+    for (const requestEventId of turn.expectedResponseEventIds) {
+      if (this.expectedResponseTurns.get(requestEventId) === turn) {
+        this.expectedResponseTurns.delete(requestEventId);
       }
     }
-    turn.expectedResponseCount = 0;
+    turn.expectedResponseEventIds.clear();
   }
 
   private removeTurn(turn: TrackedTurn): void {
@@ -326,7 +359,7 @@ export class RealtimeVoiceTurnTracker {
       !turn.awaitingInitialResponse &&
       turn.activeResponseIds.size === 0 &&
       turn.activeToolCallCount === 0 &&
-      turn.expectedResponseCount === 0
+      turn.expectedResponseEventIds.size === 0
     );
   }
 }

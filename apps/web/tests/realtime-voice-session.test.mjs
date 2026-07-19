@@ -309,11 +309,11 @@ test("maps tool follow-up responses and results to the original turn", () => {
     status: "completed",
     output: { answer: "verified" },
   });
-  tracker.expectNextResponseForTurn(correlatedTurnId);
+  tracker.expectNextResponseForTurn(correlatedTurnId, "response-create-1");
   tracker.toolCallFinished(correlatedTurnId);
   tracker.responseFinished("response-tool-call");
   assert.equal(tracker.markNextRecordableTurn(), null);
-  tracker.responseCreated("response-tool-follow-up");
+  tracker.responseCreated("response-tool-follow-up", "response-create-1");
   const followUpTurnId = tracker.correlateToolCall("response-tool-follow-up");
   tracker.toolCallStarted(followUpTurnId);
   tracker.addToolResult(followUpTurnId, {
@@ -321,10 +321,10 @@ test("maps tool follow-up responses and results to the original turn", () => {
     status: "completed",
     output: { saved: true },
   });
-  tracker.expectNextResponseForTurn(followUpTurnId);
+  tracker.expectNextResponseForTurn(followUpTurnId, "response-create-2");
   tracker.toolCallFinished(followUpTurnId);
   tracker.responseFinished("response-tool-follow-up");
-  tracker.responseCreated("response-final-follow-up");
+  tracker.responseCreated("response-final-follow-up", "response-create-2");
   tracker.addFinalAssistantTranscript({
     responseId: "response-final-follow-up",
     text: "Here is the verified answer.",
@@ -425,6 +425,115 @@ test("does not let an incomplete wait-for-user turn block a later turn", () => {
 
   assert.equal(tracker.markNextRecordableTurn().clientTurnId, later.clientTurnId);
   assert.deepEqual(tracker.priorTranscriptForTurn(later.clientTurnId), []);
+});
+
+test("records a finalized transcript when transport closes before response done", () => {
+  const tracker = createTurnTracker();
+  const turn = tracker.addFinalUserTranscript({
+    itemId: "user-1",
+    text: "final question",
+  });
+  tracker.responseCreated("response-1");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-1",
+    text: "final answer",
+  });
+
+  assert.equal(tracker.markNextRecordableTurn(), null);
+  tracker.transportClosed();
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: turn.clientTurnId,
+    userText: "final question",
+    assistantText: "final answer",
+    toolCalls: [],
+  });
+});
+
+test("drops a user-only turn when transport closes", () => {
+  const tracker = createTurnTracker();
+  tracker.addFinalUserTranscript({ itemId: "user-1", text: "unfinished" });
+  tracker.responseCreated("response-1");
+
+  tracker.transportClosed();
+  assert.equal(tracker.markNextRecordableTurn(), null);
+});
+
+test("releases only the rejected follow-up response expectation", () => {
+  const tracker = createTurnTracker();
+  const turn = tracker.addFinalUserTranscript({
+    itemId: "user-1",
+    text: "look this up",
+  });
+  tracker.responseCreated("response-tool");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-tool",
+    text: "I could not finish the lookup.",
+  });
+  tracker.expectNextResponseForTurn(turn.clientTurnId, "response-create-1");
+  tracker.expectNextResponseForTurn(turn.clientTurnId, "response-create-2");
+  tracker.responseFinished("response-tool");
+
+  assert.equal(tracker.failExpectedResponse("unrelated-event"), false);
+  assert.equal(tracker.failExpectedResponse("response-create-1"), true);
+  assert.equal(tracker.markNextRecordableTurn(), null);
+  assert.equal(tracker.failExpectedResponse("response-create-2"), true);
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: turn.clientTurnId,
+    userText: "look this up",
+    assistantText: "I could not finish the lookup.",
+    toolCalls: [],
+  });
+});
+
+test("quarantines a late response after its expectation expires", () => {
+  const tracker = createTurnTracker();
+  const turn = tracker.addFinalUserTranscript({
+    itemId: "user-1",
+    text: "look this up",
+  });
+  tracker.responseCreated("response-tool");
+  tracker.expectNextResponseForTurn(turn.clientTurnId, "response-create-1");
+  tracker.responseFinished("response-tool");
+  tracker.failExpectedResponse("response-create-1");
+
+  assert.equal(
+    tracker.responseCreated("response-late", "response-create-1"),
+    undefined
+  );
+  assert.equal(tracker.isResponseIgnored("response-late"), true);
+  assert.equal(
+    tracker.addFinalAssistantTranscript({
+      responseId: "response-late",
+      text: "late answer",
+    }),
+    undefined
+  );
+  tracker.responseFinished("response-late");
+  assert.equal(tracker.isResponseIgnored("response-late"), false);
+});
+
+test("terminal transport closure preserves an active tool barrier", () => {
+  const tracker = createTurnTracker();
+  const turn = tracker.addFinalUserTranscript({
+    itemId: "user-1",
+    text: "look this up",
+  });
+  tracker.responseCreated("response-tool");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-tool",
+    text: "I started the lookup.",
+  });
+  tracker.toolCallStarted(turn.clientTurnId);
+
+  tracker.transportClosed();
+  assert.equal(tracker.markNextRecordableTurn(), null);
+  tracker.toolCallFinished(turn.clientTurnId);
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: turn.clientTurnId,
+    userText: "look this up",
+    assistantText: "I started the lookup.",
+    toolCalls: [],
+  });
 });
 
 test("creates follow-up responses after actionable tools only", () => {

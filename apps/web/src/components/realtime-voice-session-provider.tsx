@@ -371,6 +371,9 @@ export function RealtimeVoiceSessionProvider({
           }
         },
         onEnded: (response) => {
+          handleRef.current = null;
+          setHasRetryHandle(false);
+          voiceSetRefs({ connection: null });
           handleEnded(
             buildEndedSessionResult({
               threadId,
@@ -382,6 +385,7 @@ export function RealtimeVoiceSessionProvider({
         onAgentSpeaking: setVoiceAgentSpeaking,
         onReadyToSpeak: setVoiceReadyToSpeak,
         onError: (error) => setVoiceError(error.message),
+        onFinalizationFailed: (error) => markFinalizationFailed(error.message),
       });
 
       handleRef.current = handle;
@@ -408,6 +412,7 @@ export function RealtimeVoiceSessionProvider({
     clearVoiceFinalization,
     clearVoiceTranscripts,
     handleEnded,
+    markFinalizationFailed,
     sessionMode,
     setLastEndedSession,
     setVoiceAgentSpeaking,

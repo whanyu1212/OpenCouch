@@ -86,10 +86,16 @@ test("omits response IDs when assistant events do not provide one", () => {
 test("parses nested response IDs when responses are created", () => {
   const parsed = parseRealtimeServerEvent({
     type: "response.created",
-    response: { id: "response-1" },
+    response: {
+      id: "response-1",
+      metadata: {
+        opencouch_response_request_id: "response-create-1",
+      },
+    },
   });
 
   assert.equal(parsed.responseId, "response-1");
+  assert.equal(parsed.responseRequestId, "response-create-1");
   assert.equal(parsed.agentSpeaking, true);
   assert.equal(parsed.readyToSpeak, false);
 });
@@ -166,4 +172,26 @@ test("builds response create events with app-owned instructions", () => {
       instructions: "Call answer_grounded_lookup first.",
     },
   });
+});
+
+test("correlates response create events with server errors", () => {
+  assert.deepEqual(buildResponseCreateEvent(null, "response-create-1"), {
+    type: "response.create",
+    event_id: "response-create-1",
+    response: {
+      metadata: {
+        opencouch_response_request_id: "response-create-1",
+      },
+    },
+  });
+
+  const parsed = parseRealtimeServerEvent({
+    type: "error",
+    error: {
+      event_id: "response-create-1",
+      message: "Response creation rejected.",
+    },
+  });
+  assert.equal(parsed.errorEventId, "response-create-1");
+  assert.equal(parsed.errorMessage, "Response creation rejected.");
 });

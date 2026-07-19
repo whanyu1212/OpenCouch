@@ -72,6 +72,7 @@ export interface RealtimeVoiceSessionOptions {
   onAgentSpeaking?: (speaking: boolean) => void;
   onReadyToSpeak?: (ready: boolean) => void;
   onError?: (error: Error) => void;
+  onFinalizationFailed?: (error: Error) => void;
 }
 
 export interface RealtimeVoiceSessionHandle {
@@ -93,6 +94,7 @@ type UserTranscriptEvidenceWaiter = {
 };
 
 const USER_TRANSCRIPT_EVIDENCE_TIMEOUT_MS = 2500;
+const FOLLOW_UP_RESPONSE_TIMEOUT_MS = 10_000;
 
 export async function connectRealtimeVoiceSession(
   options: RealtimeVoiceSessionOptions
@@ -105,10 +107,15 @@ export async function connectRealtimeVoiceSession(
   const disconnectCoordinator = new RealtimeVoiceDisconnectCoordinator();
 
   const handledCallIds = new Set<string>();
+  const pendingToolExecutions = new Set<Promise<void>>();
   const transcriptLog: TranscriptLogEntry[] = [];
   const turnTracker = new RealtimeVoiceTurnTracker();
   const userTranscriptDrafts = new Map<string, string>();
   const userTranscriptEvidenceWaiters: UserTranscriptEvidenceWaiter[] = [];
+  const followUpResponseTimeouts = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
   let latestUserTranscriptDraft = "";
   let priorMessageCount = 0;
   let pendingTurnRecording: Promise<void> | null = null;
@@ -121,23 +128,34 @@ export async function connectRealtimeVoiceSession(
     options.onAgentSpeaking?.(false);
     options.onReadyToSpeak?.(false);
     if (!disconnecting) {
-      setStatus("disconnected");
+      void disconnect().catch((error) => {
+        const normalized =
+          error instanceof Error
+            ? error
+            : new Error("Could not finalize disconnected Realtime voice session.");
+        options.onError?.(normalized);
+        options.onFinalizationFailed?.(normalized);
+        setStatus("disconnected");
+      });
     }
   };
 
-  const disconnect = ({
+  function disconnect({
     finalize = true,
-  }: { finalize?: boolean } = {}): Promise<void> =>
-    disconnectCoordinator.disconnect(async () => {
+  }: { finalize?: boolean } = {}): Promise<void> {
+    return disconnectCoordinator.disconnect(async () => {
       disconnecting = true;
       try {
+        if (finalize && !finalized) setStatus("finalizing");
         dataChannel?.close();
         peerConnection?.close();
         mediaStream?.getTracks().forEach((track) => track.stop());
         options.audioElement.srcObject = null;
+        await Promise.allSettled([...pendingToolExecutions]);
+        clearFollowUpResponseTimeouts();
+        turnTracker.transportClosed();
 
         if (finalize && !finalized) {
-          setStatus("finalizing");
           const response = await finalizeAfterPendingRealtimeVoiceTurn(
             maybeRecordTurn(),
             () => endRealtimeVoiceSession(options.threadId, options.memoryMode)
@@ -153,6 +171,7 @@ export async function connectRealtimeVoiceSession(
         disconnecting = false;
       }
     });
+  }
 
   try {
     setStatus("requesting_session");
@@ -270,7 +289,10 @@ export async function connectRealtimeVoiceSession(
       turnTracker.userInputCommitted(parsed.userItemId);
     }
     if (parsed.type === "response.created" && parsed.responseId) {
-      turnTracker.responseCreated(parsed.responseId);
+      if (parsed.responseRequestId) {
+        clearFollowUpResponseTimeout(parsed.responseRequestId);
+      }
+      turnTracker.responseCreated(parsed.responseId, parsed.responseRequestId);
     }
 
     if (parsed.agentSpeaking !== undefined) {
@@ -282,13 +304,23 @@ export async function connectRealtimeVoiceSession(
     if (parsed.errorMessage) {
       options.onError?.(new Error(parsed.errorMessage));
     }
+    if (parsed.errorEventId) {
+      releaseFollowUpResponseExpectation(parsed.errorEventId);
+    }
     if (parsed.transcript) {
       handleTranscriptUpdate(parsed.transcript);
       options.onTranscript?.(parsed.transcript);
     }
 
     for (const call of parsed.functionCalls) {
-      await executeToolCall(call);
+      if (turnTracker.isResponseIgnored(call.responseId)) continue;
+      const execution = executeToolCall(call);
+      pendingToolExecutions.add(execution);
+      try {
+        await execution;
+      } finally {
+        pendingToolExecutions.delete(execution);
+      }
     }
     if (parsed.type === "response.done" && parsed.responseId) {
       turnTracker.responseFinished(parsed.responseId);
@@ -430,12 +462,12 @@ export async function connectRealtimeVoiceSession(
           output: result.output,
         });
       }
+      if (disconnecting || dataChannel.readyState !== "open") return;
       dataChannel.send(
         serializeRealtimeEvent(buildFunctionCallOutputEvent(call.callId, result.output))
       );
       if (shouldCreateResponseAfterRealtimeVoiceTool(call.name)) {
-        dataChannel.send(serializeRealtimeEvent(buildResponseCreateEvent()));
-        turnTracker.expectNextResponseForTurn(clientTurnId);
+        sendFollowUpResponse(clientTurnId);
       }
       options.onToolEvent?.({
         callId: call.callId,
@@ -454,14 +486,15 @@ export async function connectRealtimeVoiceSession(
           error: message,
         });
       }
-      dataChannel.send(
-        serializeRealtimeEvent(
-          buildFunctionCallOutputEvent(call.callId, { error: message })
-        )
-      );
-      if (shouldCreateResponseAfterRealtimeVoiceTool(call.name)) {
-        dataChannel.send(serializeRealtimeEvent(buildResponseCreateEvent()));
-        turnTracker.expectNextResponseForTurn(clientTurnId);
+      if (!disconnecting && dataChannel.readyState === "open") {
+        dataChannel.send(
+          serializeRealtimeEvent(
+            buildFunctionCallOutputEvent(call.callId, { error: message })
+          )
+        );
+        if (shouldCreateResponseAfterRealtimeVoiceTool(call.name)) {
+          sendFollowUpResponse(clientTurnId);
+        }
       }
       options.onToolEvent?.({
         callId: call.callId,
@@ -474,6 +507,47 @@ export async function connectRealtimeVoiceSession(
       turnTracker.toolCallFinished(clientTurnId);
       void maybeRecordTurn().catch(() => undefined);
     }
+  }
+
+  function sendFollowUpResponse(clientTurnId: string | undefined): void {
+    if (!dataChannel || dataChannel.readyState !== "open") return;
+    if (!clientTurnId) {
+      dataChannel.send(serializeRealtimeEvent(buildResponseCreateEvent()));
+      return;
+    }
+
+    const requestEventId = `response-create-${globalThis.crypto.randomUUID()}`;
+    dataChannel.send(
+      serializeRealtimeEvent(buildResponseCreateEvent(null, requestEventId))
+    );
+    if (!turnTracker.expectNextResponseForTurn(clientTurnId, requestEventId)) return;
+
+    followUpResponseTimeouts.set(
+      requestEventId,
+      setTimeout(() => {
+        releaseFollowUpResponseExpectation(requestEventId);
+      }, FOLLOW_UP_RESPONSE_TIMEOUT_MS)
+    );
+  }
+
+  function releaseFollowUpResponseExpectation(requestEventId: string): void {
+    clearFollowUpResponseTimeout(requestEventId);
+    if (turnTracker.failExpectedResponse(requestEventId)) {
+      void maybeRecordTurn().catch(() => undefined);
+    }
+  }
+
+  function clearFollowUpResponseTimeout(requestEventId: string): void {
+    const timeout = followUpResponseTimeouts.get(requestEventId);
+    if (timeout) clearTimeout(timeout);
+    followUpResponseTimeouts.delete(requestEventId);
+  }
+
+  function clearFollowUpResponseTimeouts(): void {
+    for (const timeout of followUpResponseTimeouts.values()) {
+      clearTimeout(timeout);
+    }
+    followUpResponseTimeouts.clear();
   }
 
   function latestUserTranscriptEvidence(): string {

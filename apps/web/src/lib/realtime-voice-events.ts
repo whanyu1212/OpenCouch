@@ -20,15 +20,19 @@ export interface RealtimeFunctionCall {
 export interface ParsedRealtimeServerEvent {
   type: string;
   responseId?: string;
+  responseRequestId?: string;
   userItemId?: string;
   transcript?: RealtimeTranscriptUpdate;
   functionCalls: RealtimeFunctionCall[];
   agentSpeaking?: boolean;
   readyToSpeak?: boolean;
   errorMessage?: string;
+  errorEventId?: string;
 }
 
 type JsonRecord = Record<string, unknown>;
+
+const RESPONSE_REQUEST_METADATA_KEY = "opencouch_response_request_id";
 
 export function parseRealtimeServerEvent(raw: unknown): ParsedRealtimeServerEvent {
   const event = asRecord(raw);
@@ -84,8 +88,13 @@ export function parseRealtimeServerEvent(raw: unknown): ParsedRealtimeServerEven
     parsed.agentSpeaking = false;
     parsed.readyToSpeak = true;
   } else if (type === "response.created") {
-    const responseId = readString(asRecord(event.response).id);
+    const response = asRecord(event.response);
+    const responseId = readString(response.id);
+    const responseRequestId = readString(
+      asRecord(response.metadata)[RESPONSE_REQUEST_METADATA_KEY]
+    );
     if (responseId) parsed.responseId = responseId;
+    if (responseRequestId) parsed.responseRequestId = responseRequestId;
     parsed.agentSpeaking = true;
     parsed.readyToSpeak = false;
   } else if (
@@ -100,6 +109,7 @@ export function parseRealtimeServerEvent(raw: unknown): ParsedRealtimeServerEven
     parsed.readyToSpeak = false;
   } else if (type === "error") {
     parsed.errorMessage = readErrorMessage(event);
+    parsed.errorEventId = readString(asRecord(event.error).event_id);
   }
 
   return parsed;
@@ -119,14 +129,24 @@ export function buildFunctionCallOutputEvent(
   };
 }
 
-export function buildResponseCreateEvent(instructions?: string | null): JsonRecord {
+export function buildResponseCreateEvent(
+  instructions?: string | null,
+  requestEventId?: string
+): JsonRecord {
   const trimmedInstructions = instructions?.trim();
-  if (!trimmedInstructions) return { type: "response.create" };
+  if (!trimmedInstructions && !requestEventId) return { type: "response.create" };
+
+  const response: JsonRecord = {};
+  if (trimmedInstructions) response.instructions = trimmedInstructions;
+  if (requestEventId) {
+    response.metadata = {
+      [RESPONSE_REQUEST_METADATA_KEY]: requestEventId,
+    };
+  }
   return {
     type: "response.create",
-    response: {
-      instructions: trimmedInstructions,
-    },
+    ...(requestEventId ? { event_id: requestEventId } : {}),
+    response,
   };
 }
 
