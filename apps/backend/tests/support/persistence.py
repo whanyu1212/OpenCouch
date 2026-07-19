@@ -312,7 +312,6 @@ def runtime_storage_paths(tmp_path: Path) -> RuntimeStoragePaths:
     """Return SDK text-session paths for a persistence runtime test."""
 
     return RuntimeStoragePaths(
-        sqlite_path=tmp_path / "threads.sqlite3",
         text_session_sqlite_path=tmp_path / "text_sessions.sqlite3",
     )
 
@@ -320,7 +319,7 @@ def runtime_storage_paths(tmp_path: Path) -> RuntimeStoragePaths:
 def in_memory_runtime_storage_paths() -> RuntimeStoragePaths:
     """Return an in-memory SDK text-session path for runtime tests."""
 
-    return RuntimeStoragePaths(sqlite_path=":memory:")
+    return RuntimeStoragePaths(text_session_sqlite_path=":memory:")
 
 
 def _default_cross_restart_extraction_result() -> ExtractionResult:

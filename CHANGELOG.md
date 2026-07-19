@@ -8,6 +8,15 @@
 - Left old `memory.sqlite3` files untouched with no importer; archived files
   require an older OpenCouch release or an external read-only SQLite tool, while
   the separate OpenAI Agents SDK `text_sessions.sqlite3` store remains preserved
+- Removed the deprecated flat `PersistentAgentRuntime` constructor arguments;
+  runtime construction now accepts only the keyword-only `storage_paths`,
+  `persistence_config`, `dependencies`, and `behavior_config` groups
+- Removed obsolete thread, crisis-log, and feedback SQLite path constants and
+  fields. `RuntimeStoragePaths` now contains only `text_session_sqlite_path`,
+  which belongs to the separate OpenAI SDK conversation-history store
+- Renamed the TUI `--sqlite-path` option to
+  `--text-session-sqlite-path`; removed flat constructor keywords and the old
+  TUI option are now rejected
 
 ## 2026-05-13 — Therapeutic Repair, Resource Routing, and Voice Policy Alignment
 

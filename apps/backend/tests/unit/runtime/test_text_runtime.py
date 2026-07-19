@@ -26,7 +26,6 @@ def test_persistent_runtime_defaults_to_openai_text_runtime() -> None:
 
     runtime = _runtime(
         storage_paths=RuntimeStoragePaths(
-            sqlite_path=":memory:",
             text_session_sqlite_path=":memory:",
         ),
         persistence_config=RuntimePersistenceConfig(
@@ -44,7 +43,6 @@ async def test_prewarm_initializes_openai_text_runtime(tmp_path) -> None:
 
     async with _runtime(
         storage_paths=RuntimeStoragePaths(
-            sqlite_path=tmp_path / "threads.sqlite3",
             text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
         ),
         persistence_config=RuntimePersistenceConfig(
@@ -62,7 +60,6 @@ async def test_runtime_reset_clears_runtime_and_sdk_session_state(tmp_path) -> N
 
     async with _runtime(
         storage_paths=RuntimeStoragePaths(
-            sqlite_path=tmp_path / "threads.sqlite3",
             text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
         ),
         persistence_config=RuntimePersistenceConfig(
@@ -94,7 +91,6 @@ async def test_runtime_history_falls_back_to_runtime_state_transcript(tmp_path) 
 
     async with _runtime(
         storage_paths=RuntimeStoragePaths(
-            sqlite_path=tmp_path / "threads.sqlite3",
             text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
         ),
         persistence_config=RuntimePersistenceConfig(

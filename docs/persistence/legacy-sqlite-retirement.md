@@ -4,7 +4,9 @@
 
 Postgres is the only supported durable backend for application-owned runtime state, active sessions, long-term memory, crisis audit, and session feedback. All legacy application-owned SQLite implementations, including `SqliteMemoryStore` and the built-in SQLite memory tool paths, have been removed. In-memory stores remain available for incognito and explicit tests. OpenAI SDK text sessions are a separate storage surface and are preserved by memory retirement.
 
-Source of truth: `apps/backend/agent/runtime/configuration.py` (`_LEGACY_SQLITE_DURABLE_MESSAGE` and `_validate_legacy_sqlite_durable_allowed`).
+Source of truth: `apps/backend/agent/runtime/configuration.py`
+(`RuntimePersistenceConfig`, `RuntimeStoragePaths`, and
+`validate_runtime_configuration`).
 
 ## Audit methodology
 
@@ -14,9 +16,9 @@ The inventory was produced by tracing application runtime, audit, feedback, and 
 
 | Subsystem | Legacy SQLite implementation | Supported durable implementation | Selection path | Current role | Target |
 |---|---|---|---|---|---|
-| Thread persistence: runtime state and active sessions | Removed in #247 | `PostgresRuntimeStateStore`; `PostgresActiveSessionStore` | Durable threads use `thread_persistence_backend="postgres"`; incognito and explicitly non-durable tests use `InMemoryRuntimeStateStore` with `NullActiveSessionStore` | Postgres-only durable persistence; legacy SQLite selection is rejected | Remove obsolete thread SQLite path/configuration compatibility during final cleanup |
-| Crisis audit | Removed in #247 | `PostgresCrisisLogBackend` | Persistent mode requires Postgres; incognito and explicit tests use `InMemoryCrisisLogBackend` | Postgres-only durable persistence | Remove inert constructor/path compatibility through #266 |
-| Session feedback | Removed in #247 | `PostgresSessionFeedbackBackend` | Persistent mode requires Postgres; incognito and explicit tests use `InMemorySessionFeedbackBackend` | Postgres-only durable persistence | Remove inert constructor/path compatibility through #266 |
+| Thread persistence: runtime state and active sessions | Removed in #247 | `PostgresRuntimeStateStore`; `PostgresActiveSessionStore` | Durable threads use `thread_persistence_backend="postgres"`; incognito and explicitly non-durable tests use `InMemoryRuntimeStateStore` with `NullActiveSessionStore` | Postgres-only durable persistence; legacy SQLite selection is rejected | Complete |
+| Crisis audit | Removed in #247 | `PostgresCrisisLogBackend` | Persistent mode requires Postgres; incognito and explicit tests use `InMemoryCrisisLogBackend` | Postgres-only durable persistence | Complete |
+| Session feedback | Removed in #247 | `PostgresSessionFeedbackBackend` | Persistent mode requires Postgres; incognito and explicit tests use `InMemorySessionFeedbackBackend` | Postgres-only durable persistence | Complete |
 | Long-term memory | Removed in PR3 of #233 | `PostgresMemoryStore` | Persistent memory uses Postgres; in-memory stores cover incognito/tests | Postgres-only supported durable persistence; no built-in SQLite access remains | Complete |
 
 ## Explicitly separate scope
@@ -65,12 +67,54 @@ OPENCOUCH_MEMORY_DATABASE_URL=postgresql://opencouch:opencouch@localhost:5432/op
 Direct runtime callers should use the grouped configuration boundary:
 
 ```python
-RuntimePersistenceConfig.for_shared_backend(
-    memory_mode=MemoryMode.LOCAL,
-    persistence_backend="postgres",
-    database_url=database_url,
+PersistentAgentRuntime(
+    persistence_config=RuntimePersistenceConfig.for_shared_backend(
+        memory_mode=MemoryMode.LOCAL,
+        persistence_backend="postgres",
+        database_url=database_url,
+    ),
 )
 ```
+
+For example, a legacy flat construction such as:
+
+```python
+PersistentAgentRuntime(
+    memory_mode=MemoryMode.LOCAL,
+    memory_database_url=database_url,
+    default_llm_client=llm_client,
+)
+```
+
+must become:
+
+```python
+PersistentAgentRuntime(
+    persistence_config=RuntimePersistenceConfig.for_shared_backend(
+        memory_mode=MemoryMode.LOCAL,
+        persistence_backend="postgres",
+        database_url=database_url,
+    ),
+    dependencies=RuntimeDependencies(default_llm_client=llm_client),
+)
+```
+
+The constructor accepts only `storage_paths`, `persistence_config`,
+`dependencies`, and `behavior_config`, all as keyword arguments. Removed flat
+keywords raise `TypeError`. `RuntimeStoragePaths` contains only
+`text_session_sqlite_path`; application-owned stores no longer expose SQLite
+path configuration.
+
+| Removed surface | Replacement |
+|---|---|
+| `memory_mode`, application `*_backend`, and `*_database_url` constructor keywords | Fields on `RuntimePersistenceConfig` |
+| `memory_store`, audit/feedback backends, embedding/LLM providers, and `auto_finalize_excluded` | Fields on `RuntimeDependencies` |
+| Session timeout/sweep, SDK history/table settings, shutdown finalization, and memory-prefetch keywords | Fields on `RuntimeBehaviorConfig` |
+| `text_session_sqlite_path` constructor keyword | `RuntimeStoragePaths(text_session_sqlite_path=...)` |
+| `sqlite_path` constructor keyword | No generic replacement. Set `text_session_sqlite_path` directly when SDK SQLite history is intended |
+| `memory_sqlite_path`, `crisis_log_sqlite_path`, and `feedback_sqlite_path` | No replacement; those application SQLite stores were removed |
+| `DEFAULT_THREAD_DB_PATH`, `DEFAULT_CRISIS_LOG_DB_PATH`, and `DEFAULT_FEEDBACK_DB_PATH` | No replacement; `DEFAULT_TEXT_SESSION_DB_PATH` remains for SDK history |
+| TUI `--sqlite-path` | `--text-session-sqlite-path` |
 
 Existing `crisis.sqlite3` and `session_feedback.sqlite3` rows are not copied or deleted automatically. Retain archived files if historical records are required; inspect them with an older release or an external read-only SQLite tool. The crisis-ledger operator script is Postgres-only.
 
@@ -88,9 +132,8 @@ Postgres-only and require `--database-url` or
 OpenAI SDK text-session SQLite is separate from long-term memory. Existing
 `text_sessions.sqlite3` behavior is preserved and is not part of #233.
 
-The flat `memory_sqlite_path` compatibility parameter is inert: it cannot
-select, inspect, import, copy, or delete SQLite memory. It remains only until
-#266 removes the obsolete constructor/path compatibility surface.
+The flat `memory_sqlite_path` and other legacy constructor parameters have been
+removed. They cannot select, inspect, import, copy, or delete SQLite memory.
 
 ## Planned removal order
 
@@ -98,8 +141,8 @@ select, inspect, import, copy, or delete SQLite memory. It remains only until
 2. ~~Remove durable SQLite runtime-state and active-session implementations together because both inherit `thread_persistence_backend`.~~ Completed; incognito now uses explicit non-durable adapters.
 3. ~~Migrate audit and feedback durable tests; retain in-memory/null implementations.~~ Completed; Postgres contracts are authoritative and the in-memory/null test paths remain.
 4. ~~Remove durable SQLite audit and feedback backends and selection paths.~~ Completed; persistent mode now requires Postgres.
-5. Remove obsolete application-store SQLite configuration, factories, migrations, exports, and compatibility tests. Internal factories and cross-dialect code are removed; only the inert flat `memory_sqlite_path` constructor/path compatibility remains until #266.
-6. Decide OpenAI SDK text-session SQLite separately.
+5. ~~Remove obsolete application-store SQLite configuration, factories, migrations, exports, and compatibility tests.~~ Completed through #266; the runtime constructor now accepts only grouped configuration.
+6. ~~Decide OpenAI SDK text-session SQLite separately.~~ Retained as a distinct model-visible history surface, forced to `:memory:` in incognito and explicitly guarded for durable local use.
 7. ~~Publish memory operator scripts and migration guidance through #233 PR2.~~ Completed.
 8. ~~Remove the legacy SQLite memory implementation, runtime selection, compatibility tests, and built-in SQLite memory tool paths through #233 PR3.~~ Completed.
 

@@ -1,7 +1,8 @@
-"""Focused tests for persistent runtime configuration resolution."""
+"""Focused tests for grouped persistent runtime configuration."""
 
 from __future__ import annotations
 
+from dataclasses import fields
 from datetime import timedelta
 from pathlib import Path
 
@@ -9,61 +10,17 @@ import pytest
 
 from agent.memory.modes import MemoryMode
 from agent.runtime.configuration import (
-    DEFAULT_CRISIS_LOG_DB_PATH,
-    DEFAULT_FEEDBACK_DB_PATH,
     DEFAULT_TEXT_SESSION_DB_PATH,
-    DEFAULT_THREAD_DB_PATH,
+    SESSION_TIMEOUT,
     RuntimeBehaviorConfig,
     RuntimeDependencies,
     RuntimePersistenceConfig,
     RuntimeStoragePaths,
-    _UNSET,
-    _resolve_runtime_behavior_config,
-    _resolve_runtime_dependencies,
-    _resolve_runtime_persistence_config,
-    _resolve_runtime_storage_paths,
+    validate_runtime_configuration,
 )
 
 
-def _resolve_storage(**overrides: object):
-    arguments = {
-        "sqlite_path": _UNSET,
-        "storage_paths": None,
-        "memory_sqlite_path": _UNSET,
-        "crisis_log_sqlite_path": _UNSET,
-        "feedback_sqlite_path": _UNSET,
-        "text_session_sqlite_path": _UNSET,
-    }
-    arguments.update(overrides)
-    return _resolve_runtime_storage_paths(**arguments)
-
-
-def _resolve_persistence(**overrides: object):
-    arguments = {
-        "persistence_config": RuntimePersistenceConfig(allow_legacy_sqlite=True),
-        "memory_mode": MemoryMode.LOCAL,
-        "memory_backend": "postgres",
-        "memory_database_url": None,
-        "thread_persistence_backend": "memory",
-        "thread_database_url": None,
-        "sqlite_path": DEFAULT_THREAD_DB_PATH,
-        "sqlite_path_configured": False,
-        "crisis_log_persistence_backend": "postgres",
-        "crisis_log_database_url": "postgresql://unused/crisis",
-        "crisis_log_backend": None,
-        "session_feedback_persistence_backend": "postgres",
-        "session_feedback_database_url": "postgresql://unused/feedback",
-        "session_feedback_backend": None,
-        "text_session_backend": "auto",
-        "text_session_database_url": None,
-        "text_session_sqlite_path": None,
-        "text_session_sqlite_path_configured": False,
-    }
-    arguments.update(overrides)
-    return _resolve_runtime_persistence_config(**arguments)
-
-
-def test_public_configuration_exports_remain_compatible() -> None:
+def test_public_configuration_exports_match_final_contract() -> None:
     import agent.runtime as runtime_package
     from agent.runtime import runtime as runtime_module
 
@@ -71,201 +28,206 @@ def test_public_configuration_exports_remain_compatible() -> None:
     assert runtime_package.RuntimePersistenceConfig is RuntimePersistenceConfig
     assert runtime_package.RuntimeDependencies is RuntimeDependencies
     assert runtime_package.RuntimeBehaviorConfig is RuntimeBehaviorConfig
-    assert runtime_package.DEFAULT_THREAD_DB_PATH == DEFAULT_THREAD_DB_PATH
-    assert not hasattr(runtime_package, "DEFAULT_MEMORY_DB_PATH")
-    assert runtime_module.RuntimeStoragePaths is RuntimeStoragePaths
-    assert runtime_module.RuntimePersistenceConfig is RuntimePersistenceConfig
-    assert runtime_module.DEFAULT_THREAD_DB_PATH == DEFAULT_THREAD_DB_PATH
-    assert not hasattr(runtime_module, "DEFAULT_MEMORY_DB_PATH")
+    assert runtime_package.DEFAULT_TEXT_SESSION_DB_PATH == DEFAULT_TEXT_SESSION_DB_PATH
     assert runtime_module.DEFAULT_TEXT_SESSION_DB_PATH == DEFAULT_TEXT_SESSION_DB_PATH
-    assert runtime_module.DEFAULT_CRISIS_LOG_DB_PATH == DEFAULT_CRISIS_LOG_DB_PATH
-    assert runtime_module.DEFAULT_FEEDBACK_DB_PATH == DEFAULT_FEEDBACK_DB_PATH
+    for removed_name in (
+        "DEFAULT_THREAD_DB_PATH",
+        "DEFAULT_MEMORY_DB_PATH",
+        "DEFAULT_CRISIS_LOG_DB_PATH",
+        "DEFAULT_FEEDBACK_DB_PATH",
+    ):
+        assert not hasattr(runtime_package, removed_name)
+        assert not hasattr(runtime_module, removed_name)
 
 
-def test_storage_defaults_share_the_configuration_sentinel() -> None:
-    paths = RuntimeStoragePaths()
-    resolved = _resolve_storage()
+def test_grouped_configuration_has_concrete_defaults() -> None:
+    storage = RuntimeStoragePaths()
+    persistence = RuntimePersistenceConfig()
+    dependencies = RuntimeDependencies()
+    behavior = RuntimeBehaviorConfig()
 
-    assert paths.sqlite_path is _UNSET
-    assert not hasattr(paths, "memory_sqlite_path")
-    assert resolved.sqlite_path == DEFAULT_THREAD_DB_PATH
-    assert resolved.crisis_log_sqlite_path == DEFAULT_CRISIS_LOG_DB_PATH
-    assert resolved.feedback_sqlite_path == DEFAULT_FEEDBACK_DB_PATH
-    assert resolved.text_session_sqlite_path is None
-    assert resolved.sqlite_path_configured is False
-    assert not hasattr(resolved, "memory_sqlite_path")
-
-
-def test_grouped_storage_rejects_removed_memory_sqlite_path() -> None:
-    with pytest.raises(TypeError, match="memory_sqlite_path"):
-        RuntimeStoragePaths(**{"memory_sqlite_path": ":memory:"})
-
-
-def test_legacy_storage_warning_lists_supplied_args_in_stable_order(
-    tmp_path: Path,
-) -> None:
-    with pytest.warns(DeprecationWarning) as warnings:
-        resolved = _resolve_storage(
-            sqlite_path=tmp_path / "threads.sqlite3",
-            memory_sqlite_path=tmp_path / "memory.sqlite3",
-            text_session_sqlite_path=None,
-        )
-
-    assert str(warnings[0].message).endswith(
-        "Legacy args: sqlite_path, memory_sqlite_path, text_session_sqlite_path."
-    )
-    assert resolved.sqlite_path_configured is True
-    assert not hasattr(resolved, "memory_sqlite_path")
-    assert resolved.text_session_sqlite_path is None
-    assert resolved.text_session_sqlite_path_configured is False
+    assert storage.text_session_sqlite_path is None
+    assert [field.name for field in fields(storage)] == ["text_session_sqlite_path"]
+    assert persistence.memory_mode is MemoryMode.LOCAL
+    assert persistence.memory_backend == "postgres"
+    assert persistence.thread_persistence_backend == "postgres"
+    assert persistence.crisis_log_persistence_backend == "postgres"
+    assert persistence.session_feedback_persistence_backend == "postgres"
+    assert persistence.text_session_backend == "auto"
+    assert dependencies.memory_store is None
+    assert dependencies.default_llm_client is None
+    assert behavior.session_timeout == SESSION_TIMEOUT
+    assert behavior.session_sweep_interval_seconds == 30.0
+    assert behavior.finalize_active_sessions_on_close is True
+    assert behavior.speculative_memory_prefetch is True
 
 
-def test_grouped_storage_overrides_legacy_and_ignores_flat_memory_path(
-    tmp_path: Path,
-) -> None:
-    legacy_memory = tmp_path / "legacy-memory.sqlite3"
-    grouped_thread = tmp_path / "grouped-thread.sqlite3"
-
-    with pytest.warns(DeprecationWarning):
-        resolved = _resolve_storage(
-            sqlite_path=tmp_path / "legacy-thread.sqlite3",
-            memory_sqlite_path=legacy_memory,
-            storage_paths=RuntimeStoragePaths(sqlite_path=grouped_thread),
-        )
-
-    assert resolved.sqlite_path == grouped_thread
-    assert resolved.sqlite_path_configured is True
-    assert not hasattr(resolved, "memory_sqlite_path")
+def test_storage_paths_reject_removed_application_sqlite_fields() -> None:
+    for removed_name in (
+        "sqlite_path",
+        "memory_sqlite_path",
+        "crisis_log_sqlite_path",
+        "feedback_sqlite_path",
+    ):
+        with pytest.raises(TypeError, match=removed_name):
+            RuntimeStoragePaths(**{removed_name: ":memory:"})  # type: ignore[arg-type]
 
 
-def test_repeating_default_storage_path_is_not_a_custom_override() -> None:
-    resolved = _resolve_storage(
-        storage_paths=RuntimeStoragePaths(sqlite_path=DEFAULT_THREAD_DB_PATH)
+def test_shared_postgres_configuration_fans_out_database_url() -> None:
+    database_url = "postgresql://unused/opencouch"
+    config = RuntimePersistenceConfig.for_shared_backend(
+        memory_mode=MemoryMode.LOCAL,
+        persistence_backend="postgres",
+        database_url=database_url,
     )
 
-    assert resolved.sqlite_path == DEFAULT_THREAD_DB_PATH
-    assert resolved.sqlite_path_configured is False
+    assert config.memory_database_url == database_url
+    assert config.thread_database_url == database_url
+    assert config.crisis_log_database_url == database_url
+    assert config.session_feedback_database_url == database_url
+    assert config.text_session_database_url == database_url
 
 
-def test_partial_grouped_persistence_preserves_legacy_values() -> None:
-    resolved = _resolve_persistence(
-        thread_persistence_backend="postgres",
-        thread_database_url="postgresql://legacy/thread",
-        persistence_config=RuntimePersistenceConfig(
-            memory_backend="postgres",
-            memory_database_url="postgresql://grouped/memory",
+@pytest.mark.parametrize(
+    ("field", "message"),
+    [
+        ("memory_backend", "SQLite memory persistence has been removed"),
+        (
+            "thread_persistence_backend",
+            "SQLite runtime-state and active-session persistence has been removed",
+        ),
+        ("crisis_log_persistence_backend", "SQLite crisis-audit persistence"),
+        (
+            "session_feedback_persistence_backend",
+            "SQLite session-feedback persistence",
+        ),
+    ],
+)
+def test_removed_application_sqlite_selectors_are_rejected(
+    field: str,
+    message: str,
+) -> None:
+    config = RuntimePersistenceConfig()
+    setattr(config, field, "sqlite")
+
+    with pytest.raises(ValueError, match=message):
+        validate_runtime_configuration(
+            persistence=config,
+            storage_paths=RuntimeStoragePaths(),
+        )
+
+
+def test_disk_sdk_sqlite_requires_explicit_legacy_opt_in(tmp_path: Path) -> None:
+    config = RuntimePersistenceConfig(
+        thread_persistence_backend="memory",
+        text_session_backend="sqlite",
+    )
+
+    with pytest.raises(ValueError, match="allow_legacy_sqlite=True"):
+        validate_runtime_configuration(
+            persistence=config,
+            storage_paths=RuntimeStoragePaths(
+                text_session_sqlite_path=tmp_path / "text-sessions.sqlite3"
+            ),
+        )
+
+
+@pytest.mark.parametrize("backend", ["auto", "sqlalchemy"])
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "sqlite+aiosqlite:///text-sessions.sqlite3",
+        "sqlite+aiosqlite:///text-sessions.sqlite3?mode=memory",
+        " sqlite+aiosqlite:///text-sessions.sqlite3 ",
+        "sqlite+aiosqlite:///text-sessions.sqlite3?mode=memory&URI=true",
+        "sqlite+aiosqlite:///text-sessions.sqlite3?Mode=memory&uri=true",
+    ],
+)
+def test_sqlalchemy_disk_sqlite_requires_explicit_legacy_opt_in(
+    backend: str,
+    database_url: str,
+) -> None:
+    config = RuntimePersistenceConfig(
+        thread_persistence_backend="memory",
+        text_session_backend=backend,  # type: ignore[arg-type]
+        text_session_database_url=database_url,
+    )
+
+    with pytest.raises(ValueError, match="allow_legacy_sqlite=True"):
+        validate_runtime_configuration(
+            persistence=config,
+            storage_paths=RuntimeStoragePaths(),
+        )
+
+
+@pytest.mark.parametrize(
+    "database_url",
+    [
+        "sqlite+aiosqlite://",
+        "sqlite+aiosqlite:///:memory:",
+        "sqlite+aiosqlite:///file:memdb1?mode=memory&uri=true",
+        "sqlite+aiosqlite:///file:memdb1?mode=memory&uri=on",
+    ],
+)
+def test_sqlalchemy_in_memory_sqlite_does_not_require_opt_in(
+    database_url: str,
+) -> None:
+    validate_runtime_configuration(
+        persistence=RuntimePersistenceConfig(
+            thread_persistence_backend="memory",
+            text_session_backend="sqlalchemy",
+            text_session_database_url=database_url,
+        ),
+        storage_paths=RuntimeStoragePaths(),
+    )
+
+
+@pytest.mark.parametrize(
+    "persistence",
+    [
+        RuntimePersistenceConfig(
+            memory_mode=MemoryMode.INCOGNITO,
+            text_session_backend="sqlite",
+        ),
+        RuntimePersistenceConfig(
+            thread_persistence_backend="memory",
+            text_session_backend="sqlite",
+        ),
+        RuntimePersistenceConfig(
+            thread_persistence_backend="memory",
+            text_session_backend="sqlite",
             allow_legacy_sqlite=True,
         ),
+    ],
+)
+def test_incognito_in_memory_and_opted_in_sdk_sqlite_are_allowed(
+    persistence: RuntimePersistenceConfig,
+) -> None:
+    path = (
+        Path("text-sessions.sqlite3")
+        if persistence.allow_legacy_sqlite
+        else Path(":memory:")
     )
-
-    assert resolved.memory_backend == "postgres"
-    assert resolved.memory_database_url == "postgresql://grouped/memory"
-    assert resolved.thread_persistence_backend == "postgres"
-    assert resolved.thread_database_url == "postgresql://legacy/thread"
-
-
-def test_removed_application_store_validation_precedes_legacy_opt_in() -> None:
-    with pytest.raises(ValueError) as exc_info:
-        _resolve_persistence(
-            persistence_config=RuntimePersistenceConfig(allow_legacy_sqlite=True),
-            crisis_log_persistence_backend="sqlite",
-            session_feedback_persistence_backend="sqlite",
-        )
-
-    assert str(exc_info.value).endswith(
-        "Removed fields: crisis_log_persistence_backend, "
-        "session_feedback_persistence_backend."
+    validate_runtime_configuration(
+        persistence=persistence,
+        storage_paths=RuntimeStoragePaths(text_session_sqlite_path=path),
     )
 
 
-def test_custom_durable_sdk_sqlite_path_requires_legacy_opt_in(tmp_path: Path) -> None:
-    with pytest.raises(ValueError) as exc_info:
-        _resolve_persistence(
-            persistence_config=RuntimePersistenceConfig(allow_legacy_sqlite=False),
-            sqlite_path=tmp_path / "threads.sqlite3",
-            sqlite_path_configured=True,
-            text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
-            text_session_sqlite_path_configured=True,
-        )
-
-    assert str(exc_info.value).endswith("SQLite fields: text_session_backend.")
-
-
-def test_incognito_and_in_memory_paths_bypass_durable_sqlite_guard() -> None:
-    incognito = _resolve_persistence(
-        persistence_config=None,
-        memory_mode=MemoryMode.INCOGNITO,
-    )
-    in_memory = _resolve_persistence(
-        persistence_config=None,
-        sqlite_path=":memory:",
-        text_session_sqlite_path=":memory:",
-    )
-
-    assert incognito.memory_mode is MemoryMode.INCOGNITO
-    assert in_memory.memory_backend == "postgres"
-
-
-def test_dependency_config_can_override_and_explicitly_clear_values() -> None:
-    original_store = object()
-    original_client = object()
+def test_grouped_dependency_and_behavior_values_are_direct() -> None:
+    timeout = timedelta(minutes=5)
 
     def excluded(thread_id: str) -> bool:
         return thread_id == "external"
 
-    resolved = _resolve_runtime_dependencies(
-        dependencies=RuntimeDependencies(
-            memory_store=None,
-            default_llm_client=None,
-            auto_finalize_excluded=excluded,
-        ),
-        memory_store=original_store,  # type: ignore[arg-type]
-        crisis_log_backend=None,
-        session_feedback_backend=None,
-        embedding_provider=None,
-        default_llm_client=original_client,  # type: ignore[arg-type]
-        auto_finalize_excluded=None,
-    )
-
-    assert resolved.memory_store is None
-    assert resolved.default_llm_client is None
-    assert resolved.auto_finalize_excluded is excluded
-
-
-def test_unset_dependency_fields_preserve_legacy_values() -> None:
-    store = object()
-    resolved = _resolve_runtime_dependencies(
-        dependencies=RuntimeDependencies(),
-        memory_store=store,  # type: ignore[arg-type]
-        crisis_log_backend=None,
-        session_feedback_backend=None,
-        embedding_provider=None,
-        default_llm_client=None,
-        auto_finalize_excluded=None,
-    )
-
-    assert resolved.memory_store is store
-
-
-def test_behavior_config_overrides_only_explicit_fields() -> None:
-    timeout = timedelta(minutes=5)
-    resolved = _resolve_runtime_behavior_config(
-        behavior_config=RuntimeBehaviorConfig(
-            text_session_history_limit=None,
-            session_timeout=timeout,
-            speculative_memory_prefetch=False,
-        ),
-        text_session_create_tables=True,
+    dependencies = RuntimeDependencies(auto_finalize_excluded=excluded)
+    behavior = RuntimeBehaviorConfig(
         text_session_history_limit=20,
-        session_timeout=timedelta(minutes=20),
-        session_sweep_interval_seconds=30.0,
-        finalize_active_sessions_on_close=True,
-        speculative_memory_prefetch=True,
+        session_timeout=timeout,
+        speculative_memory_prefetch=False,
     )
 
-    assert resolved.text_session_create_tables is True
-    assert resolved.text_session_history_limit is None
-    assert resolved.session_timeout == timeout
-    assert resolved.session_sweep_interval_seconds == 30.0
-    assert resolved.finalize_active_sessions_on_close is True
-    assert resolved.speculative_memory_prefetch is False
+    assert dependencies.auto_finalize_excluded is excluded
+    assert behavior.text_session_history_limit == 20
+    assert behavior.session_timeout == timeout
+    assert behavior.speculative_memory_prefetch is False

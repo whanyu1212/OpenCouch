@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from agent.runtime import DEFAULT_THREAD_DB_PATH
+from agent.runtime import DEFAULT_TEXT_SESSION_DB_PATH
 
 
 def add_common_args(parser: argparse.ArgumentParser) -> None:
@@ -41,10 +41,10 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         ),
     )
     parser.add_argument(
-        "--sqlite-path",
-        default=str(DEFAULT_THREAD_DB_PATH),
+        "--text-session-sqlite-path",
+        default=str(DEFAULT_TEXT_SESSION_DB_PATH),
         help=(
-            "Legacy SQLite path for OpenAI SDK text-session compatibility. "
+            "SQLite path for OpenAI SDK text-session compatibility. "
             "Application persistence always uses Postgres."
         ),
     )

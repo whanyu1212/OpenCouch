@@ -549,7 +549,6 @@ class TestSpeculativeMemoryPrefetch:
 
         runtime = PersistentAgentRuntime(
             storage_paths=RuntimeStoragePaths(
-                sqlite_path=tmp_path / "threads.sqlite3",
                 text_session_sqlite_path=tmp_path / "text_sessions.sqlite3",
             ),
             persistence_config=RuntimePersistenceConfig(

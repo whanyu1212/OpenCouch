@@ -1592,7 +1592,6 @@ async def test_runtime_end_session_commits_buffered_semantic_candidates(
 
     async with PersistentAgentRuntime(
         storage_paths=RuntimeStoragePaths(
-            sqlite_path=tmp_path / "threads.sqlite3",
             text_session_sqlite_path=tmp_path / "text_sessions.sqlite3",
         ),
         persistence_config=RuntimePersistenceConfig(
@@ -1667,7 +1666,6 @@ async def test_runtime_end_session_promotes_repeated_implicit_procedural_prefere
 
     async with PersistentAgentRuntime(
         storage_paths=RuntimeStoragePaths(
-            sqlite_path=tmp_path / "threads.sqlite3",
             text_session_sqlite_path=tmp_path / "text_sessions.sqlite3",
         ),
         persistence_config=RuntimePersistenceConfig(
