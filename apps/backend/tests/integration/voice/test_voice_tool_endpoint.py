@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -71,3 +72,40 @@ async def test_voice_tool_endpoint_dispatches_app_owned_tool(
     assert captured["tool_name"] == "show_memory_status"
     assert captured["arguments"] == {}
     assert captured["memory_mode"] == "persistent"
+
+
+@pytest.mark.asyncio
+async def test_voice_tool_endpoint_bounds_execution_time(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cancelled = asyncio.Event()
+
+    async def slow_execute_voice_tool_call(**kwargs: object) -> dict[str, object]:
+        del kwargs
+        try:
+            await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return {}
+
+    monkeypatch.setattr(
+        "agent.voice.tools.execute_voice_tool_call",
+        slow_execute_voice_tool_call,
+    )
+    monkeypatch.setattr(voice_routes, "_VOICE_TOOL_TIMEOUT_SECONDS", 0.001)
+
+    response = await client.post(
+        "/api/voice/realtime/tools",
+        json={
+            "thread_id": "voice-thread",
+            "memory_mode": "persistent",
+            "tool_name": "show_memory_status",
+            "arguments": {},
+        },
+    )
+
+    assert response.status_code == 500
+    assert response.json()["detail"]["code"] == "voice_realtime_tool_failed"
+    assert cancelled.is_set()

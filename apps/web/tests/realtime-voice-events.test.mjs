@@ -34,6 +34,16 @@ test("parses completed user input transcription events", () => {
   assert.deepEqual(parsed.functionCalls, []);
 });
 
+test("parses failed user input transcription item IDs", () => {
+  const parsed = parseRealtimeServerEvent({
+    type: "conversation.item.input_audio_transcription.failed",
+    item_id: "item-user-failed",
+    error: { message: "Transcription failed." },
+  });
+
+  assert.equal(parsed.failedUserTranscriptionItemId, "item-user-failed");
+});
+
 test("parses assistant output transcript completion events", () => {
   const parsed = parseRealtimeServerEvent({
     type: "response.output_audio_transcript.done",

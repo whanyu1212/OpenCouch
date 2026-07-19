@@ -95,6 +95,7 @@ type UserTranscriptEvidenceWaiter = {
 
 const USER_TRANSCRIPT_EVIDENCE_TIMEOUT_MS = 2500;
 const FOLLOW_UP_RESPONSE_TIMEOUT_MS = 10_000;
+const VOICE_TOOL_EXECUTION_TIMEOUT_MS = 30_000;
 
 export async function connectRealtimeVoiceSession(
   options: RealtimeVoiceSessionOptions
@@ -288,6 +289,10 @@ export async function connectRealtimeVoiceSession(
     if (parsed.type === "input_audio_buffer.committed" && parsed.userItemId) {
       turnTracker.userInputCommitted(parsed.userItemId);
     }
+    if (parsed.failedUserTranscriptionItemId) {
+      turnTracker.finishUserTranscription(parsed.failedUserTranscriptionItemId);
+      void maybeRecordTurn().catch(() => undefined);
+    }
     if (parsed.type === "response.created" && parsed.responseId) {
       if (parsed.responseRequestId) {
         clearFollowUpResponseTimeout(parsed.responseRequestId);
@@ -331,7 +336,13 @@ export async function connectRealtimeVoiceSession(
   function handleTranscriptUpdate(update: RealtimeTranscriptUpdate): void {
     const rawText = update.text;
     const text = rawText.trim();
-    if (!text) return;
+    if (!text) {
+      if (update.role === "user" && update.final) {
+        turnTracker.finishUserTranscription(update.itemId);
+        void maybeRecordTurn().catch(() => undefined);
+      }
+      return;
+    }
 
     if (update.role === "user" && !update.final) {
       const itemId = update.itemId || "__latest_user_audio__";
@@ -434,6 +445,11 @@ export async function connectRealtimeVoiceSession(
     handledCallIds.add(call.callId);
     const clientTurnId = turnTracker.correlateToolCall(call.responseId);
     turnTracker.toolCallStarted(clientTurnId);
+    const abortController = new AbortController();
+    const executionTimeout = setTimeout(
+      () => abortController.abort(),
+      VOICE_TOOL_EXECUTION_TIMEOUT_MS
+    );
 
     options.onToolEvent?.({
       callId: call.callId,
@@ -454,6 +470,7 @@ export async function connectRealtimeVoiceSession(
         memoryMode: options.memoryMode,
         toolName: call.name,
         arguments: call.arguments,
+        signal: abortController.signal,
       });
       if (shouldRecordRealtimeVoiceToolCall(call.name)) {
         turnTracker.addToolResult(clientTurnId, {
@@ -504,6 +521,7 @@ export async function connectRealtimeVoiceSession(
       });
       options.onError?.(new Error(message));
     } finally {
+      clearTimeout(executionTimeout);
       turnTracker.toolCallFinished(clientTurnId);
       void maybeRecordTurn().catch(() => undefined);
     }

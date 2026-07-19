@@ -289,6 +289,27 @@ test("records realtime voice turns with tool metadata", async () => {
   });
 });
 
+test("forwards abort signals to realtime voice tool requests", async () => {
+  let capturedSignal;
+  globalThis.fetch = async (_url, init) => {
+    capturedSignal = init.signal;
+    return new Response(JSON.stringify({ output: {} }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  const controller = new AbortController();
+
+  await api.executeRealtimeVoiceTool({
+    threadId: "voice-thread",
+    memoryMode: "incognito",
+    toolName: "show_memory_status",
+    signal: controller.signal,
+  });
+
+  assert.equal(capturedSignal, controller.signal);
+});
+
 test("checks realtime voice safety with the exact correlated turn payload", async () => {
   let capturedUrl = "";
   let capturedBody = {};

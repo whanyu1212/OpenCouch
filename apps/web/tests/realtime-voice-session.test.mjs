@@ -427,6 +427,54 @@ test("does not let an incomplete wait-for-user turn block a later turn", () => {
   assert.deepEqual(tracker.priorTranscriptForTurn(later.clientTurnId), []);
 });
 
+test("discards settled turns whose user transcription failed", () => {
+  const tracker = createTurnTracker();
+  tracker.userInputCommitted("user-failed");
+  tracker.responseCreated("response-failed-transcript");
+  tracker.responseFinished("response-failed-transcript");
+  tracker.finishUserTranscription("user-failed");
+
+  tracker.userInputCommitted("user-valid");
+  const valid = tracker.addFinalUserTranscript({
+    itemId: "user-valid",
+    text: "valid question",
+  });
+  tracker.responseCreated("response-valid");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-valid",
+    text: "valid answer",
+  });
+  tracker.responseFinished("response-valid");
+
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: valid.clientTurnId,
+    userText: "valid question",
+    assistantText: "valid answer",
+    toolCalls: [],
+  });
+});
+
+test("keeps waiting for an unsettled turn with no user transcript", () => {
+  const tracker = createTurnTracker();
+  tracker.userInputCommitted("user-pending");
+  tracker.responseCreated("response-pending");
+
+  tracker.userInputCommitted("user-valid");
+  tracker.addFinalUserTranscript({ itemId: "user-valid", text: "valid question" });
+  tracker.responseCreated("response-valid");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-valid",
+    text: "valid answer",
+  });
+  tracker.responseFinished("response-valid");
+
+  assert.equal(tracker.markNextRecordableTurn(), null);
+  tracker.responseFinished("response-pending");
+  assert.equal(tracker.markNextRecordableTurn(), null);
+  tracker.finishUserTranscription("user-pending");
+  assert.equal(tracker.markNextRecordableTurn()?.userText, "valid question");
+});
+
 test("records a finalized transcript when transport closes before response done", () => {
   const tracker = createTurnTracker();
   const turn = tracker.addFinalUserTranscript({

@@ -23,6 +23,7 @@ export interface ParsedRealtimeServerEvent {
   responseTerminal?: boolean;
   responseRequestId?: string;
   userItemId?: string;
+  failedUserTranscriptionItemId?: string;
   transcript?: RealtimeTranscriptUpdate;
   functionCalls: RealtimeFunctionCall[];
   agentSpeaking?: boolean;
@@ -60,6 +61,9 @@ export function parseRealtimeServerEvent(raw: unknown): ParsedRealtimeServerEven
       text: readString(event.transcript) ?? "",
       final: true,
     };
+  } else if (type === "conversation.item.input_audio_transcription.failed") {
+    const itemId = readString(event.item_id);
+    if (itemId) parsed.failedUserTranscriptionItemId = itemId;
   } else if (type === "response.output_audio_transcript.delta") {
     const responseId = readString(event.response_id);
     parsed.transcript = {

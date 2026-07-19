@@ -40,6 +40,7 @@ export interface RealtimeVoiceTrackedTurn {
 
 type TrackedTurn = RealtimeVoiceTrackedTurn & {
   userItemId?: string;
+  userTranscriptionFinished: boolean;
   awaitingInitialResponse: boolean;
   responseIds: Set<string>;
   activeResponseIds: Set<string>;
@@ -106,9 +107,16 @@ export class RealtimeVoiceTurnTracker {
         (candidate) => !candidate.userItemId && candidate.responseIds.size === 0
       ) ?? this.createTurn();
     turn.userItemId = itemId;
+    turn.userTranscriptionFinished = false;
     turn.awaitingInitialResponse = turn.responseIds.size === 0;
     this.userItemTurns.set(itemId, turn);
     return turn.clientTurnId;
+  }
+
+  finishUserTranscription(itemId: string | undefined): void {
+    if (!itemId) return;
+    const turn = this.userItemTurns.get(itemId);
+    if (turn) turn.userTranscriptionFinished = true;
   }
 
   responseFinished(responseId: string): void {
@@ -129,6 +137,7 @@ export class RealtimeVoiceTurnTracker {
   }): FinalUserTurn {
     const existing = itemId ? this.userItemTurns.get(itemId) : undefined;
     if (existing) {
+      existing.userTranscriptionFinished = true;
       const isNew = !existing.userText;
       if (isNew) existing.userText = text;
       return {
@@ -141,6 +150,7 @@ export class RealtimeVoiceTurnTracker {
     const turn =
       this.turns.find((candidate) => !candidate.userText) ?? this.createTurn();
     turn.userText = text;
+    turn.userTranscriptionFinished = true;
     if (itemId) {
       turn.userItemId = itemId;
       turn.awaitingInitialResponse = turn.responseIds.size === 0;
@@ -204,6 +214,7 @@ export class RealtimeVoiceTurnTracker {
     for (const turn of this.turns) {
       turn.awaitingInitialResponse = false;
       turn.activeResponseIds.clear();
+      turn.userTranscriptionFinished = true;
       for (const requestEventId of turn.expectedResponseEventIds) {
         this.expectedResponseTurns.delete(requestEventId);
       }
@@ -245,7 +256,12 @@ export class RealtimeVoiceTurnTracker {
         index += 1;
         continue;
       }
-      if (!this.isSettled(candidate) || !candidate.userText) return null;
+      if (!this.isSettled(candidate)) return null;
+      if (!candidate.userText && candidate.userTranscriptionFinished) {
+        this.removeTurn(candidate);
+        continue;
+      }
+      if (!candidate.userText) return null;
       if (!candidate.assistantText) {
         this.removeTurn(candidate);
         continue;
@@ -300,6 +316,7 @@ export class RealtimeVoiceTurnTracker {
       userText: "",
       assistantText: "",
       toolCalls: [],
+      userTranscriptionFinished: false,
       awaitingInitialResponse: false,
       responseIds: new Set(),
       activeResponseIds: new Set(),

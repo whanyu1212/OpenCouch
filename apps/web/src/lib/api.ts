@@ -751,6 +751,7 @@ export async function executeRealtimeVoiceTool({
   memoryMode,
   toolName,
   arguments: args,
+  signal,
 }: {
   threadId: string;
   userId?: string;
@@ -759,12 +760,14 @@ export async function executeRealtimeVoiceTool({
   memoryMode: VoiceMemoryMode;
   toolName: string;
   arguments?: Record<string, unknown>;
+  signal?: AbortSignal;
 }): Promise<RealtimeVoiceToolCallResponse> {
   return apiRequest<RealtimeVoiceToolCallResponse>(
     `${API_BASE}/voice/realtime/tools`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal,
       body: JSON.stringify({
         thread_id: threadId,
         user_id: userId || undefined,

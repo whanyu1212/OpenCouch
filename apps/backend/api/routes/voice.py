@@ -41,6 +41,7 @@ _VOICE_TOOL_FAILURE_HTTP_STATUS = 500
 _VOICE_TURN_FAILURE_HTTP_STATUS = 500
 _VOICE_END_FAILURE_HTTP_STATUS = 500
 _VOICE_SESSION_WATERMARK_TIMEOUT_SECONDS = 0.5
+_VOICE_TOOL_TIMEOUT_SECONDS = 25.0
 
 _CRISIS_VOICE_TOOL_NAMES = {
     "get_crisis_support_template",
@@ -113,17 +114,18 @@ async def execute_voice_realtime_tool(
 
     selection = get_runtime_selection(body.memory_mode)
     try:
-        output = await voice_tools.execute_voice_tool_call(
-            runtime=selection.runtime,
-            tool_name=body.tool_name,
-            arguments=body.arguments,
-            thread_id=body.thread_id,
-            user_id=body.user_id,
-            current_user_message=body.current_user_message,
-            transcript=body.transcript,
-            memory_mode=selection.memory_mode,
-            llm_client=llm_client,
-        )
+        async with asyncio.timeout(_VOICE_TOOL_TIMEOUT_SECONDS):
+            output = await voice_tools.execute_voice_tool_call(
+                runtime=selection.runtime,
+                tool_name=body.tool_name,
+                arguments=body.arguments,
+                thread_id=body.thread_id,
+                user_id=body.user_id,
+                current_user_message=body.current_user_message,
+                transcript=body.transcript,
+                memory_mode=selection.memory_mode,
+                llm_client=llm_client,
+            )
     except Exception as exc:
         message = str(exc).strip() or exc.__class__.__name__
         raise HTTPException(
