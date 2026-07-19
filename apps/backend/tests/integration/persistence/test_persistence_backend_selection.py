@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
-from pathlib import Path
-
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend, NullCrisisLogBackend
@@ -53,12 +50,12 @@ def _local_ephemeral_runtime() -> PersistentAgentRuntime:
 
 
 def test_runtime_defaults_application_stores_to_postgres() -> None:
-    parameters = inspect.signature(PersistentAgentRuntime).parameters
+    config = RuntimePersistenceConfig()
 
-    assert parameters["memory_backend"].default == "postgres"
-    assert parameters["thread_persistence_backend"].default == "postgres"
-    assert parameters["crisis_log_persistence_backend"].default == "postgres"
-    assert parameters["session_feedback_persistence_backend"].default == "postgres"
+    assert config.memory_backend == "postgres"
+    assert config.thread_persistence_backend == "postgres"
+    assert config.crisis_log_persistence_backend == "postgres"
+    assert config.session_feedback_persistence_backend == "postgres"
 
 
 def test_incognito_mode_uses_only_non_durable_application_stores() -> None:
@@ -66,7 +63,8 @@ def test_incognito_mode_uses_only_non_durable_application_stores() -> None:
         persistence_config=RuntimePersistenceConfig(memory_mode=MemoryMode.INCOGNITO)
     )
 
-    assert runtime.sqlite_path == Path(":memory:")
+    assert runtime._text_session_store is not None  # noqa: SLF001
+    assert runtime._text_session_store._config.sqlite_path == ":memory:"  # noqa: SLF001
     assert isinstance(runtime.memory_store, OpenCouchMemoryStore)
     assert isinstance(runtime.crisis_log_backend, InMemoryCrisisLogBackend)
     assert isinstance(runtime.session_feedback_backend, InMemorySessionFeedbackBackend)
@@ -97,7 +95,7 @@ def test_incognito_mode_uses_only_non_durable_application_stores() -> None:
 def test_removed_sqlite_application_stores_fail_even_with_legacy_opt_in(
     config: RuntimePersistenceConfig,
 ) -> None:
-    with pytest.raises(ValueError, match="SQLite crisis-audit and session-feedback"):
+    with pytest.raises(ValueError, match="SQLite .* persistence has been removed"):
         PersistentAgentRuntime(
             persistence_config=config,
             dependencies=RuntimeDependencies(memory_store=OpenCouchMemoryStore()),
@@ -111,30 +109,6 @@ def test_explicit_in_memory_backends_preserve_local_credential_free_runtime() ->
     assert isinstance(runtime._active_session_store, InMemoryActiveSessionStore)  # noqa: SLF001
     assert isinstance(runtime.crisis_log_backend, InMemoryCrisisLogBackend)
     assert isinstance(runtime.session_feedback_backend, InMemorySessionFeedbackBackend)
-
-
-def test_flat_memory_sqlite_path_warns_and_is_ignored(tmp_path: Path) -> None:
-    memory_store = OpenCouchMemoryStore()
-    memory_path = tmp_path / "removed-memory.sqlite3"
-
-    with pytest.warns(DeprecationWarning, match="memory_sqlite_path is ignored"):
-        runtime = PersistentAgentRuntime(
-            **{"memory_sqlite_path": memory_path},
-            persistence_config=RuntimePersistenceConfig(
-                memory_mode=MemoryMode.LOCAL,
-                memory_backend="postgres",
-                thread_persistence_backend="memory",
-                text_session_backend="disabled",
-            ),
-            dependencies=RuntimeDependencies(
-                memory_store=memory_store,
-                crisis_log_backend=InMemoryCrisisLogBackend(),
-                session_feedback_backend=InMemorySessionFeedbackBackend(),
-            ),
-        )
-
-    assert runtime.memory_store is memory_store
-    assert not memory_path.exists()
 
 
 def test_shared_postgres_configuration_selects_every_durable_store() -> None:

@@ -14,7 +14,6 @@ def make_session() -> RunnerSession:
         resolved_mode="deterministic",
         llm_client=None,
         thread_id="thread-a",
-        sqlite_path="/tmp/test.sqlite3",
         memory_mode="persistent",
         history=[
             Message(role=MessageRole.USER, content="first"),

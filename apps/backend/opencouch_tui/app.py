@@ -146,7 +146,7 @@ def config_from_args(args: argparse.Namespace) -> ConsoleConfig:
         thread_id=thread_id,
         user_id=args.user_id,
         response_model_tier=args.response_model_tier,
-        sqlite_path=args.sqlite_path,
+        text_session_sqlite_path=args.text_session_sqlite_path,
         memory_mode=args.memory_mode,
     )
 

@@ -219,10 +219,36 @@ implementations have been removed, along with the built-in SQLite memory tools.
 OpenCouch does not import, copy, or delete old `memory.sqlite3` files; inspect
 one with an older release or an external read-only SQLite tool.
 
-New durable runtime construction should use `RuntimePersistenceConfig` with a
-Postgres database URL. OpenAI Agents SDK text sessions are a separate,
-model-visible short-term history surface. The SDK `SQLiteSession` option may use
-`text_sessions.sqlite3`; it is not OpenCouch long-term memory and is preserved.
+Runtime construction accepts four keyword-only configuration groups:
+
+```python
+runtime = PersistentAgentRuntime(
+    storage_paths=RuntimeStoragePaths(
+        text_session_sqlite_path=".store/text_sessions.sqlite3",
+    ),
+    persistence_config=RuntimePersistenceConfig.for_shared_backend(
+        memory_mode=MemoryMode.LOCAL,
+        persistence_backend="postgres",
+        database_url=database_url,
+        text_session_backend="sqlite",
+        allow_legacy_sqlite=True,
+    ),
+    dependencies=RuntimeDependencies(default_llm_client=llm_client),
+    behavior_config=RuntimeBehaviorConfig(),
+)
+```
+
+`RuntimePersistenceConfig` owns backend and database settings,
+`RuntimeDependencies` owns injected services, `RuntimeBehaviorConfig` owns
+operational policy, and `RuntimeStoragePaths` owns only the separate OpenAI SDK
+text-session SQLite path. The old flat constructor keywords are no longer
+accepted.
+
+OpenAI Agents SDK text sessions are a separate, model-visible short-term history
+surface. The SDK `SQLiteSession` option may use `text_sessions.sqlite3`; it is
+not OpenCouch long-term memory and remains guarded by
+`allow_legacy_sqlite=True` when it writes to disk. The TUI exposes that path as
+`--text-session-sqlite-path`.
 
 ## Key files
 

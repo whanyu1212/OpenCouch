@@ -22,8 +22,8 @@ from agent.memory.store.postgres import PostgresMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from agent.runtime.postgres import require_postgres_database_url
 
-PersistenceBackend = Literal["sqlite", "postgres"]
-RuntimeStoreBackend = Literal["memory", "sqlite", "postgres"]
+PersistenceBackend = Literal["postgres"]
+RuntimeStoreBackend = Literal["memory", "postgres"]
 MemoryPersistenceBackend = Literal["postgres"]
 MemoryStoreBackend = Literal["memory", "postgres"]
 

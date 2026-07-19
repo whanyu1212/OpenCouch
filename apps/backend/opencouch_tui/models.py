@@ -24,7 +24,6 @@ class RunnerSession:
     resolved_mode: str
     llm_client: BaseLLMClient | None
     thread_id: str
-    sqlite_path: str
     memory_mode: str
     # Optional stable owner for long-term memory. Falls back to thread_id.
     user_id: str | None = None

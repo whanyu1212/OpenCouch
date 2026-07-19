@@ -34,6 +34,8 @@ def test_tui_parser_defaults_to_dogfood_guest_mode() -> None:
     assert config.requested_mode == "auto"
     assert config.memory_mode == "guest"
     assert config.thread_id.startswith("local-tui-")
+    assert hasattr(args, "text_session_sqlite_path")
+    assert not hasattr(args, "sqlite_path")
     assert not hasattr(args, "memory_sqlite_path")
 
 
@@ -42,6 +44,13 @@ def test_tui_parser_rejects_removed_memory_sqlite_path() -> None:
 
     with pytest.raises(SystemExit):
         build_parser().parse_args(["--memory-sqlite-path", ":memory:"])
+
+
+def test_tui_parser_rejects_removed_generic_sqlite_path() -> None:
+    from opencouch_tui.app import build_parser
+
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["--sqlite-path", ":memory:"])
 
 
 def test_tui_parser_rejects_invalid_view() -> None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from pathlib import Path
 
 import pytest
 
@@ -68,7 +67,6 @@ async def test_runtime_resources_ensure_schema_calls_state_and_active_session() 
     state_store = _CountingStateStore()
     active_session_manager = _CountingActiveSessionManager()
     resources = RuntimeResources(
-        sqlite_path=Path(":memory:"),
         thread_persistence_backend="memory",
         thread_database_url=None,
         state_store=state_store,  # type: ignore[arg-type]
@@ -93,7 +91,6 @@ async def test_runtime_resources_prewarm_initializes_text_runtime_and_embedding_
 ):
     embedding_provider = _WarmableEmbeddingProvider()
     resources = RuntimeResources(
-        sqlite_path=Path(":memory:"),
         thread_persistence_backend="memory",
         thread_database_url=None,
         state_store=_CountingStateStore(),  # type: ignore[arg-type]
@@ -130,7 +127,6 @@ async def test_runtime_resources_aclose_closes_owned_resources_in_order() -> Non
             call_order.append(self.name)
 
     resources = RuntimeResources(
-        sqlite_path=Path(":memory:"),
         thread_persistence_backend="memory",
         thread_database_url=None,
         state_store=_OrderedClosable("state_store"),  # type: ignore[arg-type]
@@ -161,7 +157,6 @@ def test_build_runtime_resources_requires_database_url_for_postgres_thread_backe
     with pytest.raises(ValueError, match="OPENCOUCH_MEMORY_DATABASE_URL"):
         build_runtime_resources(
             memory_mode=MemoryMode.LOCAL,
-            sqlite_path=":memory:",
             text_session_sqlite_path=None,
             thread_persistence_backend="postgres",
             thread_database_url=None,
@@ -180,3 +175,58 @@ def test_build_runtime_resources_requires_database_url_for_postgres_thread_backe
             session_feedback_database_url="postgresql://unused/feedback",
             embedding_provider=NullEmbeddingProvider(),
         )
+
+
+def test_build_runtime_resources_uses_configured_sdk_sqlite_path(tmp_path) -> None:
+    text_session_path = tmp_path / "text-sessions.sqlite3"
+    resources = build_runtime_resources(
+        memory_mode=MemoryMode.LOCAL,
+        text_session_sqlite_path=text_session_path,
+        thread_persistence_backend="memory",
+        thread_database_url=None,
+        text_session_backend="sqlite",
+        text_session_database_url=None,
+        text_session_create_tables=True,
+        text_session_history_limit=None,
+        memory_store=OpenCouchMemoryStore(),
+        memory_backend="postgres",
+        memory_database_url=None,
+        crisis_log_backend=_CountingClosable(),  # type: ignore[arg-type]
+        crisis_log_persistence_backend="postgres",
+        crisis_log_database_url=None,
+        session_feedback_backend=_CountingClosable(),  # type: ignore[arg-type]
+        session_feedback_persistence_backend="postgres",
+        session_feedback_database_url=None,
+        embedding_provider=NullEmbeddingProvider(),
+    )
+
+    assert resources.text_session_store is not None
+    assert resources.text_session_store._config.sqlite_path == text_session_path  # noqa: SLF001
+
+
+def test_build_runtime_resources_forces_incognito_sdk_sessions_to_memory(
+    tmp_path,
+) -> None:
+    resources = build_runtime_resources(
+        memory_mode=MemoryMode.INCOGNITO,
+        text_session_sqlite_path=tmp_path / "must-not-exist.sqlite3",
+        thread_persistence_backend="postgres",
+        thread_database_url=None,
+        text_session_backend="sqlite",
+        text_session_database_url=None,
+        text_session_create_tables=True,
+        text_session_history_limit=None,
+        memory_store=None,
+        memory_backend="postgres",
+        memory_database_url=None,
+        crisis_log_backend=None,
+        crisis_log_persistence_backend="postgres",
+        crisis_log_database_url=None,
+        session_feedback_backend=None,
+        session_feedback_persistence_backend="postgres",
+        session_feedback_database_url=None,
+        embedding_provider=None,
+    )
+
+    assert resources.text_session_store is not None
+    assert resources.text_session_store._config.sqlite_path == ":memory:"  # noqa: SLF001

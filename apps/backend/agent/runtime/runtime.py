@@ -8,14 +8,12 @@ import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import timedelta
-from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.audit.crisis_log import CrisisLogBackend
 from agent.feedback.session_feedback import SessionFeedbackBackend
 from agent.memory.hashing import iso_now as _iso_now
-from agent.memory.providers.embeddings import EmbeddingProvider
 from agent.memory.retrieval.service import load_memory_for_turn
 from agent.feedback.models import (
     FeedbackLabel,
@@ -43,23 +41,17 @@ from agent.runtime.streaming import (
     response_ready_output,
     stamp_turn_total_ms,
 )
-from agent.runtime.session_store import TextSessionBackend
 from agent.runtime.openai_text_runtime import OpenAITextRuntime
 from agent.runtime.sdk_session_bridge import SdkSessionBridge
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
-from agent.runtime import configuration as _runtime_configuration
 from agent.runtime.configuration import (
-    SESSION_TIMEOUT,
+    DEFAULT_TEXT_SESSION_DB_PATH as DEFAULT_TEXT_SESSION_DB_PATH,
     RuntimeBehaviorConfig,
     RuntimeDependencies,
     RuntimePersistenceConfig,
     RuntimeStoragePaths,
-    _UNSET,
-    _resolve_runtime_behavior_config,
-    _resolve_runtime_dependencies,
-    _resolve_runtime_persistence_config,
-    _resolve_runtime_storage_paths,
+    validate_runtime_configuration,
 )
 from agent.runtime.resources import RuntimeResources, build_runtime_resources
 from agent.models import (
@@ -90,12 +82,6 @@ from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
-# Preserve direct imports from ``agent.runtime.runtime`` for external callers.
-DEFAULT_THREAD_DB_PATH = _runtime_configuration.DEFAULT_THREAD_DB_PATH
-DEFAULT_TEXT_SESSION_DB_PATH = _runtime_configuration.DEFAULT_TEXT_SESSION_DB_PATH
-DEFAULT_CRISIS_LOG_DB_PATH = _runtime_configuration.DEFAULT_CRISIS_LOG_DB_PATH
-DEFAULT_FEEDBACK_DB_PATH = _runtime_configuration.DEFAULT_FEEDBACK_DB_PATH
-
 
 @dataclass(slots=True)
 class PreparedTextTurn:
@@ -120,236 +106,56 @@ class PersistentAgentRuntime:
 
     def __init__(
         self,
-        sqlite_path: str | Path | object = _UNSET,
         *,
         storage_paths: RuntimeStoragePaths | None = None,
         persistence_config: RuntimePersistenceConfig | None = None,
         dependencies: RuntimeDependencies | None = None,
         behavior_config: RuntimeBehaviorConfig | None = None,
-        memory_store: MemoryStore | None = None,
-        crisis_log_backend: CrisisLogBackend | None = None,
-        session_feedback_backend: SessionFeedbackBackend | None = None,
-        memory_mode: MemoryMode = MemoryMode.LOCAL,
-        memory_backend: Literal["sqlite", "postgres"] = "postgres",
-        memory_database_url: str | None = None,
-        thread_persistence_backend: Literal[
-            "memory", "sqlite", "postgres"
-        ] = "postgres",
-        thread_database_url: str | None = None,
-        crisis_log_persistence_backend: Literal["sqlite", "postgres"] = "postgres",
-        crisis_log_database_url: str | None = None,
-        session_feedback_persistence_backend: Literal[
-            "sqlite", "postgres"
-        ] = "postgres",
-        session_feedback_database_url: str | None = None,
-        memory_sqlite_path: str | Path | object = _UNSET,
-        text_session_backend: TextSessionBackend = "auto",
-        text_session_database_url: str | None = None,
-        text_session_sqlite_path: str | Path | None | object = _UNSET,
-        text_session_create_tables: bool = True,
-        text_session_history_limit: int | None = None,
-        crisis_log_sqlite_path: str | Path | object = _UNSET,
-        feedback_sqlite_path: str | Path | object = _UNSET,
-        embedding_provider: "EmbeddingProvider | None" = None,
-        default_llm_client: BaseLLMClient | None = None,
-        session_timeout: timedelta = SESSION_TIMEOUT,
-        session_sweep_interval_seconds: float = 30.0,
-        finalize_active_sessions_on_close: bool = True,
-        auto_finalize_excluded: Callable[[str], bool] | None = None,
-        speculative_memory_prefetch: bool = True,
     ) -> None:
-        """Initialize the runtime.
+        """Initialize the runtime from its four grouped configuration boundaries."""
 
-        Args:
-            sqlite_path: Deprecated compatibility path. It no longer backs
-                runtime thread state and remains only as the default parent for
-                SDK text-session SQLite. Forced to ``:memory:`` in incognito mode.
-            storage_paths: Optional grouped compatibility path overrides. When
-                provided, these values take precedence over legacy path arguments.
-            persistence_config: Optional grouped backend and database URL
-                settings. When provided, these values take precedence over the
-                legacy persistence arguments.
-            dependencies: Optional grouped dependency overrides. When provided,
-                these values take precedence over the legacy dependency args.
-            behavior_config: Optional grouped runtime behavior settings. When
-                provided, these values take precedence over the legacy behavior
-                arguments.
-            memory_store: Optional explicit memory-store override.
-            crisis_log_backend: Optional explicit crisis-log override.
-            session_feedback_backend: Optional explicit feedback-backend override.
-            memory_mode: Persistence tier for the runtime.
-            memory_backend: Memory-store backend to use for persistent modes.
-            memory_database_url: PostgreSQL connection string used when
-                ``memory_backend`` is ``"postgres"``.
-            thread_persistence_backend: Runtime thread-state backend. Use
-                ``"postgres"`` for durable state or ``"memory"`` for ephemeral state.
-            thread_database_url: PostgreSQL connection string used when
-                ``thread_persistence_backend`` is ``"postgres"``.
-            crisis_log_persistence_backend: Crisis-log backend to use for
-                persistent modes.
-            crisis_log_database_url: PostgreSQL connection string used when
-                ``crisis_log_persistence_backend`` is ``"postgres"``.
-            session_feedback_persistence_backend: Session-feedback backend to use
-                for persistent modes.
-            session_feedback_database_url: PostgreSQL connection string used when
-                ``session_feedback_persistence_backend`` is ``"postgres"``.
-            memory_sqlite_path: Deprecated path for the removed SQLite memory
-                store. Accepted with a warning and ignored until #266.
-            text_session_backend: Optional OpenAI Agents SDK session backend
-                used for model-visible short-term conversation memory.
-            text_session_database_url: SQLAlchemy async-capable database URL
-                used when ``text_session_backend`` is ``"sqlalchemy"``.
-            text_session_sqlite_path: Deprecated direct SQLite path for the SDK
-                session store. Use ``storage_paths`` instead. Defaults to a
-                ``text_sessions.sqlite3`` sibling of the runtime state database,
-                and to ``:memory:`` for in-memory threads.
-            text_session_create_tables: Whether SQLAlchemy SDK sessions may
-                create their own tables when first used.
-            text_session_history_limit: Optional SDK session item limit.
-            crisis_log_sqlite_path: Inert deprecated compatibility field; the
-                SQLite crisis-log backend has been removed.
-            feedback_sqlite_path: Inert deprecated compatibility field; the
-                SQLite feedback backend has been removed.
-            embedding_provider: Optional explicit embedding provider override.
-            default_llm_client: Optional fallback LLM client for shutdown and
-                timeout-driven finalization.
-            session_timeout: Inactivity window before an active session expires.
-            session_sweep_interval_seconds: How often the sweeper checks for
-                expired sessions.
-            finalize_active_sessions_on_close: Whether ``__aexit__`` should
-                best-effort finalize unresolved sessions.
-            auto_finalize_excluded: Optional predicate for thread ids that
-                external channel registries own and should finalize explicitly.
-            speculative_memory_prefetch: When ``True`` (default), schedule a
-                turn-memory load at turn start so it overlaps with the
-                crisis/control/grounded gates. The wasted work on non-load
-                paths is bounded; set to ``False`` to revert to the strictly
-                sequential load.
-        """
-
-        resolved_storage_paths = _resolve_runtime_storage_paths(
-            sqlite_path=sqlite_path,
-            storage_paths=storage_paths,
-            memory_sqlite_path=memory_sqlite_path,
-            crisis_log_sqlite_path=crisis_log_sqlite_path,
-            feedback_sqlite_path=feedback_sqlite_path,
-            text_session_sqlite_path=text_session_sqlite_path,
-        )
-        sqlite_path = resolved_storage_paths.sqlite_path
-        text_session_sqlite_path = resolved_storage_paths.text_session_sqlite_path
-
-        resolved_dependencies = _resolve_runtime_dependencies(
-            dependencies=dependencies,
-            memory_store=memory_store,
-            crisis_log_backend=crisis_log_backend,
-            session_feedback_backend=session_feedback_backend,
-            embedding_provider=embedding_provider,
-            default_llm_client=default_llm_client,
-            auto_finalize_excluded=auto_finalize_excluded,
-        )
-        memory_store = resolved_dependencies.memory_store
-        crisis_log_backend = resolved_dependencies.crisis_log_backend
-        session_feedback_backend = resolved_dependencies.session_feedback_backend
-        embedding_provider = resolved_dependencies.embedding_provider
-        default_llm_client = resolved_dependencies.default_llm_client
-        auto_finalize_excluded = resolved_dependencies.auto_finalize_excluded
-
-        resolved_persistence_config = _resolve_runtime_persistence_config(
-            persistence_config=persistence_config,
-            memory_mode=memory_mode,
-            memory_backend=memory_backend,
-            memory_database_url=memory_database_url,
-            thread_persistence_backend=thread_persistence_backend,
-            thread_database_url=thread_database_url,
-            sqlite_path=sqlite_path,
-            sqlite_path_configured=resolved_storage_paths.sqlite_path_configured,
-            crisis_log_persistence_backend=crisis_log_persistence_backend,
-            crisis_log_database_url=crisis_log_database_url,
-            crisis_log_backend=crisis_log_backend,
-            session_feedback_persistence_backend=session_feedback_persistence_backend,
-            session_feedback_database_url=session_feedback_database_url,
-            session_feedback_backend=session_feedback_backend,
-            text_session_backend=text_session_backend,
-            text_session_database_url=text_session_database_url,
-            text_session_sqlite_path=text_session_sqlite_path,
-            text_session_sqlite_path_configured=(
-                resolved_storage_paths.text_session_sqlite_path_configured
-            ),
-        )
-        memory_mode = resolved_persistence_config.memory_mode
-        memory_backend = resolved_persistence_config.memory_backend
-        memory_database_url = resolved_persistence_config.memory_database_url
-        thread_persistence_backend = (
-            resolved_persistence_config.thread_persistence_backend
-        )
-        thread_database_url = resolved_persistence_config.thread_database_url
-        crisis_log_persistence_backend = (
-            resolved_persistence_config.crisis_log_persistence_backend
-        )
-        crisis_log_database_url = resolved_persistence_config.crisis_log_database_url
-        session_feedback_persistence_backend = (
-            resolved_persistence_config.session_feedback_persistence_backend
-        )
-        session_feedback_database_url = (
-            resolved_persistence_config.session_feedback_database_url
-        )
-        text_session_backend = resolved_persistence_config.text_session_backend
-        text_session_database_url = (
-            resolved_persistence_config.text_session_database_url
-        )
-
-        resolved_behavior_config = _resolve_runtime_behavior_config(
-            behavior_config=behavior_config,
-            text_session_create_tables=text_session_create_tables,
-            text_session_history_limit=text_session_history_limit,
-            session_timeout=session_timeout,
-            session_sweep_interval_seconds=session_sweep_interval_seconds,
-            finalize_active_sessions_on_close=finalize_active_sessions_on_close,
-            speculative_memory_prefetch=speculative_memory_prefetch,
-        )
-        text_session_create_tables = resolved_behavior_config.text_session_create_tables
-        text_session_history_limit = resolved_behavior_config.text_session_history_limit
-        session_timeout = resolved_behavior_config.session_timeout
-        session_sweep_interval_seconds = (
-            resolved_behavior_config.session_sweep_interval_seconds
-        )
-        finalize_active_sessions_on_close = (
-            resolved_behavior_config.finalize_active_sessions_on_close
-        )
-        speculative_memory_prefetch = (
-            resolved_behavior_config.speculative_memory_prefetch
+        storage = storage_paths or RuntimeStoragePaths()
+        persistence = persistence_config or RuntimePersistenceConfig()
+        runtime_dependencies = dependencies or RuntimeDependencies()
+        behavior = behavior_config or RuntimeBehaviorConfig()
+        validate_runtime_configuration(
+            persistence=persistence,
+            storage_paths=storage,
         )
 
         runtime_resources = build_runtime_resources(
-            memory_mode=memory_mode,
-            sqlite_path=sqlite_path,
-            text_session_sqlite_path=text_session_sqlite_path,
-            thread_persistence_backend=thread_persistence_backend,
-            thread_database_url=thread_database_url,
-            text_session_backend=text_session_backend,
-            text_session_database_url=text_session_database_url,
-            text_session_create_tables=text_session_create_tables,
-            text_session_history_limit=text_session_history_limit,
-            memory_store=memory_store,
-            memory_backend=memory_backend,
-            memory_database_url=memory_database_url,
-            crisis_log_backend=crisis_log_backend,
-            crisis_log_persistence_backend=crisis_log_persistence_backend,
-            crisis_log_database_url=crisis_log_database_url,
-            session_feedback_backend=session_feedback_backend,
-            session_feedback_persistence_backend=session_feedback_persistence_backend,
-            session_feedback_database_url=session_feedback_database_url,
-            embedding_provider=embedding_provider,
+            memory_mode=persistence.memory_mode,
+            text_session_sqlite_path=storage.text_session_sqlite_path,
+            thread_persistence_backend=persistence.thread_persistence_backend,
+            thread_database_url=persistence.thread_database_url,
+            text_session_backend=persistence.text_session_backend,
+            text_session_database_url=persistence.text_session_database_url,
+            text_session_create_tables=behavior.text_session_create_tables,
+            text_session_history_limit=behavior.text_session_history_limit,
+            memory_store=runtime_dependencies.memory_store,
+            memory_backend=persistence.memory_backend,
+            memory_database_url=persistence.memory_database_url,
+            crisis_log_backend=runtime_dependencies.crisis_log_backend,
+            crisis_log_persistence_backend=(persistence.crisis_log_persistence_backend),
+            crisis_log_database_url=persistence.crisis_log_database_url,
+            session_feedback_backend=runtime_dependencies.session_feedback_backend,
+            session_feedback_persistence_backend=(
+                persistence.session_feedback_persistence_backend
+            ),
+            session_feedback_database_url=(persistence.session_feedback_database_url),
+            embedding_provider=runtime_dependencies.embedding_provider,
         )
         self._wire_runtime_resources(
             resources=runtime_resources,
-            memory_mode=memory_mode,
-            default_llm_client=default_llm_client,
-            session_timeout=session_timeout,
-            session_sweep_interval_seconds=session_sweep_interval_seconds,
-            finalize_active_sessions_on_close=finalize_active_sessions_on_close,
-            auto_finalize_excluded=auto_finalize_excluded,
-            speculative_memory_prefetch=speculative_memory_prefetch,
+            memory_mode=persistence.memory_mode,
+            default_llm_client=runtime_dependencies.default_llm_client,
+            session_timeout=behavior.session_timeout,
+            session_sweep_interval_seconds=behavior.session_sweep_interval_seconds,
+            finalize_active_sessions_on_close=(
+                behavior.finalize_active_sessions_on_close
+            ),
+            auto_finalize_excluded=runtime_dependencies.auto_finalize_excluded,
+            speculative_memory_prefetch=behavior.speculative_memory_prefetch,
         )
 
     def _wire_runtime_resources(
@@ -380,7 +186,6 @@ class PersistentAgentRuntime:
         self._thread_lock_manager = ThreadLockManager()
 
         self._resources: RuntimeResources = resources
-        self.sqlite_path = resources.sqlite_path
         self._thread_persistence_backend = resources.thread_persistence_backend
         self._thread_database_url = resources.thread_database_url
         self._state_store = resources.state_store

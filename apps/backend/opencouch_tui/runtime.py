@@ -14,7 +14,7 @@ from agent.memory.store import MemoryStore, Namespace, StoreRecord
 from agent.memory.types import SemanticFact, StoredSessionArc
 from agent.models import Message, StreamEvent
 from agent.runtime import (
-    DEFAULT_THREAD_DB_PATH,
+    DEFAULT_TEXT_SESSION_DB_PATH,
     PersistentAgentRuntime,
     RuntimeBehaviorConfig,
     RuntimeDependencies,
@@ -76,7 +76,7 @@ class ConsoleConfig:
     thread_id: str = "local-tui"
     user_id: str | None = None
     response_model_tier: ResponseModelTier = "fast"
-    sqlite_path: str = str(DEFAULT_THREAD_DB_PATH)
+    text_session_sqlite_path: str = str(DEFAULT_TEXT_SESSION_DB_PATH)
     memory_mode: MemoryModeName = "guest"
 
 
@@ -171,7 +171,11 @@ class ConsoleRuntime:
 
         runtime = PersistentAgentRuntime(
             storage_paths=RuntimeStoragePaths(
-                sqlite_path=":memory:" if is_guest_mode else self.config.sqlite_path,
+                text_session_sqlite_path=(
+                    ":memory:"
+                    if is_guest_mode
+                    else self.config.text_session_sqlite_path
+                ),
             ),
             persistence_config=persistence_config,
             dependencies=RuntimeDependencies(default_llm_client=llm_client),

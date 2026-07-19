@@ -31,6 +31,7 @@ from agent.runtime.session.active_session import (
     PostgresActiveSessionStore,
 )
 from agent.runtime.postgres import require_postgres_database_url
+from agent.runtime.configuration import DEFAULT_TEXT_SESSION_DB_PATH
 from agent.runtime.session_store import (
     TextSessionBackend,
     TextSessionStore,
@@ -40,14 +41,11 @@ from agent.runtime.state_store import RuntimeStateStore, create_runtime_state_st
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TEXT_SESSION_DB_FILENAME = "text_sessions.sqlite3"
-
 
 @dataclass(slots=True)
 class RuntimeResources:
     """Runtime-owned storage backends and warmup/close helpers."""
 
-    sqlite_path: Path
     thread_persistence_backend: RuntimeStoreBackend
     thread_database_url: str | None
     state_store: RuntimeStateStore
@@ -96,7 +94,6 @@ class RuntimeResources:
 def build_runtime_resources(
     *,
     memory_mode: MemoryMode,
-    sqlite_path: str | Path,
     text_session_sqlite_path: str | Path | None,
     thread_persistence_backend: RuntimeStoreBackend,
     thread_database_url: str | None,
@@ -117,19 +114,12 @@ def build_runtime_resources(
 ) -> RuntimeResources:
     """Build internal runtime-owned stores, backends, and providers."""
     is_incognito = memory_mode == MemoryMode.INCOGNITO
-    resolved_sqlite = ":memory:" if is_incognito else sqlite_path
-    resolved_runtime_sqlite_path = (
-        Path(resolved_sqlite) if resolved_sqlite != ":memory:" else Path(":memory:")
-    )
-
-    if text_session_sqlite_path is not None:
-        resolved_text_session_sqlite_path = text_session_sqlite_path
-    elif resolved_sqlite == ":memory:":
+    if is_incognito:
         resolved_text_session_sqlite_path = ":memory:"
+    elif text_session_sqlite_path is not None:
+        resolved_text_session_sqlite_path = text_session_sqlite_path
     else:
-        resolved_text_session_sqlite_path = Path(resolved_sqlite).with_name(
-            DEFAULT_TEXT_SESSION_DB_FILENAME
-        )
+        resolved_text_session_sqlite_path = DEFAULT_TEXT_SESSION_DB_PATH
 
     backend_selection = select_runtime_backends(
         memory_mode=memory_mode,
@@ -199,7 +189,6 @@ def build_runtime_resources(
     )
 
     return RuntimeResources(
-        sqlite_path=resolved_runtime_sqlite_path,
         thread_persistence_backend=backend_selection.thread_persistence_backend,
         thread_database_url=resolved_thread_database_url,
         state_store=state_store,

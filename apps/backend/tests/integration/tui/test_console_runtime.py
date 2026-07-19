@@ -129,15 +129,15 @@ async def test_console_runtime_reports_recoverable_turn_errors(monkeypatch) -> N
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("memory_mode", "expected_thread_path", "expected_user_id"),
+    ("memory_mode", "expected_session_path", "expected_user_id"),
     [
         ("guest", ":memory:", None),
-        ("persistent", "/tmp/thread.sqlite3", "alice"),
+        ("persistent", "/tmp/text-sessions.sqlite3", "alice"),
     ],
 )
-async def test_console_runtime_uses_sqlite_path_only_for_sdk_sessions(
+async def test_console_runtime_uses_explicit_sdk_session_sqlite_path(
     memory_mode: str,
-    expected_thread_path: str | None,
+    expected_session_path: str | None,
     expected_user_id: str | None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -185,7 +185,7 @@ async def test_console_runtime_uses_sqlite_path_only_for_sdk_sessions(
             thread_id="tui-storage-paths",
             user_id="alice",
             memory_mode=memory_mode,
-            sqlite_path="/tmp/thread.sqlite3",
+            text_session_sqlite_path="/tmp/text-sessions.sqlite3",
         )
     ) as runtime:
         session = runtime.session
@@ -197,7 +197,7 @@ async def test_console_runtime_uses_sqlite_path_only_for_sdk_sessions(
     assert "memory_sqlite_path" not in kwargs
     storage_paths = kwargs["storage_paths"]
     assert isinstance(storage_paths, RuntimeStoragePaths)
-    assert storage_paths.sqlite_path == expected_thread_path
+    assert storage_paths.text_session_sqlite_path == expected_session_path
     persistence_config = kwargs["persistence_config"]
     assert persistence_config.memory_backend == "postgres"
     assert persistence_config.thread_persistence_backend == "postgres"
