@@ -376,6 +376,8 @@ def _response_path_from_diagnostics(
     # Voice crisis turns answer in the Realtime model's live reply, not via the
     # text SDK tool loop, so none of the text fallback keys below are set. Map
     # them to "sdk" up front; otherwise every voice record would read "unknown".
+    if diagnostics.get("voice_turn_outcome") == "safety_interrupted":
+        return "safety_overlay"
     if diagnostics.get("voice_runtime") == "openai_realtime":
         return "sdk"
     if diagnostics.get("openai_response_llm_override") is True:

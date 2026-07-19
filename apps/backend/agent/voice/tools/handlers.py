@@ -179,6 +179,7 @@ async def _handle_lookup_crisis_resources(
     await dispatch_context.runtime.voice.persist_voice_crisis_resource_lookup(
         thread_id=dispatch_context.thread_id,
         user_id=dispatch_context.user_id,
+        client_turn_id=dispatch_context.client_turn_id,
         inferred_location=result.inferred_location,
         found_resources=result.found_resources,
         resource_lookup_status=result.resource_lookup_status,

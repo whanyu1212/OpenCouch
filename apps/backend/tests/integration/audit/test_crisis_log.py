@@ -1069,6 +1069,7 @@ class TestCrisisStatusLiteralConsolidation:
 
         assert set(get_args(CrisisResourceLookupStatus)) == {
             "not_attempted",
+            "pending",
             "found",
             "no_location",
             "location_refused",

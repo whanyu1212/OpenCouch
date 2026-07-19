@@ -161,6 +161,7 @@ async def execute_voice_tool_call(
     user_id: str | None,
     current_user_message: str,
     transcript: list[dict[str, object]],
+    client_turn_id: str | None = None,
     memory_mode: str | None = None,
     llm_client: BaseLLMClient | None = None,
 ) -> dict[str, object]:
@@ -264,6 +265,7 @@ async def execute_voice_tool_call(
                 tool_context=tool_context,
                 thread_id=thread_id,
                 user_id=user_id,
+                client_turn_id=client_turn_id,
             ),
             arguments,
         )

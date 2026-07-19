@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -12,6 +13,8 @@ from agent.observability.context import TraceContext, use_trace_context
 from agent.observability.events import (
     VOICE_CONCURRENT_SAFETY_ASSESSED,
     VOICE_CONCURRENT_SAFETY_TURN_OBSERVED,
+    VOICE_SAFETY_INTERRUPTION_DECIDED,
+    VOICE_SAFETY_RESOURCES_RESOLVED,
 )
 from agent.observability.recorder import InMemoryTraceRecorder
 from agent.runtime import PersistentAgentRuntime
@@ -108,11 +111,19 @@ async def test_safety_endpoint_returns_status_and_privacy_safe_event(
         state = await runtime.get_state("private-thread-id")
 
     assert response.status_code == 200
-    assert response.json() == {
+    body = response.json()
+    assert {key: body[key] for key in ("client_turn_id", "status", "reason")} == {
         "client_turn_id": "private-client-turn-id",
         "status": "completed",
         "reason": None,
     }
+    assert body["action"] == "interrupt"
+    assert body["risk_level"] == 2
+    assert isinstance(body["interruption_token"], str)
+    assert body["interruption_token"]
+    assert set(body["support"]) == {"headline", "validation", "immediate_step"}
+    assert all(body["support"].values())
+    assert "private classifier reason" not in str(body)
     assert state is None
     event = next(
         event
@@ -133,6 +144,14 @@ async def test_safety_endpoint_returns_status_and_privacy_safe_event(
     assert "private-client-turn-id" not in rendered
     assert "I might hurt myself" not in rendered
     assert "private classifier reason" not in rendered
+    decision_event = next(
+        event
+        for event in recorder.events
+        if event.name == VOICE_SAFETY_INTERRUPTION_DECIDED
+    )
+    assert decision_event.attributes["action"] == "interrupt"
+    assert decision_event.attributes["risk_level"] == 2
+    assert "private classifier reason" not in str(decision_event.attributes)
 
 
 @pytest.mark.asyncio
@@ -162,7 +181,164 @@ async def test_safety_endpoint_reports_missing_llm_skip(
         "client_turn_id": "turn-1",
         "status": "skipped",
         "reason": "no_llm_client",
+        "action": "continue",
+        "risk_level": None,
+        "support": None,
+        "interruption_token": None,
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("lookup_status", "location", "resources"),
+    [
+        (
+            "found",
+            "Singapore",
+            [
+                {
+                    "name": "Verified Line",
+                    "phone": "123",
+                    "url": "https://example.test",
+                    "region": "Singapore",
+                }
+            ],
+        ),
+        ("no_location", "", []),
+        ("location_refused", "", []),
+        ("no_verified_results", "Singapore", []),
+        ("lookup_error", "Singapore", []),
+    ],
+)
+async def test_resource_endpoint_contract_uses_snapshot_without_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    lookup_status: str,
+    location: str,
+    resources: list[dict[str, str]],
+) -> None:
+    runtime = _runtime()
+    observed: dict[str, Any] = {}
+
+    async def fake_lookup(request, *, llm_client):
+        observed["message"] = request.current_user_message
+        observed["transcript"] = list(request.transcript)
+        assert llm_client is not None
+        return location, resources, lookup_status
+
+    monkeypatch.setattr(
+        "agent.voice.runtime_facade.find_crisis_resources_for_request",
+        fake_lookup,
+    )
+    app = _app(monkeypatch, runtime, _ConcurrentSafetyLLM())
+    recorder = InMemoryTraceRecorder()
+    trace_context = TraceContext(
+        trace_id="voice-resources", config=TraceConfig(enabled=True)
+    )
+
+    async with runtime:
+        await runtime.voice.record_voice_turn(
+            thread_id="private-resource-thread",
+            user_id=None,
+            user_text="Earlier user text.",
+            assistant_text="Earlier assistant text.",
+            llm_client=None,
+        )
+        before = await runtime.get_state("private-resource-thread")
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            with use_trace_context(trace_context, recorder):
+                response = await client.post(
+                    "/api/voice/realtime/safety/resources",
+                    json={
+                        "thread_id": "private-resource-thread",
+                        "client_turn_id": "private-resource-turn",
+                        "user_text": "Current private text.",
+                        "prior_message_count": 1,
+                        "pending_prior_transcript": [
+                            {"role": "assistant", "content": "Pending prior text."}
+                        ],
+                    },
+                )
+        after = await runtime.get_state("private-resource-thread")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["client_turn_id"] == "private-resource-turn"
+    assert body["status"] == lookup_status
+    assert body["inferred_location"] == ""
+    assert body["resources"] == (resources if lookup_status == "found" else [])
+    assert body["message"]
+    assert observed == {
+        "message": "Current private text.",
+        "transcript": [
+            {"role": "user", "content": "Earlier user text."},
+            {
+                "role": "assistant",
+                "content": "Earlier assistant text.",
+                "response_style": "voice",
+            },
+            {"role": "assistant", "content": "Pending prior text."},
+        ],
+    }
+    assert after == before
+    event = next(
+        event
+        for event in recorder.events
+        if event.name == VOICE_SAFETY_RESOURCES_RESOLVED
+    )
+    assert event.attributes["status"] == lookup_status
+    assert event.attributes["resource_count"] == len(body["resources"])
+    rendered = str(event.attributes)
+    assert "private-resource-thread" not in rendered
+    assert "private-resource-turn" not in rendered
+    assert "Current private text" not in rendered
+    assert location not in rendered or not location
+    assert all(resource["name"] not in rendered for resource in resources)
+
+
+@pytest.mark.asyncio
+async def test_resource_endpoint_timeout_maps_to_lookup_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime()
+
+    async def slow_lookup(request, *, llm_client):
+        del request, llm_client
+        await asyncio.sleep(0.05)
+        return "Never returned", [], "no_verified_results"
+
+    monkeypatch.setattr(
+        "agent.voice.runtime_facade.find_crisis_resources_for_request",
+        slow_lookup,
+    )
+    monkeypatch.setattr(
+        "agent.voice.runtime_facade._SAFETY_RESOURCE_LOOKUP_TIMEOUT_SECONDS",
+        0.005,
+    )
+    app = _app(monkeypatch, runtime, _ConcurrentSafetyLLM())
+
+    async with runtime:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/voice/realtime/safety/resources",
+                json={
+                    "thread_id": "voice-timeout",
+                    "client_turn_id": "turn-timeout",
+                    "user_text": "Current text.",
+                    "prior_message_count": 0,
+                },
+            )
+        state = await runtime.get_state("voice-timeout")
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "lookup_error"
+    assert response.json()["resources"] == []
+    assert state is None
 
 
 @pytest.mark.asyncio

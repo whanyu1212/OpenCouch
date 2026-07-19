@@ -15,6 +15,7 @@ import {
 import {
   startTextChatStream,
   useSessionStore,
+  voiceFinalizationBlocksTextTurns,
   type ChatMessage,
   type EndedSessionResult,
 } from "@/lib/session";
@@ -194,6 +195,11 @@ export default function TextChatPage() {
   const lastEndedSession = useSessionStore((s) => s.lastEndedSession);
   const clearLastEndedSession = useSessionStore((s) => s.clearLastEndedSession);
   const responseModelTier = useSessionStore((s) => s.responseModelTier);
+  const voiceFinalization = useSessionStore((s) => s.voiceFinalization);
+  const voiceTurnUnsettled = voiceFinalizationBlocksTextTurns(
+    voiceFinalization,
+    threadId
+  );
   const {
     runAction,
     startNewSession,
@@ -297,6 +303,10 @@ export default function TextChatPage() {
     (text?: string) => {
       const msg = (text || input).trim();
       if (!msg) return;
+      if (voiceTurnUnsettled) {
+        setNotice("Finish or retry saving the interrupted voice turn first.");
+        return;
+      }
       const slashCommand = resolveSlashCommand(msg);
       if (!slashCommand && isLoading) return;
 
@@ -358,6 +368,7 @@ export default function TextChatPage() {
       clearLastEndedSession,
       setNotice,
       runAction,
+      voiceTurnUnsettled,
     ]
   );
 
@@ -684,7 +695,7 @@ export default function TextChatPage() {
               onChange={handleInput}
               onKeyDown={handleKeyDown}
               placeholder="Say what's on your mind…"
-              disabled={isLoading}
+              disabled={isLoading || voiceTurnUnsettled}
               autoFocus
               rows={1}
               className="oc-composer-input"
@@ -692,7 +703,7 @@ export default function TextChatPage() {
             <button
               type="button"
               onClick={() => sendMessage()}
-              disabled={isLoading || !input.trim()}
+              disabled={isLoading || voiceTurnUnsettled || !input.trim()}
               aria-label="Send message"
               className="oc-composer-send"
             >

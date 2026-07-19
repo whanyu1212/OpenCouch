@@ -11,6 +11,13 @@ from httpx import ASGITransport, AsyncClient
 from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
 from agent.models import MessageRole
+from agent.observability.config import TraceConfig
+from agent.observability.context import TraceContext, use_trace_context
+from agent.observability.events import (
+    VOICE_RESPONSE_FINALIZED,
+    VOICE_SAFETY_INTERRUPTED_TURN_RECORDED,
+)
+from agent.observability.recorder import InMemoryTraceRecorder
 from agent.runtime import PersistentAgentRuntime, RuntimeBehaviorConfig
 from api.dependencies import get_llm_client
 from api.router import api_router
@@ -221,6 +228,285 @@ async def test_voice_turn_endpoint_infers_route_and_tool_metadata(
 
 
 @pytest.mark.asyncio
+async def test_safety_interrupted_turn_persists_user_and_settled_tools_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+    )
+    llm = _VoiceCrisisAuditLLM(level=3)
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    recorder = InMemoryTraceRecorder()
+    trace_context = TraceContext(
+        trace_id="voice-interrupted", config=TraceConfig(enabled=True)
+    )
+
+    async with runtime:
+        await runtime.voice.persist_voice_crisis_resource_lookup(
+            thread_id="private-interrupted-thread",
+            user_id="user-1",
+            client_turn_id="private-interrupted-turn",
+            inferred_location="",
+            found_resources=[],
+            resource_lookup_status="lookup_error",
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            with use_trace_context(trace_context, recorder):
+                response = await client.post(
+                    "/api/voice/realtime/turn",
+                    json={
+                        "thread_id": "private-interrupted-thread",
+                        "client_turn_id": "private-interrupted-turn",
+                        "interruption_token": voice_routes._VOICE_SAFETY_PROOFS.issue(
+                            thread_id="private-interrupted-thread",
+                            client_turn_id="private-interrupted-turn",
+                            user_text="I might hurt myself.",
+                            user_id="user-1",
+                            memory_mode="persistent",
+                            risk_level=3,
+                        ),
+                        "user_id": "user-1",
+                        "outcome": "safety_interrupted",
+                        "user_text": "I might hurt myself.",
+                        "assistant_text": "Partial assistant audio must disappear.",
+                        "route": "crisis",
+                        "response_style": "crisis_response",
+                        "tool_calls": [
+                            {
+                                "tool_name": "lookup_crisis_resources",
+                                "status": "completed",
+                                "output": {"resource_lookup_status": "lookup_error"},
+                            },
+                            {
+                                "tool_name": "settled_failed_tool",
+                                "status": "failed",
+                                "error": "settled diagnostic",
+                            },
+                            {
+                                "tool_name": "unsettled_tool",
+                                "status": "started",
+                                "output": {"partial": True},
+                            },
+                        ],
+                    },
+                )
+        state = await runtime.get_state("private-interrupted-thread")
+        history = await runtime.get_history("private-interrupted-thread")
+        audit_records = await utc_crisis_records(runtime.crisis_log_backend)
+
+    assert response.status_code == 200
+    assert response.json()["message_count"] == 1
+    assert response.json()["post_turn_safety"] == {
+        "scheduled": False,
+        "status": "skipped",
+        "reason": "safety_interruption_verified",
+        "pending_count": 0,
+    }
+    assert state is not None
+    assert state["route"] == "voice_safety_interrupted"
+    assert state["response_style"] == "voice_safety_interrupted"
+    assert state["response_text"] == ""
+    assert state["transcript"] == [{"role": "user", "content": "I might hurt myself."}]
+    outcomes = state["diagnostics"]["voice_tool_call_outcomes"]
+    assert [outcome["tool_name"] for outcome in outcomes] == [
+        "lookup_crisis_resources",
+        "settled_failed_tool",
+    ]
+    assert [outcome["status"] for outcome in outcomes] == ["completed", "failed"]
+    assert state["diagnostics"]["voice_tool_calls"] == [
+        "lookup_crisis_resources",
+        "settled_failed_tool",
+    ]
+    assert state["resource_lookup_status"] == "lookup_error"
+    assert "Partial assistant audio" not in str(state)
+    assert [message.role for message in history] == [MessageRole.USER]
+    assert llm.crisis_calls == 0
+    assert runtime.voice.post_turn_safety_pending_count == 0
+    assert len(audit_records) == 1
+    audit_record = audit_records[0]
+    assert audit_record.event_type == "crisis_response"
+    assert audit_record.classifier_path == "voice_concurrent"
+    assert audit_record.response_node_completed is True
+    assert audit_record.response_path == "safety_overlay"
+    assert audit_record.fallback_reason is None
+    assert audit_record.resource_lookup_status == "lookup_error"
+    assert audit_record.tool_calls == [
+        "lookup_crisis_resources",
+        "settled_failed_tool",
+    ]
+    assert state["crisis"].level == 3
+    event = next(
+        event
+        for event in recorder.events
+        if event.name == VOICE_SAFETY_INTERRUPTED_TURN_RECORDED
+    )
+    assert event.attributes["route"] == "voice_safety_interrupted"
+    assert len(event.attributes["correlation_hash"]) == 64
+    assert "private-interrupted" not in str(event.attributes)
+    assert not any(event.name == VOICE_RESPONSE_FINALIZED for event in recorder.events)
+
+
+@pytest.mark.asyncio
+async def test_safety_interrupted_turn_requires_server_verification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+    )
+    llm = _VoiceCrisisAuditLLM(level=0)
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
+    app.dependency_overrides[get_llm_client] = lambda: llm
+
+    async with runtime:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/voice/realtime/turn",
+                json={
+                    "thread_id": "unverified-interrupted-thread",
+                    "client_turn_id": "unverified-interrupted-turn",
+                    "interruption_token": "invalid-proof",
+                    "outcome": "safety_interrupted",
+                    "user_text": "This is not a crisis.",
+                },
+            )
+        state = await runtime.get_state("unverified-interrupted-thread")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == (
+        "voice_safety_interruption_proof_invalid"
+    )
+    assert state is None
+
+
+@pytest.mark.asyncio
+async def test_safety_interrupted_turn_retry_is_idempotent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+    )
+    llm = _VoiceCrisisAuditLLM(level=3)
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
+    app.dependency_overrides[get_llm_client] = lambda: llm
+    payload = {
+        "thread_id": "idempotent-interrupted-thread",
+        "client_turn_id": "idempotent-interrupted-turn",
+        "outcome": "safety_interrupted",
+        "user_text": "I might hurt myself.",
+    }
+    payload["interruption_token"] = voice_routes._VOICE_SAFETY_PROOFS.issue(
+        thread_id=payload["thread_id"],
+        client_turn_id=payload["client_turn_id"],
+        user_text=payload["user_text"],
+        user_id=None,
+        memory_mode="persistent",
+        risk_level=3,
+    )
+
+    async with runtime:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            first, second = await asyncio.gather(
+                client.post("/api/voice/realtime/turn", json=payload),
+                client.post("/api/voice/realtime/turn", json=payload),
+            )
+            await runtime.voice.record_voice_turn(
+                thread_id="idempotent-interrupted-thread",
+                user_id=None,
+                user_text="Later user turn.",
+                assistant_text="Later assistant turn.",
+                llm_client=None,
+            )
+            delayed_retry = await client.post("/api/voice/realtime/turn", json=payload)
+            conflict = await client.post(
+                "/api/voice/realtime/turn",
+                json={**payload, "user_text": "Different text."},
+            )
+        history = await runtime.get_history("idempotent-interrupted-thread")
+        audit_records = await utc_crisis_records(runtime.crisis_log_backend)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+    assert delayed_retry.json() == first.json()
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == (
+        "voice_realtime_turn_idempotency_conflict"
+    )
+    assert [message.content for message in history] == [
+        "I might hurt myself.",
+        "Later user turn.",
+        "Later assistant turn.",
+    ]
+    assert len(audit_records) == 1
+    assert llm.crisis_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_safety_interrupted_turn_requires_user_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
+    )
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
+
+    async with runtime:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/voice/realtime/turn",
+                json={
+                    "thread_id": "voice-invalid-interrupted",
+                    "outcome": "safety_interrupted",
+                    "user_text": "   ",
+                    "assistant_text": "Must not make this valid.",
+                },
+            )
+
+    assert response.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_first_voice_crisis_lookup_does_not_advance_turn_count() -> None:
     runtime = _runtime(
         storage_paths=in_memory_runtime_storage_paths(),
@@ -273,6 +559,20 @@ async def test_voice_crisis_turn_writes_one_audit_record() -> None:
     )
 
     async with runtime:
+        await runtime.voice.persist_voice_crisis_resource_lookup(
+            thread_id="voice-crisis-thread",
+            user_id="user-1",
+            inferred_location="Singapore",
+            found_resources=[
+                {
+                    "name": "Samaritans of Singapore",
+                    "phone": "1767",
+                    "url": "https://www.sos.org.sg",
+                    "region": "Singapore",
+                }
+            ],
+            resource_lookup_status="found",
+        )
         await runtime.voice.record_voice_turn(
             thread_id="voice-crisis-thread",
             user_id="user-1",
@@ -576,6 +876,13 @@ async def test_voice_crisis_turn_records_lookup_error_status() -> None:
     )
 
     async with runtime:
+        await runtime.voice.persist_voice_crisis_resource_lookup(
+            thread_id="voice-crisis-error",
+            user_id="user-1",
+            inferred_location="Singapore",
+            found_resources=[],
+            resource_lookup_status="lookup_error",
+        )
         await runtime.voice.record_voice_turn(
             thread_id="voice-crisis-error",
             user_id="user-1",

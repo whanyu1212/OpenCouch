@@ -11,6 +11,7 @@ import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field
 
@@ -615,7 +616,14 @@ def _normalize_crisis_resources(
         phone = " ".join(resource.phone.split())
         url = " ".join(resource.url.split())
         region = " ".join((resource.region or location).split())
-        if not name or not phone:
+        parsed_url = urlsplit(url)
+        if (
+            not name
+            or not phone
+            or not any(character.isdigit() for character in phone)
+            or parsed_url.scheme != "https"
+            or not parsed_url.hostname
+        ):
             continue
         normalized.append(
             {

@@ -173,6 +173,49 @@ export interface RealtimeVoiceSafetyCheckResponse {
   client_turn_id: string;
   status: RealtimeVoiceSafetyCheckStatus;
   reason: RealtimeVoiceSafetyCheckReason | null;
+  action: "continue" | "interrupt";
+  risk_level: 2 | 3 | null;
+  support: RealtimeVoiceSafetySupport | null;
+  interruption_token: string | null;
+}
+
+export interface RealtimeVoiceSafetySupport {
+  headline: string;
+  validation: string;
+  immediate_step: string;
+}
+
+export interface RealtimeVoiceSafetyRequest {
+  threadId: string;
+  userId?: string;
+  memoryMode: VoiceMemoryMode;
+  clientTurnId: string;
+  userText: string;
+  priorMessageCount: number;
+  pendingPriorTranscript?: Record<string, unknown>[];
+  signal?: AbortSignal;
+}
+
+export type RealtimeVoiceSafetyResourceStatus =
+  | "found"
+  | "no_location"
+  | "location_refused"
+  | "no_verified_results"
+  | "lookup_error";
+
+export interface RealtimeVoiceSafetyResource {
+  name: string;
+  phone: string;
+  url: string;
+  region: string;
+}
+
+export interface RealtimeVoiceSafetyResourcesResponse {
+  client_turn_id: string;
+  status: RealtimeVoiceSafetyResourceStatus;
+  inferred_location: string;
+  resources: RealtimeVoiceSafetyResource[];
+  message: string;
 }
 
 export interface RealtimeVoiceRecordedToolCall {
@@ -181,6 +224,11 @@ export interface RealtimeVoiceRecordedToolCall {
   output?: Record<string, unknown>;
   error?: string;
 }
+
+export type RealtimeVoiceTurnOutcome =
+  | "completed"
+  | "connection_interrupted"
+  | "safety_interrupted";
 
 export type RealtimeVoiceEndSessionResponse = SessionEndResponse;
 
@@ -746,6 +794,7 @@ export async function createRealtimeVoiceSession({
 export async function executeRealtimeVoiceTool({
   threadId,
   userId,
+  clientTurnId,
   currentUserMessage,
   transcript,
   memoryMode,
@@ -755,6 +804,7 @@ export async function executeRealtimeVoiceTool({
 }: {
   threadId: string;
   userId?: string;
+  clientTurnId?: string;
   currentUserMessage?: string;
   transcript?: Record<string, unknown>[];
   memoryMode: VoiceMemoryMode;
@@ -771,6 +821,7 @@ export async function executeRealtimeVoiceTool({
       body: JSON.stringify({
         thread_id: threadId,
         user_id: userId || undefined,
+        client_turn_id: clientTurnId || undefined,
         current_user_message: currentUserMessage || "",
         transcript: transcript || [],
         memory_mode: memoryMode,
@@ -790,20 +841,14 @@ export async function checkRealtimeVoiceSafety({
   userText,
   priorMessageCount,
   pendingPriorTranscript,
-}: {
-  threadId: string;
-  userId?: string;
-  memoryMode: VoiceMemoryMode;
-  clientTurnId: string;
-  userText: string;
-  priorMessageCount: number;
-  pendingPriorTranscript?: Record<string, unknown>[];
-}): Promise<RealtimeVoiceSafetyCheckResponse> {
+  signal,
+}: RealtimeVoiceSafetyRequest): Promise<RealtimeVoiceSafetyCheckResponse> {
   return apiRequest<RealtimeVoiceSafetyCheckResponse>(
     `${API_BASE}/voice/realtime/safety/check`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal,
       body: JSON.stringify({
         thread_id: threadId,
         user_id: userId || undefined,
@@ -818,6 +863,36 @@ export async function checkRealtimeVoiceSafety({
   );
 }
 
+export async function getRealtimeVoiceSafetyResources({
+  threadId,
+  userId,
+  memoryMode,
+  clientTurnId,
+  userText,
+  priorMessageCount,
+  pendingPriorTranscript,
+  signal,
+}: RealtimeVoiceSafetyRequest): Promise<RealtimeVoiceSafetyResourcesResponse> {
+  return apiRequest<RealtimeVoiceSafetyResourcesResponse>(
+    `${API_BASE}/voice/realtime/safety/resources`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal,
+      body: JSON.stringify({
+        thread_id: threadId,
+        user_id: userId || undefined,
+        memory_mode: memoryMode,
+        client_turn_id: clientTurnId,
+        user_text: userText,
+        prior_message_count: priorMessageCount,
+        pending_prior_transcript: pendingPriorTranscript || [],
+      }),
+    },
+    "Realtime voice safety resources"
+  );
+}
+
 export async function recordRealtimeVoiceTurn({
   threadId,
   userId,
@@ -826,6 +901,9 @@ export async function recordRealtimeVoiceTurn({
   assistantText,
   memoryMode,
   toolCalls,
+  outcome = "completed",
+  interruptionToken,
+  signal,
 }: {
   threadId: string;
   userId?: string;
@@ -834,12 +912,16 @@ export async function recordRealtimeVoiceTurn({
   assistantText: string;
   memoryMode: VoiceMemoryMode;
   toolCalls?: RealtimeVoiceRecordedToolCall[];
+  outcome?: RealtimeVoiceTurnOutcome;
+  interruptionToken?: string;
+  signal?: AbortSignal;
 }): Promise<RealtimeVoiceTurnRecordResponse> {
   return apiRequest<RealtimeVoiceTurnRecordResponse>(
     `${API_BASE}/voice/realtime/turn`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal,
       body: JSON.stringify({
         thread_id: threadId,
         user_id: userId || undefined,
@@ -848,6 +930,10 @@ export async function recordRealtimeVoiceTurn({
         assistant_text: assistantText,
         memory_mode: memoryMode,
         tool_calls: toolCalls || [],
+        outcome,
+        ...(interruptionToken
+          ? { interruption_token: interruptionToken }
+          : {}),
       }),
     },
     "Realtime voice turn record"
@@ -856,13 +942,15 @@ export async function recordRealtimeVoiceTurn({
 
 export async function endRealtimeVoiceSession(
   threadId: string,
-  memoryMode: VoiceMemoryMode
+  memoryMode: VoiceMemoryMode,
+  signal?: AbortSignal
 ): Promise<RealtimeVoiceEndSessionResponse> {
   return apiRequest<RealtimeVoiceEndSessionResponse>(
     `${API_BASE}/voice/realtime/end`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal,
       body: JSON.stringify({ thread_id: threadId, memory_mode: memoryMode }),
     },
     "Realtime voice end"

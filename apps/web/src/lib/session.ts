@@ -9,6 +9,10 @@ import {
   type AssistantVoiceOption,
   type EndSessionResponse,
   type MemoryFact,
+  type RealtimeVoiceSafetyResource,
+  type RealtimeVoiceSafetyResourceStatus,
+  type RealtimeVoiceSafetyResourcesResponse,
+  type RealtimeVoiceSafetySupport,
   type ResponseModelTier,
   type SessionAction,
   type SessionFeedbackModality,
@@ -51,6 +55,20 @@ export interface VoiceTranscript {
   role: "user" | "assistant" | "system";
   text: string;
   itemId?: string;
+  responseId?: string;
+}
+
+export interface VoiceSafetyOverlayState {
+  clientTurnId: string;
+  open: boolean;
+  riskLevel: 2 | 3 | null;
+  headline: string;
+  validation: string;
+  immediateStep: string;
+  resourceStatus: "loading" | RealtimeVoiceSafetyResourceStatus;
+  inferredLocation: string;
+  resources: RealtimeVoiceSafetyResource[];
+  message: string;
 }
 
 export type VoiceActivityName =
@@ -82,6 +100,7 @@ export interface VoiceActivityEvent {
 export interface VoiceFinalizationState {
   threadId: string | null;
   status: "idle" | "in_progress" | "completed" | "failed";
+  blocksTextTurns: boolean;
   detail: string | null;
   updatedAt: string | null;
 }
@@ -119,8 +138,27 @@ type VoiceConnectionHandle = {
 const IDLE_VOICE_FINALIZATION_STATE: VoiceFinalizationState = {
   threadId: null,
   status: "idle",
+  blocksTextTurns: false,
   detail: null,
   updatedAt: null,
+};
+
+export function voiceFinalizationBlocksTextTurns(
+  finalization: VoiceFinalizationState,
+  threadId: string
+): boolean {
+  return (
+    finalization.threadId === threadId &&
+    finalization.blocksTextTurns &&
+    (finalization.status === "in_progress" || finalization.status === "failed")
+  );
+}
+
+const DEFAULT_VOICE_SAFETY_SUPPORT: RealtimeVoiceSafetySupport = {
+  headline: "You deserve immediate support right now.",
+  validation: "What you shared sounds serious, and you do not have to handle it alone.",
+  immediate_step:
+    "Move away from anything you could use to hurt yourself and contact emergency services or a trusted person nearby now.",
 };
 
 // Voice transport handles are non-reactive and kept outside Zustand state to
@@ -162,6 +200,7 @@ interface SessionState {
 
   // ── Voice session (reactive UI state only) ────────────────────────
   voiceConnected: boolean;
+  voiceConnectionPending: boolean;
   voiceAgentSpeaking: boolean;
   voiceReadyToSpeak: boolean;
   assistantVoiceSelected: AssistantVoiceOption;
@@ -170,6 +209,10 @@ interface SessionState {
   voiceFinalization: VoiceFinalizationState;
   voiceSessionInfo: VoiceSessionInfo | null;
   voiceError: string | null;
+  voiceSafetyOverlay: VoiceSafetyOverlayState | null;
+  voiceSafetyResourceWorkActive: boolean;
+  voiceSuppressedAssistantResponseIds: string[];
+  voiceSuppressedAssistantItemIds: string[];
 
   setUserId: (id: string) => void;
   setThreadId: (id: string) => void;
@@ -199,6 +242,7 @@ interface SessionState {
 
   // ── Voice actions ─────────────────────────────────────────────────
   setVoiceConnected: (connected: boolean) => void;
+  setVoiceConnectionPending: (pending: boolean) => void;
   setVoiceAgentSpeaking: (speaking: boolean) => void;
   setVoiceReadyToSpeak: (ready: boolean) => void;
   setAssistantVoiceSelected: (voice: AssistantVoiceOption) => void;
@@ -209,6 +253,21 @@ interface SessionState {
   clearVoiceFinalization: () => void;
   setVoiceSessionInfo: (info: VoiceSessionInfo | null) => void;
   setVoiceError: (error: string | null) => void;
+  setVoiceSafetyOverlay: (input: {
+    clientTurnId: string;
+    riskLevel: 2 | 3 | null;
+    support: RealtimeVoiceSafetySupport | null;
+  }) => void;
+  updateVoiceSafetyResources: (
+    clientTurnId: string,
+    response: RealtimeVoiceSafetyResourcesResponse
+  ) => void;
+  dismissVoiceSafetyOverlay: () => void;
+  setVoiceSafetyResourceWorkActive: (active: boolean) => void;
+  suppressVoiceAssistantTranscripts: (input: {
+    responseIds: string[];
+    itemIds: string[];
+  }) => void;
   /** Store the voice connection handle outside reactive Zustand state. */
   voiceSetRefs: (refs: { connection?: VoiceConnectionHandle | null }) => void;
   /** Disconnect active voice resources and mark memory finalization pending. */
@@ -220,6 +279,7 @@ interface SessionState {
 type ClearedVoiceSessionUiState = Pick<
   SessionState,
   | "voiceConnected"
+  | "voiceConnectionPending"
   | "voiceAgentSpeaking"
   | "voiceReadyToSpeak"
   | "voiceTranscripts"
@@ -227,11 +287,16 @@ type ClearedVoiceSessionUiState = Pick<
   | "voiceFinalization"
   | "voiceSessionInfo"
   | "voiceError"
+  | "voiceSafetyOverlay"
+  | "voiceSafetyResourceWorkActive"
+  | "voiceSuppressedAssistantResponseIds"
+  | "voiceSuppressedAssistantItemIds"
 >;
 
 function clearedVoiceSessionUiState(): ClearedVoiceSessionUiState {
   return {
     voiceConnected: false,
+    voiceConnectionPending: false,
     voiceAgentSpeaking: false,
     voiceReadyToSpeak: false,
     voiceTranscripts: [],
@@ -239,6 +304,10 @@ function clearedVoiceSessionUiState(): ClearedVoiceSessionUiState {
     voiceFinalization: IDLE_VOICE_FINALIZATION_STATE,
     voiceSessionInfo: null,
     voiceError: null,
+    voiceSafetyOverlay: null,
+    voiceSafetyResourceWorkActive: false,
+    voiceSuppressedAssistantResponseIds: [],
+    voiceSuppressedAssistantItemIds: [],
   };
 }
 
@@ -292,6 +361,7 @@ export const useSessionStore = create<SessionState>()(
 
   // Voice defaults (reactive only)
   voiceConnected: false,
+  voiceConnectionPending: false,
   voiceAgentSpeaking: false,
   voiceReadyToSpeak: false,
   assistantVoiceSelected: "marin",
@@ -300,6 +370,10 @@ export const useSessionStore = create<SessionState>()(
   voiceFinalization: IDLE_VOICE_FINALIZATION_STATE,
   voiceSessionInfo: null,
   voiceError: null,
+  voiceSafetyOverlay: null,
+  voiceSafetyResourceWorkActive: false,
+  voiceSuppressedAssistantResponseIds: [],
+  voiceSuppressedAssistantItemIds: [],
 
   setUserId: (id: string) => set({ userId: id }),
   setThreadId: (id: string) => {
@@ -406,11 +480,21 @@ export const useSessionStore = create<SessionState>()(
 
   // ── Voice actions ─────────────────────────────────────────────────
   setVoiceConnected: (connected) => set({ voiceConnected: connected }),
+  setVoiceConnectionPending: (voiceConnectionPending) =>
+    set({ voiceConnectionPending }),
   setVoiceAgentSpeaking: (speaking) => set({ voiceAgentSpeaking: speaking }),
   setVoiceReadyToSpeak: (ready) => set({ voiceReadyToSpeak: ready }),
   setAssistantVoiceSelected: (voice) => set({ assistantVoiceSelected: voice }),
   addVoiceTranscript: (t) =>
     set((state) => {
+      if (
+        t.role === "assistant" &&
+        ((t.responseId &&
+          state.voiceSuppressedAssistantResponseIds.includes(t.responseId)) ||
+          (t.itemId && state.voiceSuppressedAssistantItemIds.includes(t.itemId)))
+      ) {
+        return state;
+      }
       if (t.itemId) {
         const existingIndex = state.voiceTranscripts.findIndex(
           (candidate) => candidate.role === t.role && candidate.itemId === t.itemId
@@ -433,7 +517,76 @@ export const useSessionStore = create<SessionState>()(
     set({ voiceFinalization: IDLE_VOICE_FINALIZATION_STATE }),
   setVoiceSessionInfo: (voiceSessionInfo) => set({ voiceSessionInfo }),
   setVoiceError: (error) => set({ voiceError: error }),
-  clearVoiceTranscripts: () => set({ voiceTranscripts: [] }),
+  setVoiceSafetyOverlay: ({ clientTurnId, riskLevel, support }) => {
+    const copy = support ?? DEFAULT_VOICE_SAFETY_SUPPORT;
+    set({
+      voiceSafetyOverlay: {
+        clientTurnId,
+        open: true,
+        riskLevel,
+        headline: copy.headline,
+        validation: copy.validation,
+        immediateStep: copy.immediate_step,
+        resourceStatus: "loading",
+        inferredLocation: "",
+        resources: [],
+        message: "Looking for verified support resources...",
+      },
+    });
+  },
+  updateVoiceSafetyResources: (clientTurnId, response) =>
+    set((state) => {
+      const overlay = state.voiceSafetyOverlay;
+      if (
+        !overlay?.open ||
+        overlay.clientTurnId !== clientTurnId ||
+        response.client_turn_id !== clientTurnId
+      ) {
+        return state;
+      }
+      return {
+        voiceSafetyOverlay: {
+          ...overlay,
+          resourceStatus: response.status,
+          inferredLocation: response.inferred_location,
+          resources: response.resources,
+          message: response.message,
+        },
+      };
+    }),
+  dismissVoiceSafetyOverlay: () => set({ voiceSafetyOverlay: null }),
+  setVoiceSafetyResourceWorkActive: (voiceSafetyResourceWorkActive) =>
+    set({ voiceSafetyResourceWorkActive }),
+  suppressVoiceAssistantTranscripts: ({ responseIds, itemIds }) =>
+    set((state) => {
+      const suppressedResponseIds = new Set([
+        ...state.voiceSuppressedAssistantResponseIds,
+        ...responseIds,
+      ]);
+      const suppressedItemIds = new Set([
+        ...state.voiceSuppressedAssistantItemIds,
+        ...itemIds,
+      ]);
+      return {
+        voiceTranscripts: state.voiceTranscripts.filter(
+          (transcript) =>
+            transcript.role !== "assistant" ||
+            !(
+              (transcript.responseId &&
+                suppressedResponseIds.has(transcript.responseId)) ||
+              (transcript.itemId && suppressedItemIds.has(transcript.itemId))
+            )
+        ),
+        voiceSuppressedAssistantResponseIds: [...suppressedResponseIds],
+        voiceSuppressedAssistantItemIds: [...suppressedItemIds],
+      };
+    }),
+  clearVoiceTranscripts: () =>
+    set({
+      voiceTranscripts: [],
+      voiceSuppressedAssistantResponseIds: [],
+      voiceSuppressedAssistantItemIds: [],
+    }),
 
   voiceSetRefs: (refs) => {
     if (refs.connection !== undefined) _voiceConnection = refs.connection;
@@ -448,6 +601,7 @@ export const useSessionStore = create<SessionState>()(
     _voiceConnection = null;
     set({
       voiceConnected: false,
+      voiceConnectionPending: false,
       voiceAgentSpeaking: false,
       voiceReadyToSpeak: false,
       voiceFinalization:
@@ -455,6 +609,7 @@ export const useSessionStore = create<SessionState>()(
           ? {
               threadId,
               status: "in_progress",
+              blocksTextTurns: false,
               detail: "Saving session memory...",
               updatedAt: new Date().toISOString(),
             }
@@ -493,14 +648,19 @@ export const useSessionStore = create<SessionState>()(
           memoryRefreshVersion: 0,
           lastEndedSession: null,
           voiceConnected: false,
+          voiceConnectionPending: false,
           voiceAgentSpeaking: false,
           voiceReadyToSpeak: false,
           voiceTranscripts: [],
           voiceActivities: [],
           voiceFinalization: IDLE_VOICE_FINALIZATION_STATE,
           voiceSessionInfo: null,
-          voiceError: null,
-        };
+           voiceError: null,
+           voiceSafetyOverlay: null,
+           voiceSafetyResourceWorkActive: false,
+           voiceSuppressedAssistantResponseIds: [],
+           voiceSuppressedAssistantItemIds: [],
+         };
       },
     }
   )

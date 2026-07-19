@@ -3,9 +3,14 @@ import { test } from "node:test";
 
 import {
   buildFunctionCallOutputEvent,
+  buildResponseCancelEvent,
   buildResponseCreateEvent,
   parseRealtimeServerEvent,
 } from "../src/lib/realtime-voice-events.ts";
+
+test("builds response cancel without a response ID", () => {
+  assert.deepEqual(buildResponseCancelEvent(), { type: "response.cancel" });
+});
 
 test("parses committed user item IDs before asynchronous transcription", () => {
   const parsed = parseRealtimeServerEvent({
