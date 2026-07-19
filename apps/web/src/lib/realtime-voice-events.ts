@@ -20,6 +20,7 @@ export interface RealtimeFunctionCall {
 export interface ParsedRealtimeServerEvent {
   type: string;
   responseId?: string;
+  responseTerminal?: boolean;
   responseRequestId?: string;
   userItemId?: string;
   transcript?: RealtimeTranscriptUpdate;
@@ -85,6 +86,7 @@ export function parseRealtimeServerEvent(raw: unknown): ParsedRealtimeServerEven
     const responseId = readString(asRecord(event.response).id);
     if (responseId) parsed.responseId = responseId;
     parsed.functionCalls = functionCallsFromResponseDone(event, responseId);
+    parsed.responseTerminal = true;
     parsed.agentSpeaking = false;
     parsed.readyToSpeak = true;
   } else if (type === "response.created") {
@@ -97,11 +99,13 @@ export function parseRealtimeServerEvent(raw: unknown): ParsedRealtimeServerEven
     if (responseRequestId) parsed.responseRequestId = responseRequestId;
     parsed.agentSpeaking = true;
     parsed.readyToSpeak = false;
-  } else if (
-    type === "response.output_audio.done" ||
-    type === "response.cancelled" ||
-    type === "response.failed"
-  ) {
+  } else if (type === "response.cancelled" || type === "response.failed") {
+    const responseId =
+      readString(event.response_id) ?? readString(asRecord(event.response).id);
+    if (responseId) parsed.responseId = responseId;
+    parsed.responseTerminal = true;
+    parsed.agentSpeaking = false;
+  } else if (type === "response.output_audio.done") {
     parsed.agentSpeaking = false;
   } else if (type === "input_audio_buffer.speech_started") {
     parsed.readyToSpeak = false;

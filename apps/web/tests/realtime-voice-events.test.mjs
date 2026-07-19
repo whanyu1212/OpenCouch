@@ -117,6 +117,7 @@ test("parses completed function calls from response.done", () => {
   });
 
   assert.equal(parsed.responseId, "response-1");
+  assert.equal(parsed.responseTerminal, true);
   assert.deepEqual(parsed.functionCalls, [
     {
       callId: "call_123",
@@ -127,6 +128,34 @@ test("parses completed function calls from response.done", () => {
       rawArguments: "{\"include_counts\":true}",
     },
   ]);
+});
+
+test("parses response IDs from cancelled and failed terminal events", () => {
+  const cancelled = parseRealtimeServerEvent({
+    type: "response.cancelled",
+    response_id: "response-cancelled",
+  });
+  const failed = parseRealtimeServerEvent({
+    type: "response.failed",
+    response: { id: "response-failed" },
+  });
+
+  assert.equal(cancelled.responseId, "response-cancelled");
+  assert.equal(cancelled.responseTerminal, true);
+  assert.equal(cancelled.agentSpeaking, false);
+  assert.equal(failed.responseId, "response-failed");
+  assert.equal(failed.responseTerminal, true);
+  assert.equal(failed.agentSpeaking, false);
+});
+
+test("does not treat audio completion as response completion", () => {
+  const parsed = parseRealtimeServerEvent({
+    type: "response.output_audio.done",
+    response_id: "response-1",
+  });
+
+  assert.equal(parsed.responseTerminal, undefined);
+  assert.equal(parsed.agentSpeaking, false);
 });
 
 test("parses function calls when streamed arguments are done", () => {

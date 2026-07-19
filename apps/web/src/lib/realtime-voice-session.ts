@@ -322,7 +322,7 @@ export async function connectRealtimeVoiceSession(
         pendingToolExecutions.delete(execution);
       }
     }
-    if (parsed.type === "response.done" && parsed.responseId) {
+    if (parsed.responseTerminal && parsed.responseId) {
       turnTracker.responseFinished(parsed.responseId);
       void maybeRecordTurn().catch(() => undefined);
     }
