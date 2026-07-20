@@ -47,6 +47,7 @@ async function importSessionStoreForNode() {
 const {
   buildEndedSessionResult,
   useSessionStore,
+  voiceFinalizationBlocksSessionActions,
   voiceFinalizationBlocksTextTurns,
 } = await importSessionStoreForNode();
 
@@ -202,6 +203,39 @@ test("only interrupted voice settlement blocks text turns", () => {
   );
   assert.equal(
     voiceFinalizationBlocksTextTurns(interruptedFinalization, "other-thread"),
+    false
+  );
+});
+
+test("session actions block only for current pending or safety-failed finalization", () => {
+  const finalization = {
+    threadId: "voice-thread",
+    status: "in_progress",
+    blocksTextTurns: false,
+    detail: "Saving session memory.",
+    updatedAt: "2026-05-24T00:00:00.000Z",
+  };
+
+  assert.equal(
+    voiceFinalizationBlocksSessionActions(finalization, "voice-thread"),
+    true
+  );
+  assert.equal(
+    voiceFinalizationBlocksSessionActions(
+      { ...finalization, status: "failed" },
+      "voice-thread"
+    ),
+    false
+  );
+  assert.equal(
+    voiceFinalizationBlocksSessionActions(
+      { ...finalization, status: "failed", blocksTextTurns: true },
+      "voice-thread"
+    ),
+    true
+  );
+  assert.equal(
+    voiceFinalizationBlocksSessionActions(finalization, "other-thread"),
     false
   );
 });

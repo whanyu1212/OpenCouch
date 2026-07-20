@@ -17,7 +17,11 @@ import {
   updateMemoryRecall,
   type ResponseModelTier,
 } from "@/lib/api";
-import { buildEndedSessionResult, useSessionStore } from "@/lib/session";
+import {
+  buildEndedSessionResult,
+  useSessionStore,
+  voiceFinalizationBlocksSessionActions,
+} from "@/lib/session";
 
 export type CommandActionId =
   | "show_help"
@@ -84,9 +88,7 @@ export function CommandActionsProvider({ children }: { children: ReactNode }) {
   const chatLoading = useSessionStore((s) => s.chatLoading);
   const voiceConnected = useSessionStore((s) => s.voiceConnected);
   const voiceConnectionPending = useSessionStore((s) => s.voiceConnectionPending);
-  const voiceFinalizationStatus = useSessionStore(
-    (s) => s.voiceFinalization.status
-  );
+  const voiceFinalization = useSessionStore((s) => s.voiceFinalization);
   const messages = useSessionStore((s) => s.messages);
   const memoryFacts = useSessionStore((s) => s.memoryFacts);
   const setMemoryFacts = useSessionStore((s) => s.setMemoryFacts);
@@ -107,8 +109,7 @@ export function CommandActionsProvider({ children }: { children: ReactNode }) {
     endingSession ||
     voiceConnected ||
     voiceConnectionPending ||
-    voiceFinalizationStatus === "in_progress" ||
-    voiceFinalizationStatus === "failed";
+    voiceFinalizationBlocksSessionActions(voiceFinalization, threadId);
   const identityLocked =
     isBusy || (sessionMode === "persistent" && hasActiveSession);
   const canEndSession =

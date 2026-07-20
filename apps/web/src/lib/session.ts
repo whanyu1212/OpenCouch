@@ -154,6 +154,17 @@ export function voiceFinalizationBlocksTextTurns(
   );
 }
 
+export function voiceFinalizationBlocksSessionActions(
+  finalization: VoiceFinalizationState,
+  threadId: string
+): boolean {
+  return (
+    finalization.threadId === threadId &&
+    (finalization.status === "in_progress" ||
+      (finalization.status === "failed" && finalization.blocksTextTurns))
+  );
+}
+
 const DEFAULT_VOICE_SAFETY_SUPPORT: RealtimeVoiceSafetySupport = {
   headline: "You deserve immediate support right now.",
   validation: "What you shared sounds serious, and you do not have to handle it alone.",
