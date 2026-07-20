@@ -182,7 +182,7 @@ async def execute_crisis_support_template_tool(
     normalized_risk = _normalize_crisis_support_risk_level(risk_level)
     resources = [dict(resource) for resource in found_resources or []]
     opening, validation, immediate_safety_step, one_question = (
-        _crisis_support_template_parts(normalized_risk)
+        crisis_support_template_parts(normalized_risk)
     )
     resource_guidance = _resource_lookup_response_text(
         inferred_location=inferred_location,
@@ -297,7 +297,7 @@ def _normalize_crisis_support_risk_level(risk_level: str) -> CrisisSupportRiskLe
     return "high"
 
 
-def _crisis_support_template_parts(
+def crisis_support_template_parts(
     risk_level: CrisisSupportRiskLevel,
 ) -> tuple[str, str, str, str]:
     if risk_level == "moderate":
@@ -397,6 +397,7 @@ __all__ = [
     "build_crisis_resource_lookup_delta",
     "build_crisis_response_tools",
     "crisis_response_delta",
+    "crisis_support_template_parts",
     "execute_crisis_resource_lookup_tool",
     "execute_crisis_support_template_tool",
     "get_crisis_support_template",

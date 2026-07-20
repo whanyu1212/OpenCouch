@@ -4,16 +4,24 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 from collections.abc import Mapping
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from agent.voice import realtime
 from agent.voice import tools as voice_tools
+from agent.models import CrisisAssessment
 from agent.observability.decorators import trace_event
 from agent.observability.events import (
     VOICE_CONCURRENT_SAFETY_ASSESSED,
     VOICE_CONCURRENT_SAFETY_TURN_OBSERVED,
+    VOICE_SAFETY_INTERRUPTION_DECIDED,
+    VOICE_SAFETY_RESOURCES_RESOLVED,
+)
+from agent.voice.safety_proof import (
+    InvalidVoiceSafetyInterruptionProof,
+    VoiceSafetyInterruptionProofService,
 )
 from api.dependencies import (
     get_llm_client,
@@ -25,6 +33,7 @@ from api.models import (
     VoiceRealtimeSessionResponse,
     VoiceConcurrentSafetyRequest,
     VoiceConcurrentSafetyResponse,
+    VoiceSafetyResourcesResponse,
     VoiceToolCallRequest,
     VoiceToolCallResponse,
     VoiceTurnRecordRequest,
@@ -40,6 +49,7 @@ _VOICE_SESSION_FAILURE_HTTP_STATUS = 500
 _VOICE_TOOL_FAILURE_HTTP_STATUS = 500
 _VOICE_TURN_FAILURE_HTTP_STATUS = 500
 _VOICE_END_FAILURE_HTTP_STATUS = 500
+_VOICE_SAFETY_PROOFS = VoiceSafetyInterruptionProofService()
 _VOICE_SESSION_WATERMARK_TIMEOUT_SECONDS = 0.5
 _VOICE_TOOL_TIMEOUT_SECONDS = 25.0
 
@@ -121,6 +131,7 @@ async def execute_voice_realtime_tool(
                 arguments=body.arguments,
                 thread_id=body.thread_id,
                 user_id=body.user_id,
+                client_turn_id=body.client_turn_id,
                 current_user_message=body.current_user_message,
                 transcript=body.transcript,
                 memory_mode=selection.memory_mode,
@@ -147,26 +158,105 @@ async def record_voice_realtime_turn(
     """Record a finalized voice user/assistant turn in app-owned history."""
 
     selection = get_runtime_selection(body.memory_mode)
-    try:
-        state = await selection.runtime.voice.record_voice_turn(
+    correlation_hash = (
+        _voice_turn_correlation_hash(
             thread_id=body.thread_id,
-            user_id=body.user_id,
-            user_text=body.user_text,
-            assistant_text=body.assistant_text,
-            route=body.route,
-            response_style=body.response_style,
-            tool_calls=[call.model_dump(mode="json") for call in body.tool_calls],
-            llm_client=llm_client,
+            client_turn_id=body.client_turn_id,
         )
-    except Exception as exc:
-        message = str(exc).strip() or exc.__class__.__name__
+        if body.client_turn_id is not None
+        else None
+    )
+    request_hash = _voice_turn_request_hash(body)
+    try:
+        receipt = (
+            await selection.runtime.voice.recorded_voice_turn_receipt(
+                thread_id=body.thread_id,
+                correlation_hash=correlation_hash,
+                request_hash=request_hash,
+            )
+            if correlation_hash is not None
+            else None
+        )
+    except ValueError as exc:
         raise HTTPException(
-            status_code=_VOICE_TURN_FAILURE_HTTP_STATUS,
+            status_code=409,
             detail={
-                "code": "voice_realtime_turn_record_failed",
-                "message": message,
+                "code": "voice_realtime_turn_idempotency_conflict",
+                "message": str(exc),
             },
         ) from exc
+    if receipt is not None:
+        return VoiceTurnRecordResponse(
+            recorded=True,
+            thread_id=body.thread_id,
+            message_count=receipt.message_count,
+            post_turn_safety=receipt.post_turn_safety,
+        )
+
+    state = None
+    if state is None:
+        safety_assessment = None
+        if body.outcome == "safety_interrupted":
+            try:
+                proof = _VOICE_SAFETY_PROOFS.verify(
+                    body.interruption_token or "",
+                    thread_id=body.thread_id,
+                    client_turn_id=body.client_turn_id or "",
+                    user_text=body.user_text,
+                    user_id=body.user_id,
+                    memory_mode=str(selection.memory_mode),
+                )
+            except InvalidVoiceSafetyInterruptionProof as exc:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "voice_safety_interruption_proof_invalid",
+                        "message": (
+                            "The interrupted turn was not authorized by a current "
+                            "server safety decision."
+                        ),
+                    },
+                ) from exc
+            safety_assessment = CrisisAssessment(
+                level=proof.risk_level,
+                confidence="high",
+                reason="voice_concurrent_safety_interruption",
+                needs_crisis_response=True,
+            )
+        try:
+            state = await selection.runtime.voice.record_voice_turn(
+                thread_id=body.thread_id,
+                user_id=body.user_id,
+                user_text=body.user_text,
+                assistant_text=body.assistant_text,
+                outcome=body.outcome,
+                route=body.route,
+                response_style=body.response_style,
+                tool_calls=[call.model_dump(mode="json") for call in body.tool_calls],
+                llm_client=llm_client,
+                correlation_hash=correlation_hash,
+                request_hash=request_hash,
+                safety_assessment=safety_assessment,
+            )
+        except ValueError as exc:
+            if "client_turn_id was already used" in str(exc):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "voice_realtime_turn_idempotency_conflict",
+                        "message": str(exc),
+                    },
+                ) from exc
+            raise
+        except Exception as exc:
+            message = str(exc).strip() or exc.__class__.__name__
+            raise HTTPException(
+                status_code=_VOICE_TURN_FAILURE_HTTP_STATUS,
+                detail={
+                    "code": "voice_realtime_turn_record_failed",
+                    "message": message,
+                },
+            ) from exc
 
     diagnostics = state.get("diagnostics", {})
     post_turn_safety = None
@@ -175,7 +265,7 @@ async def record_voice_realtime_turn(
         if isinstance(candidate, Mapping):
             post_turn_safety = dict(candidate)
 
-    if body.client_turn_id is not None:
+    if body.client_turn_id is not None and body.outcome == "completed":
         completed_tool_names = [
             call.tool_name for call in body.tool_calls if call.status == "completed"
         ]
@@ -218,7 +308,7 @@ async def check_voice_realtime_safety(
     body: VoiceConcurrentSafetyRequest,
     llm_client: BaseLLMClient | None = Depends(get_llm_client),
 ) -> VoiceConcurrentSafetyResponse:
-    """Observe one current voice turn without affecting response playback."""
+    """Assess one current voice turn and return the server playback policy."""
 
     selection = get_runtime_selection(body.memory_mode)
     result = await selection.runtime.voice.assess_voice_turn_safety(
@@ -226,9 +316,12 @@ async def check_voice_realtime_safety(
         user_id=body.user_id,
         user_text=body.user_text,
         prior_message_count=body.prior_message_count,
-        pending_prior_transcript=body.pending_prior_transcript,
+        pending_prior_transcript=[
+            entry.model_dump(mode="json") for entry in body.pending_prior_transcript
+        ],
         llm_client=llm_client,
     )
+    decision = selection.runtime.voice.decide_voice_safety(result)
     attributes: dict[str, object] = {
         "voice_runtime": "openai_realtime",
         "correlation_hash": _voice_turn_correlation_hash(
@@ -251,10 +344,88 @@ async def check_voice_realtime_safety(
             }
         )
     trace_event(VOICE_CONCURRENT_SAFETY_ASSESSED, attributes)
+    trace_event(
+        VOICE_SAFETY_INTERRUPTION_DECIDED,
+        {
+            "voice_runtime": "openai_realtime",
+            "correlation_hash": attributes["correlation_hash"],
+            "action": decision.action,
+            "risk_level": decision.risk_level,
+            "status": result.status,
+            "memory_mode": selection.memory_mode,
+        },
+    )
+    support = (
+        {
+            "headline": decision.support.headline,
+            "validation": decision.support.validation,
+            "immediate_step": decision.support.immediate_step,
+        }
+        if decision.support is not None
+        else None
+    )
+    interruption_token = (
+        _VOICE_SAFETY_PROOFS.issue(
+            thread_id=body.thread_id,
+            client_turn_id=body.client_turn_id,
+            user_text=body.user_text,
+            user_id=body.user_id,
+            memory_mode=str(selection.memory_mode),
+            risk_level=decision.risk_level,
+        )
+        if decision.action == "interrupt" and decision.risk_level is not None
+        else None
+    )
     return VoiceConcurrentSafetyResponse(
         client_turn_id=body.client_turn_id,
         status=result.status,
         reason=result.reason,
+        action=decision.action,
+        risk_level=decision.risk_level,
+        support=support,
+        interruption_token=interruption_token,
+    )
+
+
+@router.post(
+    "/realtime/safety/resources",
+    response_model=VoiceSafetyResourcesResponse,
+)
+async def resolve_voice_realtime_safety_resources(
+    body: VoiceConcurrentSafetyRequest,
+    llm_client: BaseLLMClient | None = Depends(get_llm_client),
+) -> VoiceSafetyResourcesResponse:
+    """Resolve verified crisis resources without mutating runtime state."""
+
+    selection = get_runtime_selection(body.memory_mode)
+    result = await selection.runtime.voice.resolve_voice_safety_resources(
+        thread_id=body.thread_id,
+        user_text=body.user_text,
+        prior_message_count=body.prior_message_count,
+        pending_prior_transcript=[
+            entry.model_dump(mode="json") for entry in body.pending_prior_transcript
+        ],
+        llm_client=llm_client,
+    )
+    trace_event(
+        VOICE_SAFETY_RESOURCES_RESOLVED,
+        {
+            "voice_runtime": "openai_realtime",
+            "correlation_hash": _voice_turn_correlation_hash(
+                thread_id=body.thread_id,
+                client_turn_id=body.client_turn_id,
+            ),
+            "status": result.status,
+            "resource_count": len(result.resources),
+            "memory_mode": selection.memory_mode,
+        },
+    )
+    return VoiceSafetyResourcesResponse(
+        client_turn_id=body.client_turn_id,
+        status=result.status,
+        inferred_location="",
+        resources=result.resources,
+        message=result.message,
     )
 
 
@@ -319,3 +490,9 @@ def _voice_turn_correlation_hash(*, thread_id: str, client_turn_id: str) -> str:
 
     value = f"{thread_id}\0{client_turn_id}"
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _voice_turn_request_hash(body: VoiceTurnRecordRequest) -> str:
+    payload = body.model_dump(mode="json", exclude={"interruption_token"})
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()

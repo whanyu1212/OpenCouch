@@ -5,6 +5,7 @@ import {
   useCommandActions,
   type CommandAction,
 } from "@/lib/command-actions";
+import { useSessionStore } from "@/lib/session";
 
 const GROUP_ORDER: CommandAction["group"][] = [
   "Session",
@@ -21,6 +22,9 @@ export function CommandPalette() {
     openCommandPalette,
     runAction,
   } = useCommandActions();
+  const voiceSafetyOverlayOpen = useSessionStore(
+    (state) => state.voiceSafetyOverlay?.open ?? false
+  );
   const [query, setQuery] = useState("");
   const handleClose = useCallback(() => {
     setQuery("");
@@ -32,6 +36,7 @@ export function CommandPalette() {
       const key = event.key.toLowerCase();
       if ((event.metaKey || event.ctrlKey) && key === "k") {
         event.preventDefault();
+        if (voiceSafetyOverlayOpen) return;
         if (commandPaletteOpen) {
           handleClose();
         } else {
@@ -46,7 +51,20 @@ export function CommandPalette() {
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [commandPaletteOpen, handleClose, openCommandPalette]);
+  }, [commandPaletteOpen, handleClose, openCommandPalette, voiceSafetyOverlayOpen]);
+
+  useEffect(
+    () =>
+      useSessionStore.subscribe((state, previous) => {
+        if (
+          state.voiceSafetyOverlay?.open &&
+          !previous.voiceSafetyOverlay?.open
+        ) {
+          handleClose();
+        }
+      }),
+    [handleClose]
+  );
 
   const visibleActions = useMemo(() => {
     const needle = query.trim().toLowerCase();

@@ -1,5 +1,6 @@
 import type {
   RealtimeVoiceRecordedToolCall,
+  RealtimeVoiceTurnOutcome,
   VoiceMemoryMode,
 } from "./api";
 
@@ -11,6 +12,8 @@ export function buildRealtimeVoiceTurnRecordInput({
   assistantText,
   memoryMode,
   toolCalls,
+  outcome = "completed",
+  interruptionToken,
 }: {
   threadId: string;
   userId?: string;
@@ -19,6 +22,8 @@ export function buildRealtimeVoiceTurnRecordInput({
   assistantText: string;
   memoryMode: VoiceMemoryMode;
   toolCalls?: RealtimeVoiceRecordedToolCall[];
+  outcome?: RealtimeVoiceTurnOutcome;
+  interruptionToken?: string;
 }) {
   return {
     threadId,
@@ -28,7 +33,16 @@ export function buildRealtimeVoiceTurnRecordInput({
     assistantText,
     memoryMode,
     toolCalls: toolCalls || [],
+    outcome,
+    ...(interruptionToken ? { interruptionToken } : {}),
   };
+}
+
+export function readLatestUserTranscriptDraft(
+  drafts: ReadonlyMap<string, string>
+): string {
+  const values = Array.from(drafts.values());
+  return values[values.length - 1] || "";
 }
 
 export interface RealtimeVoiceTrackedTurn {
@@ -36,6 +50,14 @@ export interface RealtimeVoiceTrackedTurn {
   userText: string;
   assistantText: string;
   toolCalls: RealtimeVoiceRecordedToolCall[];
+  outcome?: RealtimeVoiceTurnOutcome;
+  interruptionToken?: string;
+}
+
+export interface RealtimeVoiceSafetyInterruptionCleanup {
+  clientTurnId: string;
+  responseIds: string[];
+  itemIds: string[];
 }
 
 type TrackedTurn = RealtimeVoiceTrackedTurn & {
@@ -46,6 +68,8 @@ type TrackedTurn = RealtimeVoiceTrackedTurn & {
   activeResponseIds: Set<string>;
   activeToolCallCount: number;
   expectedResponseEventIds: Set<string>;
+  assistantItemIds: Set<string>;
+  safetyState: "unchecked" | "pending" | "released" | "interrupted";
   recording: boolean;
 };
 
@@ -62,6 +86,7 @@ export class RealtimeVoiceTurnTracker {
   private readonly userItemTurns = new Map<string, TrackedTurn>();
   private readonly expectedResponseTurns = new Map<string, TrackedTurn>();
   private readonly ignoredResponseIds = new Set<string>();
+  private readonly quarantinedResponseIds = new Set<string>();
 
   constructor(
     createClientTurnId: () => string = () => globalThis.crypto.randomUUID()
@@ -73,6 +98,7 @@ export class RealtimeVoiceTurnTracker {
     responseId: string,
     requestEventId?: string
   ): string | undefined {
+    if (this.quarantinedResponseIds.has(responseId)) return undefined;
     const existing = this.responseTurns.get(responseId);
     if (existing) return existing.clientTurnId;
 
@@ -120,12 +146,17 @@ export class RealtimeVoiceTurnTracker {
   }
 
   responseFinished(responseId: string): void {
+    if (this.quarantinedResponseIds.has(responseId)) return;
     if (this.ignoredResponseIds.delete(responseId)) return;
     this.responseTurns.get(responseId)?.activeResponseIds.delete(responseId);
   }
 
   isResponseIgnored(responseId: string | undefined): boolean {
-    return Boolean(responseId && this.ignoredResponseIds.has(responseId));
+    return Boolean(
+      responseId &&
+        (this.ignoredResponseIds.has(responseId) ||
+          this.quarantinedResponseIds.has(responseId))
+    );
   }
 
   addFinalUserTranscript({
@@ -161,16 +192,104 @@ export class RealtimeVoiceTurnTracker {
 
   addFinalAssistantTranscript({
     responseId,
+    itemId,
     text,
   }: {
     responseId?: string;
+    itemId?: string;
     text: string;
   }): string | undefined {
     const turn = this.turnForResponse(responseId, true);
     if (!turn) return undefined;
+    if (itemId) turn.assistantItemIds.add(itemId);
     turn.awaitingInitialResponse = false;
     turn.assistantText = [turn.assistantText, text].filter(Boolean).join(" ");
     return turn.clientTurnId;
+  }
+
+  trackAssistantItem(responseId: string | undefined, itemId: string | undefined): void {
+    if (!itemId) return;
+    this.turnForResponse(responseId, false)?.assistantItemIds.add(itemId);
+  }
+
+  markSafetyPending(clientTurnId: string): boolean {
+    const turn = this.turnById(clientTurnId);
+    if (!turn || turn.safetyState === "interrupted") return false;
+    turn.safetyState = "pending";
+    return true;
+  }
+
+  releaseSafetyCheck(clientTurnId: string): boolean {
+    const turn = this.turnById(clientTurnId);
+    if (!turn || turn.safetyState !== "pending") return false;
+    turn.safetyState = "released";
+    return true;
+  }
+
+  attachLatestUserDraft(text: string): void {
+    const normalized = text.trim();
+    if (!normalized) return;
+    const turn = [...this.turns].reverse().find((candidate) => !candidate.userText);
+    if (!turn) return;
+    turn.userText = normalized;
+    turn.userTranscriptionFinished = true;
+  }
+
+  interruptForSafety(
+    clientTurnId: string,
+    interruptionToken: string
+  ): RealtimeVoiceSafetyInterruptionCleanup | null {
+    const targetIndex = this.turns.findIndex(
+      (turn) => turn.clientTurnId === clientTurnId
+    );
+    if (targetIndex === -1) return null;
+
+    const target = this.turns[targetIndex];
+    if (target.safetyState === "interrupted") return null;
+
+    const responseIds = new Set<string>();
+    const itemIds = new Set<string>();
+    const affectedTurns = this.turns.filter(
+      (turn, index) => index >= targetIndex || turn.safetyState === "pending"
+    );
+    for (const turn of affectedTurns) {
+      for (const responseId of turn.responseIds) {
+        responseIds.add(responseId);
+        this.quarantinedResponseIds.add(responseId);
+      }
+      for (const itemId of turn.assistantItemIds) itemIds.add(itemId);
+      turn.assistantText = "";
+      turn.activeResponseIds.clear();
+      turn.awaitingInitialResponse = false;
+      this.removeExpectedResponseTurn(turn);
+      turn.safetyState = "interrupted";
+      turn.userTranscriptionFinished = true;
+      if (turn.userText) {
+        if (turn === target) {
+          turn.outcome = "safety_interrupted";
+          turn.interruptionToken = interruptionToken;
+        } else {
+          turn.outcome = "connection_interrupted";
+          turn.interruptionToken = undefined;
+        }
+      }
+    }
+
+    return {
+      clientTurnId,
+      responseIds: [...responseIds],
+      itemIds: [...itemIds],
+    };
+  }
+
+  failOpenPendingSafetyChecks(): string[] {
+    const released: string[] = [];
+    for (const turn of this.turns) {
+      if (turn.safetyState !== "pending") continue;
+      turn.safetyState = "released";
+      released.push(turn.clientTurnId);
+    }
+    return released;
   }
 
   correlateToolCall(responseId?: string): string | undefined {
@@ -262,7 +381,11 @@ export class RealtimeVoiceTurnTracker {
         continue;
       }
       if (!candidate.userText) return null;
-      if (!candidate.assistantText) {
+      if (
+        !candidate.assistantText &&
+        candidate.outcome !== "connection_interrupted" &&
+        candidate.outcome !== "safety_interrupted"
+      ) {
         this.removeTurn(candidate);
         continue;
       }
@@ -277,6 +400,8 @@ export class RealtimeVoiceTurnTracker {
       userText: turn.userText,
       assistantText: turn.assistantText,
       toolCalls: [...turn.toolCalls],
+      ...(turn.outcome ? { outcome: turn.outcome } : {}),
+      ...(turn.interruptionToken ? { interruptionToken: turn.interruptionToken } : {}),
     };
   }
 
@@ -295,7 +420,13 @@ export class RealtimeVoiceTurnTracker {
     responseId: string | undefined,
     preferWithoutAssistant: boolean
   ): TrackedTurn | undefined {
-    if (responseId && this.ignoredResponseIds.has(responseId)) return undefined;
+    if (
+      responseId &&
+      (this.ignoredResponseIds.has(responseId) ||
+        this.quarantinedResponseIds.has(responseId))
+    ) {
+      return undefined;
+    }
     if (responseId) {
       const existing = this.responseTurns.get(responseId);
       if (existing) return existing;
@@ -322,6 +453,8 @@ export class RealtimeVoiceTurnTracker {
       activeResponseIds: new Set(),
       activeToolCallCount: 0,
       expectedResponseEventIds: new Set(),
+      assistantItemIds: new Set(),
+      safetyState: "unchecked",
       recording: false,
     };
     this.turns.push(turn);
@@ -376,7 +509,8 @@ export class RealtimeVoiceTurnTracker {
       !turn.awaitingInitialResponse &&
       turn.activeResponseIds.size === 0 &&
       turn.activeToolCallCount === 0 &&
-      turn.expectedResponseEventIds.size === 0
+      turn.expectedResponseEventIds.size === 0 &&
+      turn.safetyState !== "pending"
     );
   }
 }

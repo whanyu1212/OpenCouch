@@ -10,6 +10,7 @@ import { ThreadDrawer } from "@/components/thread-drawer";
 import { CommandActionsProvider } from "@/lib/command-actions";
 import { ConversationShell } from "@/components/conversation-shell";
 import { shouldUseRealtimeVoiceProvider } from "@/lib/voice-provider-routing";
+import { VoiceSafetyOverlay } from "@/components/voice-safety-overlay";
 
 const DynamicRealtimeVoiceSessionProvider = dynamic(
   () =>
@@ -32,10 +33,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const hydrated = useSessionStoreHydrated();
   const isSetup = useSessionStore((s) => s.isSetup);
   const voiceConnected = useSessionStore((s) => s.voiceConnected);
+  const voiceConnectionPending = useSessionStore((s) => s.voiceConnectionPending);
   const voiceFinalizationStatus = useSessionStore(
     (s) => s.voiceFinalization.status
   );
   const sessionMode = useSessionStore((s) => s.sessionMode);
+  const voiceSafetyOverlayActive = useSessionStore(
+    (s) => s.voiceSafetyOverlay?.open ?? false
+  );
+  const voiceSafetyResourceWorkActive = useSessionStore(
+    (s) => s.voiceSafetyResourceWorkActive
+  );
   const pathname = usePathname();
   const withWash = pathname === "/voice" || (pathname === "/" && sessionMode === "persistent");
 
@@ -75,6 +83,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </ConversationShell>
       <CommandPalette />
       <ThreadDrawer />
+      <VoiceSafetyOverlay />
     </CommandActionsProvider>
   );
 
@@ -82,7 +91,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     shouldUseRealtimeVoiceProvider({
       pathname,
       voiceConnected,
+      voiceConnectionPending,
       voiceFinalizationStatus,
+      voiceSafetyOverlayActive,
+      voiceSafetyResourceWorkActive,
     })
   ) {
     return (

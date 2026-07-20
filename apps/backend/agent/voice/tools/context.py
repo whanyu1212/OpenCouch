@@ -18,6 +18,7 @@ class VoiceToolDispatchContext:
     tool_context: Any | None
     thread_id: str
     user_id: str | None
+    client_turn_id: str | None = None
 
 
 @dataclass(frozen=True)

@@ -158,6 +158,10 @@ export function buildResponseCreateEvent(
   };
 }
 
+export function buildResponseCancelEvent(): JsonRecord {
+  return { type: "response.cancel" };
+}
+
 export function serializeRealtimeEvent(event: JsonRecord): string {
   return JSON.stringify(event);
 }

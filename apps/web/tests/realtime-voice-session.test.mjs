@@ -17,6 +17,7 @@ import {
 } from "../src/lib/realtime-voice-finalization.ts";
 import {
   buildRealtimeVoiceTurnRecordInput,
+  readLatestUserTranscriptDraft,
   RealtimeVoiceTurnTracker,
 } from "../src/lib/realtime-voice-turn-record.ts";
 
@@ -166,6 +167,7 @@ test("builds voice turn record input from completed tool calls only", () => {
         },
       },
     ],
+    outcome: "completed",
   });
 
   assert.deepEqual(input, {
@@ -186,6 +188,222 @@ test("builds voice turn record input from completed tool calls only", () => {
         },
       },
     ],
+    outcome: "completed",
+  });
+});
+
+test("keeps a newer partial user draft when an earlier item completes", () => {
+  const drafts = new Map([
+    ["user-earlier", "Earlier partial"],
+    ["user-newer", "Newer partial that must persist"],
+  ]);
+
+  drafts.delete("user-earlier");
+
+  assert.equal(
+    readLatestUserTranscriptDraft(drafts),
+    "Newer partial that must persist"
+  );
+});
+
+test("safety pending blocks persistence until continue releases the turn", () => {
+  const tracker = createTurnTracker();
+  const turn = tracker.addFinalUserTranscript({
+    itemId: "user-safety-pending",
+    text: "I need help",
+  });
+  tracker.markSafetyPending(turn.clientTurnId);
+  tracker.responseCreated("response-safety-pending");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-safety-pending",
+    itemId: "assistant-safety-pending",
+    text: "I am here.",
+  });
+  tracker.responseFinished("response-safety-pending");
+
+  assert.equal(tracker.markNextRecordableTurn(), null);
+  assert.equal(tracker.releaseSafetyCheck(turn.clientTurnId), true);
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: turn.clientTurnId,
+    userText: "I need help",
+    assistantText: "I am here.",
+    toolCalls: [],
+  });
+});
+
+test("manual fail-open releases all pending safety gates", () => {
+  const tracker = createTurnTracker();
+  const turn = tracker.addFinalUserTranscript({
+    itemId: "user-fail-open",
+    text: "Please continue",
+  });
+  tracker.markSafetyPending(turn.clientTurnId);
+  tracker.responseCreated("response-fail-open");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-fail-open",
+    text: "Continuing.",
+  });
+  tracker.responseFinished("response-fail-open");
+
+  assert.deepEqual(tracker.failOpenPendingSafetyChecks(), [turn.clientTurnId]);
+  assert.equal(tracker.markNextRecordableTurn()?.clientTurnId, turn.clientTurnId);
+});
+
+test("safety interruption quarantines target and later assistant drafts", () => {
+  const tracker = createTurnTracker();
+  const earlier = tracker.addFinalUserTranscript({
+    itemId: "user-earlier",
+    text: "Earlier question",
+  });
+  tracker.responseCreated("response-earlier");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-earlier",
+    itemId: "assistant-earlier",
+    text: "Earlier completed answer",
+  });
+  tracker.responseFinished("response-earlier");
+
+  const target = tracker.addFinalUserTranscript({
+    itemId: "user-target",
+    text: "Target safety turn",
+  });
+  tracker.markSafetyPending(target.clientTurnId);
+  tracker.responseCreated("response-target");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-target",
+    itemId: "assistant-target",
+    text: "Cancelled target draft",
+  });
+  tracker.toolCallStarted(target.clientTurnId);
+
+  tracker.addFinalUserTranscript({ itemId: "user-later", text: "Later turn" });
+  tracker.responseCreated("response-later");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-later",
+    itemId: "assistant-later",
+    text: "Cancelled later draft",
+  });
+
+  assert.deepEqual(tracker.interruptForSafety(target.clientTurnId, "proof-token"), {
+    clientTurnId: target.clientTurnId,
+    responseIds: ["response-target", "response-later"],
+    itemIds: ["assistant-target", "assistant-later"],
+  });
+  assert.equal(tracker.isResponseIgnored("response-target"), true);
+  assert.equal(tracker.isResponseIgnored("response-later"), true);
+  assert.equal(
+    tracker.addFinalAssistantTranscript({
+      responseId: "response-target",
+      text: "late target draft",
+    }),
+    undefined
+  );
+
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: earlier.clientTurnId,
+    userText: "Earlier question",
+    assistantText: "Earlier completed answer",
+    toolCalls: [],
+  });
+  assert.equal(tracker.markNextRecordableTurn(), null);
+  tracker.addToolResult(target.clientTurnId, {
+    tool_name: "save_response_preference",
+    status: "completed",
+    output: { saved: true },
+  });
+  tracker.toolCallFinished(target.clientTurnId);
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: target.clientTurnId,
+    userText: "Target safety turn",
+    assistantText: "",
+    toolCalls: [
+      {
+        tool_name: "save_response_preference",
+        status: "completed",
+        output: { saved: true },
+      },
+    ],
+    outcome: "safety_interrupted",
+    interruptionToken: "proof-token",
+  });
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: "client-turn-3",
+    userText: "Later turn",
+    assistantText: "",
+    toolCalls: [],
+    outcome: "connection_interrupted",
+  });
+});
+
+test("a later interruption does not fail open an earlier pending safety turn", () => {
+  const tracker = createTurnTracker();
+  const earlier = tracker.addFinalUserTranscript({
+    itemId: "user-earlier-pending",
+    text: "Earlier pending turn",
+  });
+  tracker.markSafetyPending(earlier.clientTurnId);
+  tracker.responseCreated("response-earlier-pending");
+  tracker.addFinalAssistantTranscript({
+    responseId: "response-earlier-pending",
+    text: "Earlier unchecked draft",
+  });
+  tracker.responseFinished("response-earlier-pending");
+
+  const target = tracker.addFinalUserTranscript({
+    itemId: "user-target-interrupt",
+    text: "Target crisis turn",
+  });
+  tracker.markSafetyPending(target.clientTurnId);
+  tracker.responseCreated("response-target-interrupt");
+
+  tracker.interruptForSafety(target.clientTurnId, "proof-token");
+  tracker.failOpenPendingSafetyChecks();
+
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: earlier.clientTurnId,
+    userText: "Earlier pending turn",
+    assistantText: "",
+    toolCalls: [],
+    outcome: "connection_interrupted",
+  });
+});
+
+test("an interrupted partial turn retains draft evidence for settled tools", () => {
+  const tracker = createTurnTracker();
+  const target = tracker.addFinalUserTranscript({
+    itemId: "user-target",
+    text: "Target crisis turn",
+  });
+  tracker.markSafetyPending(target.clientTurnId);
+  tracker.responseCreated("response-target");
+  tracker.responseFinished("response-target");
+  tracker.userInputCommitted("user-partial");
+  tracker.responseCreated("response-partial");
+  const partialTurnId = tracker.correlateToolCall("response-partial");
+  tracker.toolCallStarted(partialTurnId);
+  tracker.attachLatestUserDraft("Please remember that I need short replies");
+
+  tracker.interruptForSafety(target.clientTurnId, "proof-token");
+  tracker.addToolResult(partialTurnId, {
+    tool_name: "save_response_preference",
+    status: "completed",
+    output: { saved: true },
+  });
+  tracker.toolCallFinished(partialTurnId);
+
+  tracker.markNextRecordableTurn();
+  assert.deepEqual(tracker.markNextRecordableTurn(), {
+    clientTurnId: partialTurnId,
+    userText: "Please remember that I need short replies",
+    assistantText: "",
+    toolCalls: [
+      {
+        tool_name: "save_response_preference",
+        status: "completed",
+        output: { saved: true },
+      },
+    ],
+    outcome: "connection_interrupted",
   });
 });
 

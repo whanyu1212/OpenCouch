@@ -6,12 +6,15 @@ import {
   recordRealtimeVoiceTurn,
   type RealtimeVoiceEndSessionResponse,
   type RealtimeVoiceSessionResponse,
+  type RealtimeVoiceSafetyCheckResponse,
+  type RealtimeVoiceSafetyRequest,
   type RealtimeVoiceTurnRecordResponse,
   type AssistantVoiceOption,
   type VoiceMemoryMode,
 } from "./api";
 import {
   buildFunctionCallOutputEvent,
+  buildResponseCancelEvent,
   buildResponseCreateEvent,
   parseRealtimeServerEvent,
   serializeRealtimeEvent,
@@ -21,7 +24,9 @@ import {
 } from "./realtime-voice-events";
 import {
   buildRealtimeVoiceTurnRecordInput,
+  readLatestUserTranscriptDraft,
   RealtimeVoiceTurnTracker,
+  type RealtimeVoiceSafetyInterruptionCleanup,
   type RealtimeVoiceTrackedTurn,
 } from "./realtime-voice-turn-record";
 import {
@@ -55,6 +60,12 @@ export interface RealtimeVoiceToolEvent {
   output?: Record<string, unknown>;
 }
 
+export interface RealtimeVoiceSafetyInterruption {
+  response: RealtimeVoiceSafetyCheckResponse;
+  request: Omit<RealtimeVoiceSafetyRequest, "signal">;
+  cleanup: RealtimeVoiceSafetyInterruptionCleanup;
+}
+
 export interface RealtimeVoiceSessionOptions {
   threadId: string;
   userId?: string;
@@ -68,6 +79,7 @@ export interface RealtimeVoiceSessionOptions {
   onTranscript?: (update: RealtimeTranscriptUpdate) => void;
   onToolEvent?: (event: RealtimeVoiceToolEvent) => void;
   onTurnRecorded?: (response: RealtimeVoiceTurnRecordResponse) => void;
+  onSafetyInterruption?: (event: RealtimeVoiceSafetyInterruption) => void;
   onEnded?: (response: RealtimeVoiceEndSessionResponse) => void;
   onAgentSpeaking?: (speaking: boolean) => void;
   onReadyToSpeak?: (ready: boolean) => void;
@@ -96,6 +108,8 @@ type UserTranscriptEvidenceWaiter = {
 const USER_TRANSCRIPT_EVIDENCE_TIMEOUT_MS = 2500;
 const FOLLOW_UP_RESPONSE_TIMEOUT_MS = 10_000;
 const VOICE_TOOL_EXECUTION_TIMEOUT_MS = 30_000;
+const VOICE_SAFETY_REQUEST_TIMEOUT_MS = 10_000;
+const VOICE_PERSISTENCE_REQUEST_TIMEOUT_MS = 30_000;
 
 export async function connectRealtimeVoiceSession(
   options: RealtimeVoiceSessionOptions
@@ -105,6 +119,9 @@ export async function connectRealtimeVoiceSession(
   let mediaStream: MediaStream | null = null;
   let finalized = false;
   let disconnecting = false;
+  let safetyInterrupted = false;
+  let safetyGenerationActive = true;
+  const safetyConnectionToken = Symbol("realtime-voice-connection");
   const disconnectCoordinator = new RealtimeVoiceDisconnectCoordinator();
 
   const handledCallIds = new Set<string>();
@@ -117,9 +134,16 @@ export async function connectRealtimeVoiceSession(
     string,
     ReturnType<typeof setTimeout>
   >();
-  let latestUserTranscriptDraft = "";
   let priorMessageCount = 0;
   let pendingTurnRecording: Promise<void> | null = null;
+  const pendingSafetyRequests = new Map<
+    string,
+    {
+      abortController: AbortController;
+      timeout: ReturnType<typeof setTimeout>;
+      token: symbol;
+    }
+  >();
 
   const setStatus = (status: RealtimeVoiceConnectionStatus) => {
     options.onStatus?.(status);
@@ -141,25 +165,31 @@ export async function connectRealtimeVoiceSession(
     }
   };
 
-  function disconnect({
-    finalize = true,
-  }: { finalize?: boolean } = {}): Promise<void> {
+  function disconnect(
+    {
+      finalize = true,
+    }: { finalize?: boolean } = {},
+    safetyInterruption = false
+  ): Promise<void> {
     return disconnectCoordinator.disconnect(async () => {
       disconnecting = true;
       try {
+        if (!safetyInterruption) abortSafetyChecksFailOpen();
         if (finalize && !finalized) setStatus("finalizing");
         dataChannel?.close();
         peerConnection?.close();
         mediaStream?.getTracks().forEach((track) => track.stop());
+        options.audioElement.pause();
         options.audioElement.srcObject = null;
         await Promise.allSettled([...pendingToolExecutions]);
+        pendingToolExecutions.clear();
         clearFollowUpResponseTimeouts();
         turnTracker.transportClosed();
 
         if (finalize && !finalized) {
           const response = await finalizeAfterPendingRealtimeVoiceTurn(
             maybeRecordTurn(),
-            () => endRealtimeVoiceSession(options.threadId, options.memoryMode)
+            endSessionWithTimeout
           );
           finalized = true;
           options.onEnded?.(response);
@@ -285,6 +315,7 @@ export async function connectRealtimeVoiceSession(
     options.onRawEvent?.(rawEvent);
     const parsed = parseRealtimeServerEvent(rawEvent);
     options.onParsedEvent?.(parsed);
+    if (safetyInterrupted) return;
 
     if (parsed.type === "input_audio_buffer.committed" && parsed.userItemId) {
       turnTracker.userInputCommitted(parsed.userItemId);
@@ -313,11 +344,13 @@ export async function connectRealtimeVoiceSession(
       releaseFollowUpResponseExpectation(parsed.errorEventId);
     }
     if (parsed.transcript) {
-      handleTranscriptUpdate(parsed.transcript);
-      options.onTranscript?.(parsed.transcript);
+      if (handleTranscriptUpdate(parsed.transcript)) {
+        options.onTranscript?.(parsed.transcript);
+      }
     }
 
     for (const call of parsed.functionCalls) {
+      if (safetyInterrupted) break;
       if (turnTracker.isResponseIgnored(call.responseId)) continue;
       const execution = executeToolCall(call);
       pendingToolExecutions.add(execution);
@@ -325,6 +358,7 @@ export async function connectRealtimeVoiceSession(
         await execution;
       } finally {
         pendingToolExecutions.delete(execution);
+        void maybeRecordTurn().catch(() => undefined);
       }
     }
     if (parsed.responseTerminal && parsed.responseId) {
@@ -333,7 +367,17 @@ export async function connectRealtimeVoiceSession(
     }
   }
 
-  function handleTranscriptUpdate(update: RealtimeTranscriptUpdate): void {
+  function handleTranscriptUpdate(update: RealtimeTranscriptUpdate): boolean {
+    if (
+      update.role === "assistant" &&
+      turnTracker.isResponseIgnored(update.responseId)
+    ) {
+      return false;
+    }
+    if (update.role === "assistant") {
+      turnTracker.trackAssistantItem(update.responseId, update.itemId);
+    }
+
     const rawText = update.text;
     const text = rawText.trim();
     if (!text) {
@@ -341,19 +385,18 @@ export async function connectRealtimeVoiceSession(
         turnTracker.finishUserTranscription(update.itemId);
         void maybeRecordTurn().catch(() => undefined);
       }
-      return;
+      return true;
     }
 
     if (update.role === "user" && !update.final) {
       const itemId = update.itemId || "__latest_user_audio__";
       const nextDraft = `${userTranscriptDrafts.get(itemId) || ""}${rawText}`.trim();
       userTranscriptDrafts.set(itemId, nextDraft);
-      latestUserTranscriptDraft = nextDraft;
       resolveUserTranscriptEvidenceWaiters({ final: false });
-      return;
+      return true;
     }
 
-    if (!update.final) return;
+    if (!update.final) return true;
 
     transcriptLog.push({
       role: update.role,
@@ -362,14 +405,14 @@ export async function connectRealtimeVoiceSession(
     });
 
     if (update.role === "user") {
-      if (update.itemId) userTranscriptDrafts.delete(update.itemId);
-      latestUserTranscriptDraft = "";
+      userTranscriptDrafts.delete(update.itemId || "__latest_user_audio__");
       const turn = turnTracker.addFinalUserTranscript({
         itemId: update.itemId,
         text,
       });
       if (turn.isNew) {
-        void checkRealtimeVoiceSafety({
+        turnTracker.markSafetyPending(turn.clientTurnId);
+        beginSafetyCheck({
           threadId: options.threadId,
           userId: options.userId,
           memoryMode: options.memoryMode,
@@ -379,20 +422,25 @@ export async function connectRealtimeVoiceSession(
           pendingPriorTranscript: turnTracker.priorTranscriptForTurn(
             turn.clientTurnId
           ),
-        }).catch(() => undefined);
+        });
       }
       resolveUserTranscriptEvidenceWaiters({ final: true });
     } else {
       turnTracker.addFinalAssistantTranscript({
         responseId: update.responseId,
+        itemId: update.itemId,
         text,
       });
     }
 
     void maybeRecordTurn().catch(() => undefined);
+    return true;
   }
 
   function maybeRecordTurn(): Promise<void> {
+    if (safetyInterrupted && pendingToolExecutions.size > 0) {
+      return Promise.resolve();
+    }
     if (pendingTurnRecording) return pendingTurnRecording;
     const firstTurn = turnTracker.markNextRecordableTurn();
     if (!firstTurn) {
@@ -404,17 +452,29 @@ export async function connectRealtimeVoiceSession(
       while (turn) {
         let response: RealtimeVoiceTurnRecordResponse;
         try {
-          response = await recordRealtimeVoiceTurn(
-            buildRealtimeVoiceTurnRecordInput({
-              threadId: options.threadId,
-              userId: options.userId,
-              clientTurnId: turn.clientTurnId,
-              userText: turn.userText,
-              assistantText: turn.assistantText,
-              memoryMode: options.memoryMode,
-              toolCalls: turn.toolCalls,
-            })
+          const abortController = new AbortController();
+          const timeout = setTimeout(
+            () => abortController.abort(),
+            VOICE_PERSISTENCE_REQUEST_TIMEOUT_MS
           );
+          try {
+            response = await recordRealtimeVoiceTurn({
+              ...buildRealtimeVoiceTurnRecordInput({
+                threadId: options.threadId,
+                userId: options.userId,
+                clientTurnId: turn.clientTurnId,
+                userText: turn.userText,
+                assistantText: turn.assistantText,
+                memoryMode: options.memoryMode,
+                toolCalls: turn.toolCalls,
+                outcome: turn.outcome,
+                interruptionToken: turn.interruptionToken,
+              }),
+              signal: abortController.signal,
+            });
+          } finally {
+            clearTimeout(timeout);
+          }
         } catch (error) {
           turnTracker.recordingFailed(turn.clientTurnId);
           const normalized =
@@ -437,6 +497,126 @@ export async function connectRealtimeVoiceSession(
       }
     });
     return recording;
+  }
+
+  function beginSafetyCheck(
+    request: Omit<RealtimeVoiceSafetyRequest, "signal">
+  ): void {
+    const abortController = new AbortController();
+    const timeout = setTimeout(
+      () => abortController.abort(),
+      VOICE_SAFETY_REQUEST_TIMEOUT_MS
+    );
+    const requestState = {
+      abortController,
+      timeout,
+      token: safetyConnectionToken,
+    };
+    pendingSafetyRequests.set(request.clientTurnId, requestState);
+
+    void checkRealtimeVoiceSafety({
+      ...request,
+      signal: abortController.signal,
+    }).then(
+      (response) => {
+        if (!takeCurrentSafetyRequest(request.clientTurnId, requestState)) return;
+        if (response.client_turn_id !== request.clientTurnId) {
+          turnTracker.releaseSafetyCheck(request.clientTurnId);
+          void maybeRecordTurn().catch(() => undefined);
+          return;
+        }
+        if (response.action === "continue") {
+          turnTracker.releaseSafetyCheck(request.clientTurnId);
+          void maybeRecordTurn().catch(() => undefined);
+          return;
+        }
+
+        turnTracker.attachLatestUserDraft(
+          readLatestUserTranscriptDraft(userTranscriptDrafts)
+        );
+        const cleanup = turnTracker.interruptForSafety(
+          request.clientTurnId,
+          response.interruption_token || ""
+        );
+        if (!cleanup) return;
+        safetyInterrupted = true;
+        safetyGenerationActive = false;
+        options.onSafetyInterruption?.({ response, request, cleanup });
+        abortSafetyChecksFailOpen();
+        options.audioElement.pause();
+        options.audioElement.srcObject = null;
+        options.onAgentSpeaking?.(false);
+        options.onReadyToSpeak?.(false);
+        if (dataChannel?.readyState === "open") {
+          try {
+            dataChannel.send(serializeRealtimeEvent(buildResponseCancelEvent()));
+          } catch {
+            // The terminal close below is the authoritative interruption.
+          }
+        }
+        void disconnect({ finalize: true }, true).catch((error) => {
+          const normalized =
+            error instanceof Error
+              ? error
+              : new Error("Could not finalize interrupted Realtime voice session.");
+          options.onError?.(normalized);
+          options.onFinalizationFailed?.(normalized);
+          setStatus("disconnected");
+        });
+      },
+      () => {
+        if (!takeCurrentSafetyRequest(request.clientTurnId, requestState)) return;
+        turnTracker.releaseSafetyCheck(request.clientTurnId);
+        void maybeRecordTurn().catch(() => undefined);
+      }
+    );
+  }
+
+  async function endSessionWithTimeout(): Promise<RealtimeVoiceEndSessionResponse> {
+    const abortController = new AbortController();
+    const timeout = setTimeout(
+      () => abortController.abort(),
+      VOICE_PERSISTENCE_REQUEST_TIMEOUT_MS
+    );
+    try {
+      return await endRealtimeVoiceSession(
+        options.threadId,
+        options.memoryMode,
+        abortController.signal
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  function takeCurrentSafetyRequest(
+    clientTurnId: string,
+    requestState: {
+      abortController: AbortController;
+      timeout: ReturnType<typeof setTimeout>;
+      token: symbol;
+    }
+  ): boolean {
+    if (
+      !safetyGenerationActive ||
+      requestState.token !== safetyConnectionToken ||
+      pendingSafetyRequests.get(clientTurnId) !== requestState
+    ) {
+      return false;
+    }
+    pendingSafetyRequests.delete(clientTurnId);
+    clearTimeout(requestState.timeout);
+    return true;
+  }
+
+  function abortSafetyChecksFailOpen(): void {
+    safetyGenerationActive = false;
+    for (const request of pendingSafetyRequests.values()) {
+      clearTimeout(request.timeout);
+      request.abortController.abort();
+    }
+    pendingSafetyRequests.clear();
+    turnTracker.failOpenPendingSafetyChecks();
   }
 
   async function executeToolCall(call: RealtimeFunctionCall): Promise<void> {
@@ -465,6 +645,7 @@ export async function connectRealtimeVoiceSession(
       const result = await executeRealtimeVoiceTool({
         threadId: options.threadId,
         userId: options.userId,
+        clientTurnId,
         currentUserMessage,
         transcript: transcriptLog,
         memoryMode: options.memoryMode,
@@ -569,7 +750,10 @@ export async function connectRealtimeVoiceSession(
   }
 
   function latestUserTranscriptEvidence(): string {
-    return turnTracker.latestUserText().trim() || latestUserTranscriptDraft.trim();
+    return (
+      turnTracker.latestUserText().trim() ||
+      readLatestUserTranscriptDraft(userTranscriptDrafts).trim()
+    );
   }
 
   async function currentUserMessageForToolCall(

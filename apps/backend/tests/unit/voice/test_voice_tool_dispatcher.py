@@ -1043,6 +1043,13 @@ async def test_voice_crisis_lookup_does_not_bleed_into_a_later_turn() -> None:
 
     async with runtime:
         # Turn 1: a crisis whose lookup finds and persists a Singapore hotline.
+        await runtime.voice.persist_voice_crisis_resource_lookup(
+            thread_id="voice-thread",
+            user_id=None,
+            inferred_location="Singapore",
+            found_resources=[found_resource],
+            resource_lookup_status="found",
+        )
         await runtime.voice.record_voice_turn(
             thread_id="voice-thread",
             user_id=None,

@@ -129,6 +129,35 @@ class PostgresCrisisLogBackend:
                     ),
                 )
 
+    async def aappend_once(self, record: CrisisLogRecord) -> bool:
+        """Append one crisis record unless its deterministic ID exists."""
+
+        async with self._operation_lock:
+            if self._closed:
+                raise RuntimeError("PostgresCrisisLogBackend is closed.")
+            detected_date = extract_iso_date(record.detected_at)
+            conn = await self._ensure_connection()
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    INSERT INTO crisis_log
+                        (id, session_id_opaque, user_id_or_null, detected_at,
+                         detected_date, level, value)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO NOTHING
+                    """,
+                    (
+                        record.id,
+                        record.session_id_opaque,
+                        record.user_id_or_null,
+                        record.detected_at,
+                        detected_date,
+                        record.level,
+                        Jsonb(serialize_crisis_record(record)),
+                    ),
+                )
+                return bool(cursor.rowcount)
+
     async def alist_by_date(self, day: date) -> list[CrisisLogRecord]:
         """List records for one date in insertion order."""
 

@@ -15,23 +15,26 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import hashlib
 import json
 import logging
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import replace
-from typing import TYPE_CHECKING, Any, cast
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Literal, cast
 
+from agent.audit.capture import capture_crisis_outcome
 from agent.audit.models import CrisisResourceLookupStatus
 from agent.memory.modes import MemoryMode
 from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.memory.store import MemoryStore
-from agent.models import Channel
+from agent.models import Channel, CrisisAssessment
 from agent.observability.decorators import trace_event, trace_span
 from agent.observability.events import (
     RUNTIME_VOICE_SESSION,
     VOICE_CRISIS_RESOURCE_LOOKUP_PERSISTED,
     VOICE_RESPONSE_FINALIZED,
+    VOICE_SAFETY_INTERRUPTED_TURN_RECORDED,
 )
 from agent.observability.timing import elapsed_ms
 from agent.runtime.context import OpenAITextRunContext
@@ -41,6 +44,10 @@ from agent.runtime.session.service import SessionLifecycleService
 from agent.runtime.state_ops import apply_state_delta
 from agent.runtime.state_store import RuntimeStateStore
 from agent.state import AgentState, resolve_owner_id
+from agent.tools.grounded_search import (
+    CrisisResourceLookupRequest,
+    find_crisis_resources_for_request,
+)
 from agent.voice.concurrent_safety import (
     VoiceConcurrentSafetyResult,
     VoiceConcurrentSafetyService,
@@ -48,6 +55,12 @@ from agent.voice.concurrent_safety import (
 from agent.voice.post_turn_safety import (
     VoicePostTurnSafetyAuditor,
     VoicePostTurnSafetyCheck,
+    VoicePostTurnSafetyScheduleResult,
+)
+from agent.voice.safety_overlay import (
+    VoiceSafetyDecision,
+    VoiceSafetyOverlayService,
+    VoiceSafetyResourceResolution,
 )
 from agent.voice.state_transition import VoiceTurnStateInputs, build_voice_turn_state
 from llm.base import BaseLLMClient
@@ -57,7 +70,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_MAX_RECORDED_VOICE_TURN_HASHES = 256
+_MAX_PENDING_VOICE_RESOURCE_LOOKUPS = 32
+
+
+@dataclass(frozen=True, slots=True)
+class VoiceTurnRecordReceipt:
+    """Stable response facts retained for an idempotent turn retry."""
+
+    request_hash: str
+    message_count: int
+    post_turn_safety: dict[str, Any] | None
+
+
 _CONCURRENT_SAFETY_SNAPSHOT_TIMEOUT_SECONDS = 1.0
+_SAFETY_RESOURCE_LOOKUP_TIMEOUT_SECONDS = 8.0
 
 
 # ── Module-level helpers (moved from runtime.py) ─────────────────
@@ -163,6 +190,7 @@ class VoiceRuntimeFacade:
         self._lock_for = lock_for
         self._memory_mode = memory_mode
         self._concurrent_safety_service = VoiceConcurrentSafetyService()
+        self._safety_overlay_service = VoiceSafetyOverlayService()
         self._post_turn_safety_auditor = VoicePostTurnSafetyAuditor()
 
     @property
@@ -199,15 +227,11 @@ class VoiceRuntimeFacade:
         started_at = time.monotonic()
         try:
             async with asyncio.timeout(_CONCURRENT_SAFETY_SNAPSHOT_TIMEOUT_SECONDS):
-                async with self._lock_for(thread_id):
-                    prior_state = await self._state_store.load_state(thread_id)
-                    transcript = (
-                        list(prior_state.get("transcript", []) or [])
-                        if prior_state is not None
-                        else []
-                    )
-                    prior_transcript = copy.deepcopy(transcript[:prior_message_count])
-                    prior_transcript.extend(copy.deepcopy(pending_prior_transcript))
+                prior_transcript = await self._voice_prior_transcript_snapshot(
+                    thread_id=thread_id,
+                    prior_message_count=prior_message_count,
+                    pending_prior_transcript=pending_prior_transcript,
+                )
         except TimeoutError:
             return VoiceConcurrentSafetyResult(
                 status="timeout",
@@ -232,6 +256,83 @@ class VoiceRuntimeFacade:
         )
         return replace(result, duration_ms=round(elapsed_ms(started_at), 2))
 
+    def decide_voice_safety(
+        self,
+        result: VoiceConcurrentSafetyResult,
+    ) -> VoiceSafetyDecision:
+        """Apply the server-owned concurrent safety policy."""
+
+        return self._safety_overlay_service.decide(result)
+
+    async def resolve_voice_safety_resources(
+        self,
+        *,
+        thread_id: str,
+        user_text: str,
+        prior_message_count: int,
+        pending_prior_transcript: list[dict[str, Any]],
+        llm_client: BaseLLMClient | None,
+    ) -> VoiceSafetyResourceResolution:
+        """Resolve verified resources from an isolated snapshot without mutation."""
+
+        if llm_client is None:
+            return self._safety_overlay_service.resource_resolution(
+                inferred_location="",
+                resources=[],
+                status="lookup_error",
+            )
+
+        try:
+            async with asyncio.timeout(_SAFETY_RESOURCE_LOOKUP_TIMEOUT_SECONDS):
+                transcript = await self._voice_prior_transcript_snapshot(
+                    thread_id=thread_id,
+                    prior_message_count=prior_message_count,
+                    pending_prior_transcript=pending_prior_transcript,
+                )
+                (
+                    inferred_location,
+                    resources,
+                    status,
+                ) = await find_crisis_resources_for_request(
+                    CrisisResourceLookupRequest(
+                        current_user_message=user_text.strip(),
+                        transcript=tuple(transcript),
+                    ),
+                    llm_client=llm_client,
+                )
+        except TimeoutError:
+            inferred_location, resources, status = "", [], "lookup_error"
+        except Exception as exc:
+            logger.warning(
+                "voice safety resource resolution failed: %s",
+                type(exc).__name__,
+            )
+            inferred_location, resources, status = "", [], "lookup_error"
+
+        return self._safety_overlay_service.resource_resolution(
+            inferred_location=inferred_location,
+            resources=resources,
+            status=status,
+        )
+
+    async def _voice_prior_transcript_snapshot(
+        self,
+        *,
+        thread_id: str,
+        prior_message_count: int,
+        pending_prior_transcript: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        async with self._lock_for(thread_id):
+            prior_state = await self._state_store.load_state(thread_id)
+            transcript = (
+                list(prior_state.get("transcript", []) or [])
+                if prior_state is not None
+                else []
+            )
+            snapshot = copy.deepcopy(transcript[:prior_message_count])
+            snapshot.extend(copy.deepcopy(pending_prior_transcript))
+            return snapshot
+
     # ── build_voice_tool_context ─────────────────────────────────
 
     async def build_voice_tool_context(
@@ -241,6 +342,7 @@ class VoiceRuntimeFacade:
         user_id: str | None,
         current_user_message: str,
         transcript: list[dict[str, object]],
+        client_turn_id: str | None = None,
         llm_client: BaseLLMClient | None = None,
     ) -> OpenAITextRunContext:
         """Build the app-owned context used by voice function tools."""
@@ -311,7 +413,16 @@ class VoiceRuntimeFacade:
             transcript=cast(list[dict[str, Any]], list(state.get("transcript", []))),
             turn_count=turn_count_from_state(state),
         )
-        self._rehydrate_crisis_resource_lookup(context, prior_state)
+        correlation_hash = (
+            hashlib.sha256(f"{thread_id}\0{client_turn_id}".encode("utf-8")).hexdigest()
+            if client_turn_id is not None
+            else None
+        )
+        self._rehydrate_crisis_resource_lookup(
+            context,
+            prior_state,
+            correlation_hash=correlation_hash,
+        )
         return context
 
     # ── _rehydrate_crisis_resource_lookup ─────────────────────────
@@ -320,6 +431,8 @@ class VoiceRuntimeFacade:
     def _rehydrate_crisis_resource_lookup(
         context: OpenAITextRunContext,
         prior_state: Mapping[str, Any] | None,
+        *,
+        correlation_hash: str | None,
     ) -> None:
         """Re-seed a prior voice crisis lookup onto a freshly built context.
 
@@ -338,16 +451,32 @@ class VoiceRuntimeFacade:
 
         if prior_state is None:
             return
-        status = prior_state.get("resource_lookup_status")
+        resource_state: Mapping[str, Any] = prior_state
+        if correlation_hash is not None:
+            diagnostics = prior_state.get("diagnostics", {})
+            pending_lookups = (
+                diagnostics.get("voice_crisis_resource_lookups", {})
+                if isinstance(diagnostics, Mapping)
+                else {}
+            )
+            matched = (
+                pending_lookups.get(correlation_hash)
+                if isinstance(pending_lookups, Mapping)
+                else None
+            )
+            if not isinstance(matched, Mapping):
+                return
+            resource_state = matched
+        status = resource_state.get("resource_lookup_status")
         if not isinstance(status, str) or status in {"", "not_attempted"}:
             return
-        found_resources = prior_state.get("found_resources")
+        found_resources = resource_state.get("found_resources")
         rows = (
             [dict(row) for row in found_resources]
             if isinstance(found_resources, list)
             else []
         )
-        inferred_location = prior_state.get("inferred_location")
+        inferred_location = resource_state.get("inferred_location")
         context.record_crisis_resource_tool_result(
             response_text="",
             inferred_location=(
@@ -498,6 +627,7 @@ class VoiceRuntimeFacade:
         inferred_location: str,
         found_resources: list[dict[str, str]],
         resource_lookup_status: str,
+        client_turn_id: str | None = None,
     ) -> None:
         """Persist a voice crisis-resource lookup so a later tool call can reuse it.
 
@@ -533,11 +663,32 @@ class VoiceRuntimeFacade:
                         )
                     ),
                 )
+                state["transcript"] = []
             else:
                 state = cast(AgentState, dict(prior_state))
             state["inferred_location"] = inferred_location
             state["found_resources"] = [dict(row) for row in found_resources]
             state["resource_lookup_status"] = resource_lookup_status
+            diagnostics = dict(state.get("diagnostics", {}) or {})
+            if client_turn_id is not None:
+                correlation_hash = hashlib.sha256(
+                    f"{thread_id}\0{client_turn_id}".encode("utf-8")
+                ).hexdigest()
+                diagnostics["voice_crisis_resource_turn_hash"] = correlation_hash
+                pending_lookups = dict(
+                    diagnostics.get("voice_crisis_resource_lookups", {}) or {}
+                )
+                pending_lookups[correlation_hash] = {
+                    "inferred_location": inferred_location,
+                    "found_resources": [dict(row) for row in found_resources],
+                    "resource_lookup_status": resource_lookup_status,
+                }
+                diagnostics["voice_crisis_resource_lookups"] = dict(
+                    list(pending_lookups.items())[-_MAX_PENDING_VOICE_RESOURCE_LOOKUPS:]
+                )
+            else:
+                diagnostics.pop("voice_crisis_resource_turn_hash", None)
+            state["diagnostics"] = diagnostics
             await self._state_store.save_state(thread_id, state)
             trace_event(
                 VOICE_CRISIS_RESOURCE_LOOKUP_PERSISTED,
@@ -588,6 +739,57 @@ class VoiceRuntimeFacade:
             state = await self._state_store.load_state(thread_id)
             return len(state.get("transcript", []) or []) if state is not None else 0
 
+    async def recorded_voice_turn_receipt(
+        self,
+        *,
+        thread_id: str,
+        correlation_hash: str,
+        request_hash: str,
+    ) -> VoiceTurnRecordReceipt | None:
+        """Return the original response facts for an idempotent retry."""
+
+        async with self._lock_for(thread_id):
+            state = await self._state_store.load_state(thread_id)
+            if state is None or not _voice_turn_hash_recorded(state, correlation_hash):
+                return None
+            _validate_voice_turn_request_hash(state, correlation_hash, request_hash)
+            diagnostics = state.get("diagnostics", {})
+            receipts = (
+                diagnostics.get("voice_recorded_turn_receipts", {})
+                if isinstance(diagnostics, Mapping)
+                else {}
+            )
+            receipt = (
+                receipts.get(correlation_hash)
+                if isinstance(receipts, Mapping)
+                else None
+            )
+            if isinstance(receipt, Mapping):
+                post_turn_safety = receipt.get("post_turn_safety")
+                return VoiceTurnRecordReceipt(
+                    request_hash=request_hash,
+                    message_count=int(receipt.get("message_count") or 0),
+                    post_turn_safety=(
+                        dict(post_turn_safety)
+                        if isinstance(post_turn_safety, Mapping)
+                        else None
+                    ),
+                )
+            post_turn_safety = (
+                diagnostics.get("voice_post_turn_safety")
+                if isinstance(diagnostics, Mapping)
+                else None
+            )
+            return VoiceTurnRecordReceipt(
+                request_hash=request_hash,
+                message_count=len(state.get("transcript", []) or []),
+                post_turn_safety=(
+                    dict(post_turn_safety)
+                    if isinstance(post_turn_safety, Mapping)
+                    else None
+                ),
+            )
+
     # ── record_voice_turn ────────────────────────────────────────
 
     @trace_span(
@@ -601,48 +803,134 @@ class VoiceRuntimeFacade:
         user_id: str | None,
         user_text: str,
         assistant_text: str,
+        outcome: Literal[
+            "completed", "connection_interrupted", "safety_interrupted"
+        ] = "completed",
         route: str | None = None,
         response_style: str | None = None,
         tool_calls: list[dict[str, Any]] | None = None,
         llm_client: BaseLLMClient | None = None,
+        correlation_hash: str | None = None,
+        request_hash: str | None = None,
+        safety_assessment: CrisisAssessment | None = None,
     ) -> AgentState:
         """Persist a finalized voice turn without running the text agent."""
 
+        if outcome not in {
+            "completed",
+            "connection_interrupted",
+            "safety_interrupted",
+        }:
+            raise ValueError(f"Unsupported voice turn outcome: {outcome}")
+        if (
+            outcome in {"connection_interrupted", "safety_interrupted"}
+            and not user_text.strip()
+        ):
+            raise ValueError(f"{outcome} requires user_text")
         voice_tool_calls = list(tool_calls or [])
+        if outcome in {"connection_interrupted", "safety_interrupted"}:
+            voice_tool_calls = [
+                call
+                for call in voice_tool_calls
+                if call.get("status") in {"completed", "failed"}
+            ]
+            assistant_text = ""
+            route = f"voice_{outcome}"
+            response_style = f"voice_{outcome}"
         async with self._lock_for(thread_id):
             self._runtime._remember_llm_client(thread_id, llm_client)
             prior_state = await self._runtime.get_state(thread_id)
-            await self._runtime._prepare_session_for_turn(
-                thread_id=thread_id,
-                prior_state=prior_state,
-                llm_client=llm_client,
+            if (
+                correlation_hash is not None
+                and prior_state is not None
+                and _voice_turn_hash_recorded(prior_state, correlation_hash)
+            ):
+                if request_hash is not None:
+                    _validate_voice_turn_request_hash(
+                        prior_state,
+                        correlation_hash,
+                        request_hash,
+                    )
+                return prior_state
+            pending_turn = (
+                _pending_voice_turn(prior_state, correlation_hash)
+                if prior_state is not None and correlation_hash is not None
+                else None
             )
-            prior_state = await self._runtime.get_state(thread_id)
-            prior_turn_count = turn_count_from_state(prior_state)
-            seed_message = user_text.strip() or assistant_text.strip()
-            initial_state = self._runtime._build_turn_initial_state(
-                thread_id=thread_id,
-                message=seed_message,
-                channel=Channel.VOICE,
-                user_id=user_id,
-                installed_skills=None,
-                prior_turn_count=prior_turn_count,
-            )
-            transition = build_voice_turn_state(
-                VoiceTurnStateInputs(
+            if pending_turn is not None:
+                if request_hash is not None:
+                    _validate_voice_turn_request_hash(
+                        prior_state,
+                        correlation_hash,
+                        request_hash,
+                    )
+                state = prior_state
+                prior_message_count = int(pending_turn.get("prior_message_count") or 0)
+                safety_prior_state = cast(
+                    AgentState,
+                    {
+                        "transcript": list(state.get("transcript", []) or [])[
+                            :prior_message_count
+                        ]
+                    },
+                )
+                turn_route = str(state.get("route") or route or "")
+                turn_response_style = str(
+                    state.get("response_style") or response_style or ""
+                )
+            else:
+                await self._runtime._prepare_session_for_turn(
                     thread_id=thread_id,
-                    user_id=user_id,
-                    user_text=user_text,
-                    assistant_text=assistant_text,
-                    route=route,
-                    response_style=response_style,
-                    tool_calls=voice_tool_calls,
                     prior_state=prior_state,
-                    initial_state=initial_state,
+                    llm_client=llm_client,
+                )
+                prior_state = await self._runtime.get_state(thread_id)
+                safety_prior_state = prior_state
+                prior_turn_count = turn_count_from_state(prior_state)
+                seed_message = user_text.strip() or assistant_text.strip()
+                initial_state = self._runtime._build_turn_initial_state(
+                    thread_id=thread_id,
+                    message=seed_message,
+                    channel=Channel.VOICE,
+                    user_id=user_id,
+                    installed_skills=None,
                     prior_turn_count=prior_turn_count,
                 )
-            )
-            state = transition.state
+                transition = build_voice_turn_state(
+                    VoiceTurnStateInputs(
+                        thread_id=thread_id,
+                        user_id=user_id,
+                        user_text=user_text,
+                        assistant_text=assistant_text,
+                        outcome=outcome,
+                        route=route,
+                        response_style=response_style,
+                        tool_calls=voice_tool_calls,
+                        prior_state=prior_state,
+                        initial_state=initial_state,
+                        prior_turn_count=prior_turn_count,
+                        correlation_hash=correlation_hash,
+                        safety_assessment=safety_assessment,
+                    )
+                )
+                state = transition.state
+                turn_route = transition.metadata.route
+                turn_response_style = transition.metadata.response_style
+                if correlation_hash is not None and request_hash is not None:
+                    diagnostics = dict(state.get("diagnostics", {}) or {})
+                    pending_turns = dict(
+                        diagnostics.get("voice_pending_turns", {}) or {}
+                    )
+                    pending_turns[correlation_hash] = {
+                        "request_hash": request_hash,
+                        "prior_message_count": len(
+                            prior_state.get("transcript", []) or []
+                        )
+                        if prior_state is not None
+                        else 0,
+                    }
+                    diagnostics["voice_pending_turns"] = pending_turns
+                    state["diagnostics"] = diagnostics
 
             async with self._active_session_manager.active_session_mutation(
                 thread_id,
@@ -667,42 +955,150 @@ class VoiceRuntimeFacade:
                         self._runtime._ensure_openai_sdk_turn_recorded
                     ),
                     session_transcript_soft_limit=None,
-                    capture_safety_event=transition.metadata.route == "crisis",
+                    capture_safety_event=turn_route == "crisis",
                 )
-                trace_event(
-                    VOICE_RESPONSE_FINALIZED,
-                    {
-                        "voice_runtime": "openai_realtime",
-                        "route": transition.metadata.route,
-                        "response_style": transition.metadata.response_style,
-                        "memory_mode": self._memory_mode.value,
-                        "resource_lookup_status": state.get("resource_lookup_status"),
-                        "tool_call_count": len(voice_tool_calls),
-                    },
+                event_name = (
+                    VOICE_SAFETY_INTERRUPTED_TURN_RECORDED
+                    if outcome == "safety_interrupted"
+                    else VOICE_RESPONSE_FINALIZED
                 )
+                attributes: dict[str, object] = {
+                    "voice_runtime": "openai_realtime",
+                    "route": turn_route,
+                    "response_style": turn_response_style,
+                    "memory_mode": self._memory_mode.value,
+                    "resource_lookup_status": state.get("resource_lookup_status"),
+                    "tool_call_count": len(voice_tool_calls),
+                }
+                if outcome != "completed" and correlation_hash is not None:
+                    attributes["correlation_hash"] = correlation_hash
+                trace_event(event_name, attributes)
 
-            safety_schedule = self._post_turn_safety_auditor.schedule_check(
-                VoicePostTurnSafetyCheck(
-                    thread_id=thread_id,
-                    user_id=user_id,
-                    user_text=user_text,
-                    realtime_route=transition.metadata.route,
-                    response_style=transition.metadata.response_style,
-                    state=cast(AgentState, dict(state)),
-                    prior_state=(
-                        cast(AgentState, dict(prior_state))
-                        if prior_state is not None
-                        else None
-                    ),
-                    context=post_turn_context,
-                    llm_client=llm_client,
+                if outcome == "safety_interrupted" and safety_assessment is not None:
+                    await capture_crisis_outcome(state, post_turn_context)
+
+            if outcome == "safety_interrupted" and safety_assessment is not None:
+                safety_schedule = VoicePostTurnSafetyScheduleResult(
+                    scheduled=False,
+                    reason="safety_interruption_verified",
+                    pending_count=self._post_turn_safety_auditor.pending_count,
                 )
-            )
+            elif outcome == "connection_interrupted":
+                safety_schedule = VoicePostTurnSafetyScheduleResult(
+                    scheduled=False,
+                    reason="connection_interrupted",
+                    pending_count=self._post_turn_safety_auditor.pending_count,
+                )
+            else:
+                safety_schedule = self._post_turn_safety_auditor.schedule_check(
+                    VoicePostTurnSafetyCheck(
+                        thread_id=thread_id,
+                        user_id=user_id,
+                        user_text=user_text,
+                        realtime_route=turn_route,
+                        response_style=turn_response_style,
+                        state=cast(AgentState, dict(state)),
+                        prior_state=(
+                            cast(AgentState, dict(safety_prior_state))
+                            if safety_prior_state is not None
+                            else None
+                        ),
+                        context=post_turn_context,
+                        llm_client=llm_client,
+                    )
+                )
             diagnostics = dict(state.get("diagnostics", {}) or {})
             diagnostics["voice_post_turn_safety"] = safety_schedule.as_dict()
+            if correlation_hash is not None:
+                recorded_hashes = [
+                    str(value)
+                    for value in diagnostics.get("voice_recorded_turn_hashes", [])
+                    if isinstance(value, str)
+                ]
+                diagnostics["voice_recorded_turn_hashes"] = [
+                    *recorded_hashes,
+                    correlation_hash,
+                ][-_MAX_RECORDED_VOICE_TURN_HASHES:]
+                pending_turns = dict(diagnostics.get("voice_pending_turns", {}) or {})
+                pending_turns.pop(correlation_hash, None)
+                if pending_turns:
+                    diagnostics["voice_pending_turns"] = pending_turns
+                else:
+                    diagnostics.pop("voice_pending_turns", None)
+            if correlation_hash is not None and request_hash is not None:
+                recorded_requests = dict(
+                    diagnostics.get("voice_recorded_turn_requests", {}) or {}
+                )
+                recorded_requests[correlation_hash] = request_hash
+                retained_hashes = set(diagnostics["voice_recorded_turn_hashes"])
+                diagnostics["voice_recorded_turn_requests"] = {
+                    key: value
+                    for key, value in recorded_requests.items()
+                    if key in retained_hashes
+                }
+                receipts = dict(
+                    diagnostics.get("voice_recorded_turn_receipts", {}) or {}
+                )
+                receipts[correlation_hash] = {
+                    "request_hash": request_hash,
+                    "message_count": len(state.get("transcript", []) or []),
+                    "post_turn_safety": safety_schedule.as_dict(),
+                }
+                retained_hashes = set(
+                    diagnostics.get("voice_recorded_turn_hashes", []) or []
+                )
+                diagnostics["voice_recorded_turn_receipts"] = {
+                    key: value
+                    for key, value in receipts.items()
+                    if key in retained_hashes
+                }
             state["diagnostics"] = diagnostics
             await self._state_store.save_state(thread_id, state)
             return state
+
+
+def _voice_turn_hash_recorded(state: Mapping[str, Any], correlation_hash: str) -> bool:
+    diagnostics = state.get("diagnostics", {})
+    if not isinstance(diagnostics, Mapping):
+        return False
+    recorded_hashes = diagnostics.get("voice_recorded_turn_hashes", [])
+    return isinstance(recorded_hashes, list) and correlation_hash in recorded_hashes
+
+
+def _pending_voice_turn(
+    state: Mapping[str, Any], correlation_hash: str
+) -> Mapping[str, Any] | None:
+    diagnostics = state.get("diagnostics", {})
+    if not isinstance(diagnostics, Mapping):
+        return None
+    pending_turns = diagnostics.get("voice_pending_turns", {})
+    if not isinstance(pending_turns, Mapping):
+        return None
+    pending_turn = pending_turns.get(correlation_hash)
+    return pending_turn if isinstance(pending_turn, Mapping) else None
+
+
+def _validate_voice_turn_request_hash(
+    state: Mapping[str, Any],
+    correlation_hash: str,
+    request_hash: str,
+) -> None:
+    diagnostics = state.get("diagnostics", {})
+    if not isinstance(diagnostics, Mapping):
+        return
+    recorded_requests = diagnostics.get("voice_recorded_turn_requests", {})
+    existing = (
+        recorded_requests.get(correlation_hash)
+        if isinstance(recorded_requests, Mapping)
+        else None
+    )
+    if existing is None:
+        pending_turn = _pending_voice_turn(state, correlation_hash)
+        existing = (
+            pending_turn.get("request_hash") if pending_turn is not None else None
+        )
+    if isinstance(existing, str) and existing != request_hash:
+        raise ValueError("client_turn_id was already used for a different voice turn")
 
 
 __all__ = [

@@ -17,7 +17,11 @@ import {
   updateMemoryRecall,
   type ResponseModelTier,
 } from "@/lib/api";
-import { buildEndedSessionResult, useSessionStore } from "@/lib/session";
+import {
+  buildEndedSessionResult,
+  useSessionStore,
+  voiceFinalizationBlocksSessionActions,
+} from "@/lib/session";
 
 export type CommandActionId =
   | "show_help"
@@ -83,6 +87,8 @@ export function CommandActionsProvider({ children }: { children: ReactNode }) {
   const newSession = useSessionStore((s) => s.newSession);
   const chatLoading = useSessionStore((s) => s.chatLoading);
   const voiceConnected = useSessionStore((s) => s.voiceConnected);
+  const voiceConnectionPending = useSessionStore((s) => s.voiceConnectionPending);
+  const voiceFinalization = useSessionStore((s) => s.voiceFinalization);
   const messages = useSessionStore((s) => s.messages);
   const memoryFacts = useSessionStore((s) => s.memoryFacts);
   const setMemoryFacts = useSessionStore((s) => s.setMemoryFacts);
@@ -98,7 +104,12 @@ export function CommandActionsProvider({ children }: { children: ReactNode }) {
   const [endingSession, setEndingSession] = useState(false);
   const [endError, setEndError] = useState<string | null>(null);
   const [hasActiveSession, setHasActiveSession] = useState(false);
-  const isBusy = chatLoading || endingSession || voiceConnected;
+  const isBusy =
+    chatLoading ||
+    endingSession ||
+    voiceConnected ||
+    voiceConnectionPending ||
+    voiceFinalizationBlocksSessionActions(voiceFinalization, threadId);
   const identityLocked =
     isBusy || (sessionMode === "persistent" && hasActiveSession);
   const canEndSession =

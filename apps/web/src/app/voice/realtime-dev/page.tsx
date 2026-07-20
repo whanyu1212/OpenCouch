@@ -3,8 +3,10 @@
 import { useEffect, useRef, useState, type ReactElement } from "react";
 import Link from "next/link";
 import {
+  getRealtimeVoiceSafetyResources,
   type RealtimeVoiceSessionResponse,
   type RealtimeVoiceEndSessionResponse,
+  type RealtimeVoiceSafetyResourcesResponse,
   type VoiceMemoryMode,
 } from "@/lib/api";
 import {
@@ -31,6 +33,7 @@ interface DevLog {
 
 interface TranscriptRow {
   id: string;
+  responseId?: string;
   role: "user" | "assistant";
   text: string;
   final: boolean;
@@ -52,6 +55,7 @@ const STATUS_LABELS: Record<RealtimeVoiceConnectionStatus, string> = {
   finalizing: "finalizing",
   disconnected: "disconnected",
 };
+const SAFETY_RESOURCE_TIMEOUT_MS = 10_000;
 
 const IconMic = ({ size = 16 }: { size?: number }) => (
   <svg
@@ -112,14 +116,29 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
   const setVoiceAgentSpeaking = useSessionStore((s) => s.setVoiceAgentSpeaking);
   const setVoiceReadyToSpeak = useSessionStore((s) => s.setVoiceReadyToSpeak);
   const setVoiceError = useSessionStore((s) => s.setVoiceError);
+  const setVoiceFinalization = useSessionStore((s) => s.setVoiceFinalization);
+  const voiceFinalizationStatus = useSessionStore(
+    (s) => s.voiceFinalization.status
+  );
   const addVoiceTranscript = useSessionStore((s) => s.addVoiceTranscript);
   const clearVoiceTranscripts = useSessionStore((s) => s.clearVoiceTranscripts);
+  const suppressVoiceAssistantTranscripts = useSessionStore(
+    (s) => s.suppressVoiceAssistantTranscripts
+  );
+  const setVoiceSafetyOverlay = useSessionStore((s) => s.setVoiceSafetyOverlay);
+  const updateVoiceSafetyResources = useSessionStore(
+    (s) => s.updateVoiceSafetyResources
+  );
+  const setVoiceSafetyResourceWorkActive = useSessionStore(
+    (s) => s.setVoiceSafetyResourceWorkActive
+  );
   const bumpMemoryRefreshVersion = useSessionStore(
     (s) => s.bumpMemoryRefreshVersion
   );
 
   const audioRef = useRef<HTMLAudioElement>(null);
   const handleRef = useRef<RealtimeVoiceSessionHandle | null>(null);
+  const safetyResourceControllerRef = useRef<AbortController | null>(null);
   const [memoryMode, setMemoryMode] = useState<VoiceMemoryMode>(sessionMode);
   const [status, setStatus] =
     useState<RealtimeVoiceConnectionStatus>("disconnected");
@@ -144,11 +163,18 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
   useEffect(() => {
     return () => {
       void handleRef.current?.disconnect({ finalize: false });
+      safetyResourceControllerRef.current?.abort();
+      setVoiceSafetyResourceWorkActive(false);
       setVoiceConnected(false);
       setVoiceAgentSpeaking(false);
       setVoiceReadyToSpeak(false);
     };
-  }, [setVoiceAgentSpeaking, setVoiceConnected, setVoiceReadyToSpeak]);
+  }, [
+    setVoiceAgentSpeaking,
+    setVoiceConnected,
+    setVoiceReadyToSpeak,
+    setVoiceSafetyResourceWorkActive,
+  ]);
 
   const pushLog = (
     level: LogLevel,
@@ -172,7 +198,9 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
   };
 
   const handleConnect = async () => {
-    if (!audioRef.current || !threadId || busy || connected) return;
+    if (!audioRef.current || !threadId || busy || connected || handleRef.current) {
+      return;
+    }
 
     setError(null);
     setEndedSession(null);
@@ -220,6 +248,7 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
               role: update.role,
               text: update.text,
               itemId: update.itemId,
+              responseId: update.responseId,
             });
           }
         },
@@ -240,8 +269,81 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
           );
           if (memoryMode === "persistent") bumpMemoryRefreshVersion();
         },
+        onSafetyInterruption: ({ response, request, cleanup }) => {
+          suppressVoiceAssistantTranscripts(cleanup);
+          setVoiceSafetyOverlay({
+            clientTurnId: response.client_turn_id,
+            riskLevel: response.risk_level,
+            support: response.support,
+          });
+          setVoiceFinalization({
+            threadId,
+            status: "in_progress",
+            blocksTextTurns: true,
+            detail: "Saving the interrupted voice session...",
+            updatedAt: new Date().toISOString(),
+          });
+          setTranscripts((current) =>
+            current.filter(
+              (transcript) =>
+                transcript.role !== "assistant" ||
+                !(
+                  cleanup.itemIds.includes(transcript.id) ||
+                  (transcript.responseId &&
+                    cleanup.responseIds.includes(transcript.responseId))
+                )
+            )
+          );
+          pushLog(
+            "info",
+            "safety interruption",
+            `turn ${response.client_turn_id} / risk ${response.risk_level ?? "unknown"}`,
+            { ...response }
+          );
+          setVoiceSafetyResourceWorkActive(true);
+          safetyResourceControllerRef.current?.abort();
+          const controller = new AbortController();
+          safetyResourceControllerRef.current = controller;
+          const timeout = window.setTimeout(
+            () => controller.abort(),
+            SAFETY_RESOURCE_TIMEOUT_MS
+          );
+          void getRealtimeVoiceSafetyResources({
+            ...request,
+            signal: controller.signal,
+          })
+            .then((resources) => {
+              updateVoiceSafetyResources(response.client_turn_id, resources);
+            })
+            .catch(() => {
+              const fallback: RealtimeVoiceSafetyResourcesResponse = {
+                client_turn_id: response.client_turn_id,
+                status: "lookup_error",
+                inferred_location: "",
+                resources: [],
+                message:
+                  "Verified local resources could not be loaded. Contact emergency services in your area now if you may be in immediate danger.",
+              };
+              updateVoiceSafetyResources(response.client_turn_id, fallback);
+            })
+            .finally(() => {
+              window.clearTimeout(timeout);
+              if (safetyResourceControllerRef.current === controller) {
+                safetyResourceControllerRef.current = null;
+                setVoiceSafetyResourceWorkActive(false);
+              }
+            });
+        },
         onEnded: (response) => {
+          handleRef.current = null;
           setEndedSession(response);
+          setVoiceFinalization({
+            threadId,
+            status: "completed",
+            blocksTextTurns: false,
+            detail: response.detail,
+            updatedAt: new Date().toISOString(),
+          });
           pushLog(
             "info",
             "session finalized",
@@ -256,6 +358,16 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
           setVoiceError(err.message);
           pushLog("error", "error", err.message);
         },
+        onFinalizationFailed: (err) => {
+          setVoiceFinalization({
+            threadId,
+            status: "failed",
+            blocksTextTurns:
+              useSessionStore.getState().voiceFinalization.blocksTextTurns,
+            detail: err.message,
+            updatedAt: new Date().toISOString(),
+          });
+        },
       });
     } catch {
       handleRef.current = null;
@@ -266,14 +378,39 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
   const handleDisconnect = async () => {
     if (!handleRef.current || busy) return;
     const handle = handleRef.current;
-    handleRef.current = null;
+    const retrying = voiceFinalizationStatus === "failed";
+    const previousFinalization = useSessionStore.getState().voiceFinalization;
+    const blocksTextTurns =
+      previousFinalization.threadId === threadId &&
+      previousFinalization.blocksTextTurns;
+    setVoiceFinalization({
+      threadId,
+      status: "in_progress",
+      blocksTextTurns,
+      detail: retrying
+        ? blocksTextTurns
+          ? "Retrying interrupted voice session save..."
+          : "Retrying voice session save..."
+        : "Saving session memory...",
+      updatedAt: new Date().toISOString(),
+    });
     try {
       await handle.disconnect({ finalize: true });
+      handleRef.current = null;
     } catch (err) {
+      handleRef.current = handle;
       const message =
         err instanceof Error ? err.message : "Could not disconnect voice session.";
       setError(message);
       setVoiceError(message);
+      setVoiceFinalization({
+        threadId,
+        status: "failed",
+        blocksTextTurns,
+        detail: message,
+        updatedAt: new Date().toISOString(),
+      });
+      setStatus("disconnected");
       pushLog("error", "disconnect", message);
     } finally {
       setVoiceConnected(false);
@@ -281,6 +418,11 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
       setVoiceReadyToSpeak(false);
     }
   };
+
+  const retryAvailable =
+    status === "disconnected" &&
+    voiceFinalizationStatus === "failed" &&
+    handleRef.current !== null;
 
   const handleReset = () => {
     setError(null);
@@ -301,6 +443,7 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
           ...current,
           {
             id,
+            responseId: update.responseId,
             role: update.role,
             text: update.text,
             final: update.final,
@@ -312,6 +455,7 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
       const existing = next[index];
       next[index] = {
         ...existing,
+        responseId: update.responseId ?? existing.responseId,
         text: update.final ? update.text : existing.text + update.text,
         final: update.final,
       };
@@ -411,7 +555,7 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
                 <button
                   type="button"
                   onClick={handleConnect}
-                  disabled={!threadId || connected || busy}
+                  disabled={!threadId || connected || busy || retryAvailable}
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-[8px] bg-oc-teal-600 px-3 text-[13px] font-semibold text-white transition hover:bg-oc-teal-700 disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <IconMic />
@@ -420,11 +564,11 @@ export default function RealtimeVoiceDogfoodPage(): ReactElement {
                 <button
                   type="button"
                   onClick={handleDisconnect}
-                  disabled={!connected || busy}
+                  disabled={(!connected && !retryAvailable) || busy}
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-[8px] border border-oc-border bg-white px-3 text-[13px] font-semibold text-oc-text transition hover:border-oc-border-strong disabled:cursor-not-allowed disabled:opacity-45"
                 >
                   <IconStop />
-                  Disconnect
+                  {retryAvailable ? "Retry save" : "Disconnect"}
                 </button>
               </div>
 
