@@ -953,6 +953,13 @@ class VoiceRuntimeFacade:
                     diagnostics["voice_pending_turns"] = pending_turns
                     state["diagnostics"] = diagnostics
 
+            retry_turn_instance_id = (
+                turn_instance_id
+                if pending_turn is not None
+                or (correlation_hash is not None and request_hash is not None)
+                else None
+            )
+
             async with self._active_session_manager.active_session_mutation(
                 thread_id,
                 mutation_kind="voice_turn",
@@ -1036,7 +1043,7 @@ class VoiceRuntimeFacade:
                         ),
                         context=post_turn_context,
                         llm_client=llm_client,
-                        turn_instance_id=turn_instance_id,
+                        turn_instance_id=retry_turn_instance_id,
                     )
                 )
             diagnostics = dict(state.get("diagnostics", {}) or {})
@@ -1114,6 +1121,10 @@ class VoiceRuntimeFacade:
                     attributes,
                 )
                 await self._state_store.save_state(thread_id, state)
+            self._post_turn_safety_auditor.forget_schedule_result(
+                thread_id=thread_id,
+                turn_instance_id=retry_turn_instance_id,
+            )
             return state
 
 

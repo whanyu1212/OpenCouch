@@ -55,12 +55,13 @@ def _check(
     thread_id: str = "voice-thread",
     llm_client: BaseLLMClient | None = None,
     turn_instance_id: str | None = None,
+    realtime_route: str = "therapeutic",
 ) -> VoicePostTurnSafetyCheck:
     return VoicePostTurnSafetyCheck(
         thread_id=thread_id,
         user_id="user-1",
         user_text="I had a rough day.",
-        realtime_route="therapeutic",
+        realtime_route=realtime_route,
         response_style="supportive",
         state=cast(
             AgentState,
@@ -221,6 +222,37 @@ async def test_schedule_cache_scopes_results_to_turn_instance() -> None:
     assert second.scheduled is True
     assert pending == 0
     assert service.calls == 2
+
+
+def test_pending_schedule_result_survives_unrelated_cache_traffic() -> None:
+    auditor = VoicePostTurnSafetyAuditor()
+    llm = FakeCrossRestartLLM()
+    pending_check = _check(
+        thread_id="pending-thread",
+        llm_client=llm,
+        turn_instance_id="pending-turn",
+        realtime_route="crisis",
+    )
+    pending_result = auditor.schedule_check(pending_check)
+
+    for index in range(257):
+        auditor.schedule_check(
+            _check(
+                thread_id=f"unrelated-thread-{index}",
+                llm_client=llm,
+                turn_instance_id=f"unrelated-turn-{index}",
+                realtime_route="crisis",
+            )
+        )
+
+    assert auditor.schedule_check(pending_check) is pending_result
+
+    auditor.forget_schedule_result(
+        thread_id="pending-thread",
+        turn_instance_id="pending-turn",
+    )
+
+    assert auditor.schedule_check(pending_check) is not pending_result
 
 
 @pytest.mark.asyncio

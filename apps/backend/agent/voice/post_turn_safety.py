@@ -34,7 +34,6 @@ _DEFAULT_TIMEOUT_SECONDS = 8.0
 _DEFAULT_CLOSE_DRAIN_TIMEOUT_SECONDS = 5.0
 _DEFAULT_MAX_CONCURRENCY = 2
 _DEFAULT_MAX_PENDING_TASKS = 100
-_DEFAULT_MAX_SCHEDULE_RESULTS = 256
 _TRANSIENT_SKIP_REASONS = {"no_llm_client", "task_limit_reached"}
 
 
@@ -90,7 +89,6 @@ class VoicePostTurnSafetyAuditor:
         close_drain_timeout_seconds: float = _DEFAULT_CLOSE_DRAIN_TIMEOUT_SECONDS,
         max_concurrency: int = _DEFAULT_MAX_CONCURRENCY,
         max_pending_tasks: int = _DEFAULT_MAX_PENDING_TASKS,
-        max_schedule_results: int = _DEFAULT_MAX_SCHEDULE_RESULTS,
     ) -> None:
         self._service = service or CrisisRiskService()
         self._timeout_seconds = max(0.1, float(timeout_seconds))
@@ -100,7 +98,6 @@ class VoicePostTurnSafetyAuditor:
         )
         self._semaphore = asyncio.Semaphore(max(1, int(max_concurrency)))
         self._max_pending_tasks = max(1, int(max_pending_tasks))
-        self._max_schedule_results = max(1, int(max_schedule_results))
         self._tasks: set[asyncio.Task[None]] = set()
         self._schedule_results: dict[
             tuple[str, str], VoicePostTurnSafetyScheduleResult
@@ -113,6 +110,18 @@ class VoicePostTurnSafetyAuditor:
 
         self._discard_finished_tasks()
         return len(self._tasks)
+
+    def forget_schedule_result(
+        self,
+        *,
+        thread_id: str,
+        turn_instance_id: str | None,
+    ) -> None:
+        """Release retry state after the turn receipt is durable."""
+
+        if turn_instance_id is None:
+            return
+        self._schedule_results.pop((thread_id, turn_instance_id), None)
 
     def schedule_check(
         self,
@@ -343,8 +352,6 @@ class VoicePostTurnSafetyAuditor:
         ):
             return result
         self._schedule_results[(check.thread_id, turn_instance_id)] = result
-        while len(self._schedule_results) > self._max_schedule_results:
-            self._schedule_results.pop(next(iter(self._schedule_results)))
         return result
 
 
