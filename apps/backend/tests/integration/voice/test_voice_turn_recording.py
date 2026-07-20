@@ -684,6 +684,88 @@ async def test_voice_crisis_capture_runs_before_sdk_history_failure(
 
 
 @pytest.mark.asyncio
+async def test_voice_turn_retry_resumes_failed_lifecycle_without_duplicate_transcript(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    )
+    sdk_attempts = 0
+
+    async def fail_sdk_history_once(*args: Any, **kwargs: Any) -> None:
+        nonlocal sdk_attempts
+        sdk_attempts += 1
+        if sdk_attempts == 1:
+            raise RuntimeError("simulated retryable SDK history failure")
+
+    monkeypatch.setattr(
+        runtime,
+        "_ensure_openai_sdk_turn_recorded",
+        fail_sdk_history_once,
+    )
+    correlation_hash = "retryable-voice-turn"
+    request_hash = "stable-request"
+
+    async with runtime:
+        with pytest.raises(RuntimeError, match="retryable SDK history failure"):
+            await runtime.voice.record_voice_turn(
+                thread_id="voice-lifecycle-retry",
+                user_id="user-1",
+                user_text="I had a difficult day.",
+                assistant_text="I'm here with you.",
+                correlation_hash=correlation_hash,
+                request_hash=request_hash,
+                llm_client=None,
+            )
+
+        pending_state = await runtime.get_state("voice-lifecycle-retry")
+        assert pending_state is not None
+        pending_diagnostics = pending_state.get("diagnostics", {})
+        assert correlation_hash not in pending_diagnostics.get(
+            "voice_recorded_turn_hashes", []
+        )
+        assert correlation_hash in pending_diagnostics["voice_pending_turns"]
+        assert (
+            await runtime.voice.recorded_voice_turn_receipt(
+                thread_id="voice-lifecycle-retry",
+                correlation_hash=correlation_hash,
+                request_hash=request_hash,
+            )
+            is None
+        )
+
+        state = await runtime.voice.record_voice_turn(
+            thread_id="voice-lifecycle-retry",
+            user_id="user-1",
+            user_text="I had a difficult day.",
+            assistant_text="I'm here with you.",
+            correlation_hash=correlation_hash,
+            request_hash=request_hash,
+            llm_client=None,
+        )
+        history = await runtime.get_history("voice-lifecycle-retry")
+        receipt = await runtime.voice.recorded_voice_turn_receipt(
+            thread_id="voice-lifecycle-retry",
+            correlation_hash=correlation_hash,
+            request_hash=request_hash,
+        )
+
+    assert sdk_attempts == 2
+    assert [message.content for message in history] == [
+        "I had a difficult day.",
+        "I'm here with you.",
+    ]
+    assert receipt is not None
+    assert receipt.message_count == 2
+    assert correlation_hash in state["diagnostics"]["voice_recorded_turn_hashes"]
+    assert "voice_pending_turns" not in state["diagnostics"]
+
+
+@pytest.mark.asyncio
 async def test_non_crisis_voice_turn_writes_no_audit_record() -> None:
     """An ordinary voice turn must not produce a crisis audit record."""
 

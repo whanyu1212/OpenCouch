@@ -811,63 +811,85 @@ class VoiceRuntimeFacade:
                         request_hash,
                     )
                 return prior_state
-            await self._runtime._prepare_session_for_turn(
-                thread_id=thread_id,
-                prior_state=prior_state,
-                llm_client=llm_client,
+            pending_turn = (
+                _pending_voice_turn(prior_state, correlation_hash)
+                if prior_state is not None and correlation_hash is not None
+                else None
             )
-            prior_state = await self._runtime.get_state(thread_id)
-            prior_turn_count = turn_count_from_state(prior_state)
-            seed_message = user_text.strip() or assistant_text.strip()
-            initial_state = self._runtime._build_turn_initial_state(
-                thread_id=thread_id,
-                message=seed_message,
-                channel=Channel.VOICE,
-                user_id=user_id,
-                installed_skills=None,
-                prior_turn_count=prior_turn_count,
-            )
-            transition = build_voice_turn_state(
-                VoiceTurnStateInputs(
-                    thread_id=thread_id,
-                    user_id=user_id,
-                    user_text=user_text,
-                    assistant_text=assistant_text,
-                    outcome=outcome,
-                    route=route,
-                    response_style=response_style,
-                    tool_calls=voice_tool_calls,
-                    prior_state=prior_state,
-                    initial_state=initial_state,
-                    prior_turn_count=prior_turn_count,
-                    correlation_hash=correlation_hash,
-                    safety_assessment=safety_assessment,
-                )
-            )
-            state = transition.state
-            if correlation_hash is not None:
-                diagnostics = dict(state.get("diagnostics", {}) or {})
-                recorded_hashes = [
-                    str(value)
-                    for value in diagnostics.get("voice_recorded_turn_hashes", [])
-                    if isinstance(value, str)
-                ]
-                diagnostics["voice_recorded_turn_hashes"] = [
-                    *recorded_hashes,
-                    correlation_hash,
-                ][-_MAX_RECORDED_VOICE_TURN_HASHES:]
+            if pending_turn is not None:
                 if request_hash is not None:
-                    recorded_requests = dict(
-                        diagnostics.get("voice_recorded_turn_requests", {}) or {}
+                    _validate_voice_turn_request_hash(
+                        prior_state,
+                        correlation_hash,
+                        request_hash,
                     )
-                    recorded_requests[correlation_hash] = request_hash
-                    retained_hashes = set(diagnostics["voice_recorded_turn_hashes"])
-                    diagnostics["voice_recorded_turn_requests"] = {
-                        key: value
-                        for key, value in recorded_requests.items()
-                        if key in retained_hashes
+                state = prior_state
+                prior_message_count = int(pending_turn.get("prior_message_count") or 0)
+                safety_prior_state = cast(
+                    AgentState,
+                    {
+                        "transcript": list(state.get("transcript", []) or [])[
+                            :prior_message_count
+                        ]
+                    },
+                )
+                turn_route = str(state.get("route") or route or "")
+                turn_response_style = str(
+                    state.get("response_style") or response_style or ""
+                )
+            else:
+                await self._runtime._prepare_session_for_turn(
+                    thread_id=thread_id,
+                    prior_state=prior_state,
+                    llm_client=llm_client,
+                )
+                prior_state = await self._runtime.get_state(thread_id)
+                safety_prior_state = prior_state
+                prior_turn_count = turn_count_from_state(prior_state)
+                seed_message = user_text.strip() or assistant_text.strip()
+                initial_state = self._runtime._build_turn_initial_state(
+                    thread_id=thread_id,
+                    message=seed_message,
+                    channel=Channel.VOICE,
+                    user_id=user_id,
+                    installed_skills=None,
+                    prior_turn_count=prior_turn_count,
+                )
+                transition = build_voice_turn_state(
+                    VoiceTurnStateInputs(
+                        thread_id=thread_id,
+                        user_id=user_id,
+                        user_text=user_text,
+                        assistant_text=assistant_text,
+                        outcome=outcome,
+                        route=route,
+                        response_style=response_style,
+                        tool_calls=voice_tool_calls,
+                        prior_state=prior_state,
+                        initial_state=initial_state,
+                        prior_turn_count=prior_turn_count,
+                        correlation_hash=correlation_hash,
+                        safety_assessment=safety_assessment,
+                    )
+                )
+                state = transition.state
+                turn_route = transition.metadata.route
+                turn_response_style = transition.metadata.response_style
+                if correlation_hash is not None and request_hash is not None:
+                    diagnostics = dict(state.get("diagnostics", {}) or {})
+                    pending_turns = dict(
+                        diagnostics.get("voice_pending_turns", {}) or {}
+                    )
+                    pending_turns[correlation_hash] = {
+                        "request_hash": request_hash,
+                        "prior_message_count": len(
+                            prior_state.get("transcript", []) or []
+                        )
+                        if prior_state is not None
+                        else 0,
                     }
-                state["diagnostics"] = diagnostics
+                    diagnostics["voice_pending_turns"] = pending_turns
+                    state["diagnostics"] = diagnostics
 
             async with self._active_session_manager.active_session_mutation(
                 thread_id,
@@ -892,7 +914,7 @@ class VoiceRuntimeFacade:
                         self._runtime._ensure_openai_sdk_turn_recorded
                     ),
                     session_transcript_soft_limit=None,
-                    capture_safety_event=transition.metadata.route == "crisis",
+                    capture_safety_event=turn_route == "crisis",
                 )
                 event_name = (
                     VOICE_SAFETY_INTERRUPTED_TURN_RECORDED
@@ -901,8 +923,8 @@ class VoiceRuntimeFacade:
                 )
                 attributes: dict[str, object] = {
                     "voice_runtime": "openai_realtime",
-                    "route": transition.metadata.route,
-                    "response_style": transition.metadata.response_style,
+                    "route": turn_route,
+                    "response_style": turn_response_style,
                     "memory_mode": self._memory_mode.value,
                     "resource_lookup_status": state.get("resource_lookup_status"),
                     "tool_call_count": len(voice_tool_calls),
@@ -932,12 +954,12 @@ class VoiceRuntimeFacade:
                         thread_id=thread_id,
                         user_id=user_id,
                         user_text=user_text,
-                        realtime_route=transition.metadata.route,
-                        response_style=transition.metadata.response_style,
+                        realtime_route=turn_route,
+                        response_style=turn_response_style,
                         state=cast(AgentState, dict(state)),
                         prior_state=(
-                            cast(AgentState, dict(prior_state))
-                            if prior_state is not None
+                            cast(AgentState, dict(safety_prior_state))
+                            if safety_prior_state is not None
                             else None
                         ),
                         context=post_turn_context,
@@ -946,7 +968,33 @@ class VoiceRuntimeFacade:
                 )
             diagnostics = dict(state.get("diagnostics", {}) or {})
             diagnostics["voice_post_turn_safety"] = safety_schedule.as_dict()
+            if correlation_hash is not None:
+                recorded_hashes = [
+                    str(value)
+                    for value in diagnostics.get("voice_recorded_turn_hashes", [])
+                    if isinstance(value, str)
+                ]
+                diagnostics["voice_recorded_turn_hashes"] = [
+                    *recorded_hashes,
+                    correlation_hash,
+                ][-_MAX_RECORDED_VOICE_TURN_HASHES:]
+                pending_turns = dict(diagnostics.get("voice_pending_turns", {}) or {})
+                pending_turns.pop(correlation_hash, None)
+                if pending_turns:
+                    diagnostics["voice_pending_turns"] = pending_turns
+                else:
+                    diagnostics.pop("voice_pending_turns", None)
             if correlation_hash is not None and request_hash is not None:
+                recorded_requests = dict(
+                    diagnostics.get("voice_recorded_turn_requests", {}) or {}
+                )
+                recorded_requests[correlation_hash] = request_hash
+                retained_hashes = set(diagnostics["voice_recorded_turn_hashes"])
+                diagnostics["voice_recorded_turn_requests"] = {
+                    key: value
+                    for key, value in recorded_requests.items()
+                    if key in retained_hashes
+                }
                 receipts = dict(
                     diagnostics.get("voice_recorded_turn_receipts", {}) or {}
                 )
@@ -976,6 +1024,19 @@ def _voice_turn_hash_recorded(state: Mapping[str, Any], correlation_hash: str) -
     return isinstance(recorded_hashes, list) and correlation_hash in recorded_hashes
 
 
+def _pending_voice_turn(
+    state: Mapping[str, Any], correlation_hash: str
+) -> Mapping[str, Any] | None:
+    diagnostics = state.get("diagnostics", {})
+    if not isinstance(diagnostics, Mapping):
+        return None
+    pending_turns = diagnostics.get("voice_pending_turns", {})
+    if not isinstance(pending_turns, Mapping):
+        return None
+    pending_turn = pending_turns.get(correlation_hash)
+    return pending_turn if isinstance(pending_turn, Mapping) else None
+
+
 def _validate_voice_turn_request_hash(
     state: Mapping[str, Any],
     correlation_hash: str,
@@ -985,9 +1046,16 @@ def _validate_voice_turn_request_hash(
     if not isinstance(diagnostics, Mapping):
         return
     recorded_requests = diagnostics.get("voice_recorded_turn_requests", {})
-    if not isinstance(recorded_requests, Mapping):
-        return
-    existing = recorded_requests.get(correlation_hash)
+    existing = (
+        recorded_requests.get(correlation_hash)
+        if isinstance(recorded_requests, Mapping)
+        else None
+    )
+    if existing is None:
+        pending_turn = _pending_voice_turn(state, correlation_hash)
+        existing = (
+            pending_turn.get("request_hash") if pending_turn is not None else None
+        )
     if isinstance(existing, str) and existing != request_hash:
         raise ValueError("client_turn_id was already used for a different voice turn")
 
