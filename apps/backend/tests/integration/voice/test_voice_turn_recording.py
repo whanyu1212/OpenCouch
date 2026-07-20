@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from datetime import datetime, timezone
 from typing import Any
 
@@ -355,6 +356,101 @@ async def test_safety_interrupted_turn_persists_user_and_settled_tools_only(
     assert len(event.attributes["correlation_hash"]) == 64
     assert "private-interrupted" not in str(event.attributes)
     assert not any(event.name == VOICE_RESPONSE_FINALIZED for event in recorder.events)
+
+
+@pytest.mark.asyncio
+async def test_overlapping_voice_turns_keep_crisis_resources_correlated() -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+    )
+    thread_id = "overlapping-crisis-resource-thread"
+    turn_a = "overlapping-turn-a"
+    turn_b = "overlapping-turn-b"
+    hash_a = hashlib.sha256(f"{thread_id}\0{turn_a}".encode()).hexdigest()
+    hash_b = hashlib.sha256(f"{thread_id}\0{turn_b}".encode()).hexdigest()
+    resources_a = [
+        {"name": "Turn A support", "phone": "111", "url": "https://a.example"}
+    ]
+    resources_b = [
+        {"name": "Turn B support", "phone": "222", "url": "https://b.example"}
+    ]
+    tool_calls = [
+        {
+            "tool_name": "lookup_crisis_resources",
+            "status": "completed",
+            "output": {"resource_lookup_status": "found"},
+        }
+    ]
+
+    async with runtime:
+        await runtime.voice.persist_voice_crisis_resource_lookup(
+            thread_id=thread_id,
+            user_id="user-1",
+            client_turn_id=turn_a,
+            inferred_location="Location A",
+            found_resources=resources_a,
+            resource_lookup_status="found",
+        )
+        await runtime.voice.persist_voice_crisis_resource_lookup(
+            thread_id=thread_id,
+            user_id="user-1",
+            client_turn_id=turn_b,
+            inferred_location="Location B",
+            found_resources=resources_b,
+            resource_lookup_status="found",
+        )
+
+        context_a = await runtime.voice.build_voice_tool_context(
+            thread_id=thread_id,
+            user_id="user-1",
+            current_user_message="Turn A",
+            transcript=[],
+            client_turn_id=turn_a,
+        )
+        lookup_a = context_a.latest_crisis_resource_tool_result()
+        assert lookup_a is not None
+        assert lookup_a.inferred_location == "Location A"
+        assert lookup_a.found_resources == resources_a
+
+        state_a = await runtime.voice.record_voice_turn(
+            thread_id=thread_id,
+            user_id="user-1",
+            user_text="Turn A crisis request",
+            assistant_text="Turn A response",
+            tool_calls=tool_calls,
+            correlation_hash=hash_a,
+            request_hash="request-a",
+            llm_client=None,
+        )
+        assert state_a["found_resources"] == resources_a
+        assert set(state_a["diagnostics"]["voice_crisis_resource_lookups"]) == {hash_b}
+
+        context_b = await runtime.voice.build_voice_tool_context(
+            thread_id=thread_id,
+            user_id="user-1",
+            current_user_message="Turn B",
+            transcript=[],
+            client_turn_id=turn_b,
+        )
+        lookup_b = context_b.latest_crisis_resource_tool_result()
+        assert lookup_b is not None
+        assert lookup_b.inferred_location == "Location B"
+        assert lookup_b.found_resources == resources_b
+
+        state_b = await runtime.voice.record_voice_turn(
+            thread_id=thread_id,
+            user_id="user-1",
+            user_text="Turn B crisis request",
+            assistant_text="Turn B response",
+            tool_calls=tool_calls,
+            correlation_hash=hash_b,
+            request_hash="request-b",
+            llm_client=None,
+        )
+
+    assert state_b["found_resources"] == resources_b
+    assert "voice_crisis_resource_lookups" not in state_b["diagnostics"]
 
 
 @pytest.mark.asyncio

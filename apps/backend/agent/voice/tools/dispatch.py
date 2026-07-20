@@ -255,6 +255,7 @@ async def execute_voice_tool_call(
             user_id=user_id,
             current_user_message=current_user_message,
             transcript=transcript,
+            client_turn_id=client_turn_id,
             llm_client=llm_client,
         )
 

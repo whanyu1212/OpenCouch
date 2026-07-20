@@ -71,6 +71,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _MAX_RECORDED_VOICE_TURN_HASHES = 256
+_MAX_PENDING_VOICE_RESOURCE_LOOKUPS = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,6 +342,7 @@ class VoiceRuntimeFacade:
         user_id: str | None,
         current_user_message: str,
         transcript: list[dict[str, object]],
+        client_turn_id: str | None = None,
         llm_client: BaseLLMClient | None = None,
     ) -> OpenAITextRunContext:
         """Build the app-owned context used by voice function tools."""
@@ -411,7 +413,16 @@ class VoiceRuntimeFacade:
             transcript=cast(list[dict[str, Any]], list(state.get("transcript", []))),
             turn_count=turn_count_from_state(state),
         )
-        self._rehydrate_crisis_resource_lookup(context, prior_state)
+        correlation_hash = (
+            hashlib.sha256(f"{thread_id}\0{client_turn_id}".encode("utf-8")).hexdigest()
+            if client_turn_id is not None
+            else None
+        )
+        self._rehydrate_crisis_resource_lookup(
+            context,
+            prior_state,
+            correlation_hash=correlation_hash,
+        )
         return context
 
     # ── _rehydrate_crisis_resource_lookup ─────────────────────────
@@ -420,6 +431,8 @@ class VoiceRuntimeFacade:
     def _rehydrate_crisis_resource_lookup(
         context: OpenAITextRunContext,
         prior_state: Mapping[str, Any] | None,
+        *,
+        correlation_hash: str | None,
     ) -> None:
         """Re-seed a prior voice crisis lookup onto a freshly built context.
 
@@ -438,16 +451,32 @@ class VoiceRuntimeFacade:
 
         if prior_state is None:
             return
-        status = prior_state.get("resource_lookup_status")
+        resource_state: Mapping[str, Any] = prior_state
+        if correlation_hash is not None:
+            diagnostics = prior_state.get("diagnostics", {})
+            pending_lookups = (
+                diagnostics.get("voice_crisis_resource_lookups", {})
+                if isinstance(diagnostics, Mapping)
+                else {}
+            )
+            matched = (
+                pending_lookups.get(correlation_hash)
+                if isinstance(pending_lookups, Mapping)
+                else None
+            )
+            if not isinstance(matched, Mapping):
+                return
+            resource_state = matched
+        status = resource_state.get("resource_lookup_status")
         if not isinstance(status, str) or status in {"", "not_attempted"}:
             return
-        found_resources = prior_state.get("found_resources")
+        found_resources = resource_state.get("found_resources")
         rows = (
             [dict(row) for row in found_resources]
             if isinstance(found_resources, list)
             else []
         )
-        inferred_location = prior_state.get("inferred_location")
+        inferred_location = resource_state.get("inferred_location")
         context.record_crisis_resource_tool_result(
             response_text="",
             inferred_location=(
@@ -642,9 +671,21 @@ class VoiceRuntimeFacade:
             state["resource_lookup_status"] = resource_lookup_status
             diagnostics = dict(state.get("diagnostics", {}) or {})
             if client_turn_id is not None:
-                diagnostics["voice_crisis_resource_turn_hash"] = hashlib.sha256(
+                correlation_hash = hashlib.sha256(
                     f"{thread_id}\0{client_turn_id}".encode("utf-8")
                 ).hexdigest()
+                diagnostics["voice_crisis_resource_turn_hash"] = correlation_hash
+                pending_lookups = dict(
+                    diagnostics.get("voice_crisis_resource_lookups", {}) or {}
+                )
+                pending_lookups[correlation_hash] = {
+                    "inferred_location": inferred_location,
+                    "found_resources": [dict(row) for row in found_resources],
+                    "resource_lookup_status": resource_lookup_status,
+                }
+                diagnostics["voice_crisis_resource_lookups"] = dict(
+                    list(pending_lookups.items())[-_MAX_PENDING_VOICE_RESOURCE_LOOKUPS:]
+                )
             else:
                 diagnostics.pop("voice_crisis_resource_turn_hash", None)
             state["diagnostics"] = diagnostics

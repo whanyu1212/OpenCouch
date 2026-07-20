@@ -217,6 +217,8 @@ def build_voice_turn_state(inputs: VoiceTurnStateInputs) -> VoiceTurnStateResult
             voice_tool_calls=voice_tool_calls,
         )
 
+    _discard_voice_crisis_resource_lookup(state, inputs.correlation_hash)
+
     trace_event(
         VOICE_TURN_STATE_BUILT,
         {
@@ -299,6 +301,17 @@ def _matching_crisis_resource_state(
     if prior_state is None:
         return None
     diagnostics = prior_state.get("diagnostics", {})
+    if isinstance(diagnostics, Mapping) and inputs.correlation_hash is not None:
+        pending_lookups = diagnostics.get("voice_crisis_resource_lookups", {})
+        matched = (
+            pending_lookups.get(inputs.correlation_hash)
+            if isinstance(pending_lookups, Mapping)
+            else None
+        )
+        if isinstance(matched, Mapping):
+            return matched
+        if isinstance(pending_lookups, Mapping) and pending_lookups:
+            return None
     marker = (
         diagnostics.get("voice_crisis_resource_turn_hash")
         if isinstance(diagnostics, Mapping)
@@ -307,6 +320,22 @@ def _matching_crisis_resource_state(
     if inputs.correlation_hash is None:
         return prior_state if marker is None else None
     return prior_state if marker == inputs.correlation_hash else None
+
+
+def _discard_voice_crisis_resource_lookup(
+    state: AgentState,
+    correlation_hash: str | None,
+) -> None:
+    if correlation_hash is None:
+        return
+    diagnostics = dict(state.get("diagnostics", {}) or {})
+    pending_lookups = dict(diagnostics.get("voice_crisis_resource_lookups", {}) or {})
+    pending_lookups.pop(correlation_hash, None)
+    if pending_lookups:
+        diagnostics["voice_crisis_resource_lookups"] = pending_lookups
+    else:
+        diagnostics.pop("voice_crisis_resource_lookups", None)
+    state["diagnostics"] = diagnostics
 
 
 __all__ = [
