@@ -26,6 +26,7 @@ class _SlowCrisisRiskService(CrisisRiskService):
     def __init__(self, *, delay_seconds: float = 0.05, fail: bool = False) -> None:
         self.delay_seconds = delay_seconds
         self.fail = fail
+        self.calls = 0
 
     async def assess_turn(
         self,
@@ -33,6 +34,7 @@ class _SlowCrisisRiskService(CrisisRiskService):
         *,
         llm_client: BaseLLMClient | None,
     ) -> CrisisRiskResult:
+        self.calls += 1
         await asyncio.sleep(self.delay_seconds)
         if self.fail:
             raise RuntimeError("classifier exploded")
@@ -52,6 +54,7 @@ def _check(
     *,
     thread_id: str = "voice-thread",
     llm_client: BaseLLMClient | None = None,
+    correlation_hash: str | None = None,
 ) -> VoicePostTurnSafetyCheck:
     return VoicePostTurnSafetyCheck(
         thread_id=thread_id,
@@ -74,6 +77,7 @@ def _check(
             memory_mode=MemoryMode.LOCAL,
         ),
         llm_client=llm_client,
+        correlation_hash=correlation_hash,
     )
 
 
@@ -112,6 +116,53 @@ async def test_schedule_check_reports_queue_limit_skip() -> None:
         "pending_count": 1,
     }
     assert pending == 0
+
+
+@pytest.mark.asyncio
+async def test_schedule_check_reuses_result_for_same_correlation_hash() -> None:
+    service = _SlowCrisisRiskService(delay_seconds=0.0)
+    auditor = VoicePostTurnSafetyAuditor(service=service)
+    check = _check(
+        llm_client=FakeCrossRestartLLM(),
+        correlation_hash="same-voice-turn",
+    )
+
+    first = auditor.schedule_check(check)
+    second = auditor.schedule_check(check)
+    pending = await auditor.drain(timeout_seconds=1.0)
+
+    assert first.scheduled is True
+    assert second == first
+    assert pending == 0
+    assert service.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_schedule_cache_scopes_correlation_hash_to_thread() -> None:
+    service = _SlowCrisisRiskService(delay_seconds=0.0)
+    auditor = VoicePostTurnSafetyAuditor(service=service)
+    llm = FakeCrossRestartLLM()
+
+    first = auditor.schedule_check(
+        _check(
+            thread_id="voice-one",
+            llm_client=llm,
+            correlation_hash="shared-hash",
+        )
+    )
+    second = auditor.schedule_check(
+        _check(
+            thread_id="voice-two",
+            llm_client=llm,
+            correlation_hash="shared-hash",
+        )
+    )
+    pending = await auditor.drain(timeout_seconds=1.0)
+
+    assert first.scheduled is True
+    assert second.scheduled is True
+    assert pending == 0
+    assert service.calls == 2
 
 
 @pytest.mark.asyncio

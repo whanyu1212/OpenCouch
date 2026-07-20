@@ -34,6 +34,7 @@ _DEFAULT_TIMEOUT_SECONDS = 8.0
 _DEFAULT_CLOSE_DRAIN_TIMEOUT_SECONDS = 5.0
 _DEFAULT_MAX_CONCURRENCY = 2
 _DEFAULT_MAX_PENDING_TASKS = 100
+_DEFAULT_MAX_SCHEDULE_RESULTS = 256
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +50,7 @@ class VoicePostTurnSafetyCheck:
     prior_state: AgentState | None
     context: Any
     llm_client: BaseLLMClient | None
+    correlation_hash: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +89,7 @@ class VoicePostTurnSafetyAuditor:
         close_drain_timeout_seconds: float = _DEFAULT_CLOSE_DRAIN_TIMEOUT_SECONDS,
         max_concurrency: int = _DEFAULT_MAX_CONCURRENCY,
         max_pending_tasks: int = _DEFAULT_MAX_PENDING_TASKS,
+        max_schedule_results: int = _DEFAULT_MAX_SCHEDULE_RESULTS,
     ) -> None:
         self._service = service or CrisisRiskService()
         self._timeout_seconds = max(0.1, float(timeout_seconds))
@@ -96,7 +99,11 @@ class VoicePostTurnSafetyAuditor:
         )
         self._semaphore = asyncio.Semaphore(max(1, int(max_concurrency)))
         self._max_pending_tasks = max(1, int(max_pending_tasks))
+        self._max_schedule_results = max(1, int(max_schedule_results))
         self._tasks: set[asyncio.Task[None]] = set()
+        self._schedule_results: dict[
+            tuple[str, str], VoicePostTurnSafetyScheduleResult
+        ] = {}
         self._closed = False
 
     @property
@@ -118,18 +125,40 @@ class VoicePostTurnSafetyAuditor:
             because later classifier completion/failure happens asynchronously.
         """
 
+        if check.correlation_hash is not None:
+            previous = self._schedule_results.get(
+                (check.thread_id, check.correlation_hash)
+            )
+            if previous is not None:
+                return previous
+
         if self._closed:
-            return self._skip_check(check, reason="closed")
+            return self._remember_schedule_result(
+                check,
+                self._skip_check(check, reason="closed"),
+            )
         if check.llm_client is None:
-            return self._skip_check(check, reason="no_llm_client")
+            return self._remember_schedule_result(
+                check,
+                self._skip_check(check, reason="no_llm_client"),
+            )
         if not check.user_text.strip():
-            return self._skip_check(check, reason="empty_user_text")
+            return self._remember_schedule_result(
+                check,
+                self._skip_check(check, reason="empty_user_text"),
+            )
         if check.realtime_route == "crisis":
-            return self._skip_check(check, reason="already_crisis_routed")
+            return self._remember_schedule_result(
+                check,
+                self._skip_check(check, reason="already_crisis_routed"),
+            )
 
         self._discard_finished_tasks()
         if len(self._tasks) >= self._max_pending_tasks:
-            return self._skip_check(check, reason="task_limit_reached")
+            return self._remember_schedule_result(
+                check,
+                self._skip_check(check, reason="task_limit_reached"),
+            )
 
         task = asyncio.create_task(
             self._run_check(check),
@@ -147,9 +176,12 @@ class VoicePostTurnSafetyAuditor:
                 "pending_count": pending_count,
             },
         )
-        return VoicePostTurnSafetyScheduleResult(
-            scheduled=True,
-            pending_count=pending_count,
+        return self._remember_schedule_result(
+            check,
+            VoicePostTurnSafetyScheduleResult(
+                scheduled=True,
+                pending_count=pending_count,
+            ),
         )
 
     async def drain(self, timeout_seconds: float | None = None) -> int:
@@ -296,6 +328,19 @@ class VoicePostTurnSafetyAuditor:
 
     def _discard_finished_tasks(self) -> None:
         self._tasks = {task for task in self._tasks if not task.done()}
+
+    def _remember_schedule_result(
+        self,
+        check: VoicePostTurnSafetyCheck,
+        result: VoicePostTurnSafetyScheduleResult,
+    ) -> VoicePostTurnSafetyScheduleResult:
+        correlation_hash = check.correlation_hash
+        if correlation_hash is None:
+            return result
+        self._schedule_results[(check.thread_id, correlation_hash)] = result
+        while len(self._schedule_results) > self._max_schedule_results:
+            self._schedule_results.pop(next(iter(self._schedule_results)))
+        return result
 
 
 def _classifier_state_for_check(check: VoicePostTurnSafetyCheck) -> AgentState:

@@ -14,6 +14,9 @@ VOICE_POST_TURN_SAFETY_MISSED_CRISIS = "voice.post_turn_safety.missed_crisis"
 VOICE_POST_TURN_SAFETY_SCHEDULED = "voice.post_turn_safety.scheduled"
 VOICE_POST_TURN_SAFETY_SKIPPED = "voice.post_turn_safety.skipped"
 VOICE_RESPONSE_FINALIZED = "voice.response.finalized"
+VOICE_TURN_COMPLETION_METADATA_PERSIST_FAILED = (
+    "voice.turn.completion_metadata_persist_failed"
+)
 VOICE_SAFETY_INTERRUPTION_DECIDED = "voice.safety_interruption.decided"
 VOICE_SAFETY_INTERRUPTED_TURN_RECORDED = "voice.safety_interrupted_turn.recorded"
 VOICE_SAFETY_RESOURCES_RESOLVED = "voice.safety_resources.resolved"
