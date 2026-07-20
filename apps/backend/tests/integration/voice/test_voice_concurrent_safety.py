@@ -274,11 +274,6 @@ async def test_resource_endpoint_contract_uses_snapshot_without_mutation(
         "message": "Current private text.",
         "transcript": [
             {"role": "user", "content": "Earlier user text."},
-            {
-                "role": "assistant",
-                "content": "Earlier assistant text.",
-                "response_style": "voice",
-            },
             {"role": "assistant", "content": "Pending prior text."},
         ],
     }

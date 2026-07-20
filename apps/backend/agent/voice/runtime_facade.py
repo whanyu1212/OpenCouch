@@ -287,7 +287,6 @@ class VoiceRuntimeFacade:
                     thread_id=thread_id,
                     prior_message_count=prior_message_count,
                     pending_prior_transcript=pending_prior_transcript,
-                    use_full_history=True,
                 )
                 (
                     inferred_location,
@@ -321,7 +320,6 @@ class VoiceRuntimeFacade:
         thread_id: str,
         prior_message_count: int,
         pending_prior_transcript: list[dict[str, Any]],
-        use_full_history: bool = False,
     ) -> list[dict[str, Any]]:
         async with self._lock_for(thread_id):
             prior_state = await self._state_store.load_state(thread_id)
@@ -330,9 +328,7 @@ class VoiceRuntimeFacade:
                 if prior_state is not None
                 else []
             )
-            snapshot = copy.deepcopy(
-                transcript if use_full_history else transcript[:prior_message_count]
-            )
+            snapshot = copy.deepcopy(transcript[:prior_message_count])
             snapshot.extend(copy.deepcopy(pending_prior_transcript))
             return snapshot
 
