@@ -211,13 +211,14 @@ async def write_crisis_log(
             ),
         )
         if isinstance(deterministic_audit_id, str) and deterministic_audit_id:
-            await backend.aappend_once(record)
+            audit_recorded = await backend.aappend_once(record)
         else:
             await backend.aappend(record)
+            audit_recorded = True
         trace_event(
             AUDIT_CRISIS_LOG_APPEND,
             {
-                "audit_recorded": True,
+                "audit_recorded": audit_recorded,
                 "event_type": record.event_type,
                 "level": record.level,
                 "classifier_path": record.classifier_path,
@@ -292,6 +293,7 @@ async def record_voice_missed_crisis(
         diagnostics = state.get("diagnostics", {})
         if not isinstance(diagnostics, Mapping):
             diagnostics = {}
+        deterministic_audit_id = diagnostics.get("voice_missed_crisis_audit_id")
         trace_context = get_current_trace_context()
         enabled_trace_context = (
             trace_context
@@ -299,7 +301,11 @@ async def record_voice_missed_crisis(
             else None
         )
         record = CrisisLogRecord(
-            id=str(uuid4()),
+            id=(
+                deterministic_audit_id
+                if isinstance(deterministic_audit_id, str) and deterministic_audit_id
+                else str(uuid4())
+            ),
             event_type="voice_missed_crisis",
             session_id_opaque=hash_session_id(state.get("session_id")),
             user_id_or_null=user_id,
@@ -327,11 +333,15 @@ async def record_voice_missed_crisis(
                 enabled_trace_context.runtime_mode if enabled_trace_context else "voice"
             ),
         )
-        await backend.aappend(record)
+        if isinstance(deterministic_audit_id, str) and deterministic_audit_id:
+            audit_recorded = await backend.aappend_once(record)
+        else:
+            await backend.aappend(record)
+            audit_recorded = True
         trace_event(
             AUDIT_CRISIS_LOG_APPEND,
             {
-                "audit_recorded": True,
+                "audit_recorded": audit_recorded,
                 "event_type": record.event_type,
                 "level": record.level,
                 "classifier_path": record.classifier_path,

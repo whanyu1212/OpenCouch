@@ -168,6 +168,21 @@ class PostgresRuntimeStateStore:
     async def ensure_schema(self) -> None:
         await self._ensure_connection()
 
+    async def _discard_connection(
+        self,
+        conn: psycopg.AsyncConnection[dict[str, Any]],
+    ) -> None:
+        if self._connection is not conn:
+            return
+        self._connection = None
+        try:
+            await conn.close()
+        except Exception:
+            logger.warning(
+                "PostgresRuntimeStateStore: broken connection close raised; ignoring",
+                exc_info=True,
+            )
+
     async def load_state(self, thread_id: str) -> AgentState | None:
         conn = await self._ensure_connection()
         async with conn.cursor() as cursor:
@@ -187,23 +202,27 @@ class PostgresRuntimeStateStore:
     async def save_state(self, thread_id: str, state: Mapping[str, Any]) -> None:
         conn = await self._ensure_connection()
         payload = _state_payload(state)
-        async with conn.cursor() as cursor:
-            await cursor.execute(
-                """
-                INSERT INTO opencouch_thread_state(thread_id, updated_at, turn_count, value)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT(thread_id) DO UPDATE SET
-                    updated_at = excluded.updated_at,
-                    turn_count = excluded.turn_count,
-                    value = excluded.value
-                """,
-                (
-                    thread_id,
-                    iso_now(),
-                    _turn_count(payload),
-                    Jsonb(payload),
-                ),
-            )
+        try:
+            async with conn.cursor() as cursor:
+                await cursor.execute(
+                    """
+                    INSERT INTO opencouch_thread_state(thread_id, updated_at, turn_count, value)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT(thread_id) DO UPDATE SET
+                        updated_at = excluded.updated_at,
+                        turn_count = excluded.turn_count,
+                        value = excluded.value
+                    """,
+                    (
+                        thread_id,
+                        iso_now(),
+                        _turn_count(payload),
+                        Jsonb(payload),
+                    ),
+                )
+        except (psycopg.OperationalError, psycopg.InterfaceError):
+            await self._discard_connection(conn)
+            raise
 
     async def delete_thread(self, thread_id: str) -> None:
         conn = await self._ensure_connection()

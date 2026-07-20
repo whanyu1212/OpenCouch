@@ -22,6 +22,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
+from uuid import uuid4
 
 from agent.audit.capture import capture_crisis_outcome
 from agent.audit.models import CrisisResourceLookupStatus
@@ -35,6 +36,7 @@ from agent.observability.events import (
     VOICE_CRISIS_RESOURCE_LOOKUP_PERSISTED,
     VOICE_RESPONSE_FINALIZED,
     VOICE_SAFETY_INTERRUPTED_TURN_RECORDED,
+    VOICE_TURN_COMPLETION_METADATA_PERSIST_FAILED,
 )
 from agent.observability.timing import elapsed_ms
 from agent.runtime.context import OpenAITextRunContext
@@ -858,6 +860,23 @@ class VoiceRuntimeFacade:
                 else None
             )
             if pending_turn is not None:
+                pending_turn_instance_id = pending_turn.get("turn_instance_id")
+                legacy_request_hash = pending_turn.get("request_hash")
+                legacy_identity = (
+                    legacy_request_hash
+                    if isinstance(legacy_request_hash, str)
+                    else correlation_hash
+                )
+                turn_instance_id = (
+                    pending_turn_instance_id
+                    if isinstance(pending_turn_instance_id, str)
+                    and pending_turn_instance_id
+                    else hashlib.sha256(
+                        f"legacy-voice-turn\0{correlation_hash}\0{legacy_identity}".encode(
+                            "utf-8"
+                        )
+                    ).hexdigest()
+                )
                 if request_hash is not None:
                     _validate_voice_turn_request_hash(
                         prior_state,
@@ -879,6 +898,7 @@ class VoiceRuntimeFacade:
                     state.get("response_style") or response_style or ""
                 )
             else:
+                turn_instance_id = uuid4().hex
                 await self._runtime._prepare_session_for_turn(
                     thread_id=thread_id,
                     prior_state=prior_state,
@@ -928,9 +948,17 @@ class VoiceRuntimeFacade:
                         )
                         if prior_state is not None
                         else 0,
+                        "turn_instance_id": turn_instance_id,
                     }
                     diagnostics["voice_pending_turns"] = pending_turns
                     state["diagnostics"] = diagnostics
+
+            retry_turn_instance_id = (
+                turn_instance_id
+                if pending_turn is not None
+                or (correlation_hash is not None and request_hash is not None)
+                else None
+            )
 
             async with self._active_session_manager.active_session_mutation(
                 thread_id,
@@ -990,6 +1018,16 @@ class VoiceRuntimeFacade:
                     pending_count=self._post_turn_safety_auditor.pending_count,
                 )
             else:
+                post_turn_safety_state = cast(AgentState, dict(state))
+                if correlation_hash is not None:
+                    post_turn_diagnostics = dict(
+                        post_turn_safety_state.get("diagnostics", {}) or {}
+                    )
+                    thread_hash = hashlib.sha256(thread_id.encode("utf-8")).hexdigest()
+                    post_turn_diagnostics["voice_missed_crisis_audit_id"] = (
+                        f"voice-missed-crisis:{thread_hash}:{turn_instance_id}"
+                    )
+                    post_turn_safety_state["diagnostics"] = post_turn_diagnostics
                 safety_schedule = self._post_turn_safety_auditor.schedule_check(
                     VoicePostTurnSafetyCheck(
                         thread_id=thread_id,
@@ -997,7 +1035,7 @@ class VoiceRuntimeFacade:
                         user_text=user_text,
                         realtime_route=turn_route,
                         response_style=turn_response_style,
-                        state=cast(AgentState, dict(state)),
+                        state=post_turn_safety_state,
                         prior_state=(
                             cast(AgentState, dict(safety_prior_state))
                             if safety_prior_state is not None
@@ -1005,6 +1043,7 @@ class VoiceRuntimeFacade:
                         ),
                         context=post_turn_context,
                         llm_client=llm_client,
+                        turn_instance_id=retry_turn_instance_id,
                     )
                 )
             diagnostics = dict(state.get("diagnostics", {}) or {})
@@ -1043,6 +1082,7 @@ class VoiceRuntimeFacade:
                     "request_hash": request_hash,
                     "message_count": len(state.get("transcript", []) or []),
                     "post_turn_safety": safety_schedule.as_dict(),
+                    "turn_instance_id": turn_instance_id,
                 }
                 retained_hashes = set(
                     diagnostics.get("voice_recorded_turn_hashes", []) or []
@@ -1053,7 +1093,38 @@ class VoiceRuntimeFacade:
                     if key in retained_hashes
                 }
             state["diagnostics"] = diagnostics
-            await self._state_store.save_state(thread_id, state)
+            try:
+                await self._state_store.save_state(thread_id, state)
+            except Exception as exc:
+                logger.warning(
+                    "voice turn completion metadata persistence failed",
+                    extra={
+                        "voice_runtime": "openai_realtime",
+                        "outcome": outcome,
+                        "route": turn_route,
+                        "memory_mode": self._memory_mode.value,
+                        "error_type": type(exc).__name__,
+                    },
+                    exc_info=True,
+                )
+                attributes: dict[str, object] = {
+                    "voice_runtime": "openai_realtime",
+                    "outcome": outcome,
+                    "route": turn_route,
+                    "memory_mode": self._memory_mode.value,
+                    "error_type": type(exc).__name__,
+                }
+                if correlation_hash is not None:
+                    attributes["correlation_hash"] = correlation_hash
+                trace_event(
+                    VOICE_TURN_COMPLETION_METADATA_PERSIST_FAILED,
+                    attributes,
+                )
+                await self._state_store.save_state(thread_id, state)
+            self._post_turn_safety_auditor.forget_schedule_result(
+                thread_id=thread_id,
+                turn_instance_id=retry_turn_instance_id,
+            )
             return state
 
 

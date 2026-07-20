@@ -24,7 +24,7 @@ from typing import Any, cast
 import pytest
 
 from agent.runtime import run_agent
-from agent.audit.capture import capture_crisis_outcome
+from agent.audit.capture import capture_crisis_outcome, capture_voice_missed_crisis
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
@@ -563,6 +563,51 @@ class TestCrisisLogNode:
         assert result.reason == "exception"
         assert await backend.arecord_count() == 0
         assert "safety event capture failed" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_voice_missed_crisis_deduplication_is_observable(self) -> None:
+        backend = InMemoryCrisisLogBackend()
+        runtime = _MockRuntime(crisis_log_backend=backend)
+        state = _build_crisis_state(level=3)
+        state["diagnostics"] = {
+            "voice_missed_crisis_audit_id": "voice-missed-crisis:stable-turn"
+        }
+        assessment = CrisisAssessment(
+            level=3,
+            confidence="high",
+            reason="missed crisis",
+            needs_crisis_response=True,
+            needs_clarification=False,
+        )
+        recorder = InMemoryTraceRecorder()
+        trace_context = TraceContext(
+            trace_id="voice-missed-crisis-dedup",
+            runtime_mode="voice",
+            config=TraceConfig(enabled=True),
+        )
+
+        with use_trace_context(trace_context, recorder):
+            first = await capture_voice_missed_crisis(
+                state,
+                runtime.context,
+                assessment=assessment,
+            )
+            second = await capture_voice_missed_crisis(
+                state,
+                runtime.context,
+                assessment=assessment,
+            )
+
+        append_events = [
+            event for event in recorder.events if event.name == AUDIT_CRISIS_LOG_APPEND
+        ]
+        assert first.status == "captured"
+        assert second.status == "captured"
+        assert await backend.arecord_count() == 1
+        assert [event.attributes["audit_recorded"] for event in append_events] == [
+            True,
+            False,
+        ]
 
     @pytest.mark.asyncio
     async def test_backend_failure_is_logged_but_does_not_crash(
