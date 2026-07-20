@@ -119,6 +119,64 @@ async def test_schedule_check_reports_queue_limit_skip() -> None:
 
 
 @pytest.mark.asyncio
+async def test_schedule_check_retries_task_limit_skip_after_capacity_returns() -> None:
+    service = _SlowCrisisRiskService(delay_seconds=0.05)
+    auditor = VoicePostTurnSafetyAuditor(
+        service=service,
+        max_pending_tasks=1,
+    )
+    llm = FakeCrossRestartLLM()
+    blocked_check = _check(
+        thread_id="voice-blocked",
+        llm_client=llm,
+        turn_instance_id="blocked-turn-instance",
+    )
+
+    first = auditor.schedule_check(
+        _check(
+            thread_id="voice-running",
+            llm_client=llm,
+            turn_instance_id="running-turn-instance",
+        )
+    )
+    blocked = auditor.schedule_check(blocked_check)
+    assert await auditor.drain(timeout_seconds=1.0) == 0
+    retried = auditor.schedule_check(blocked_check)
+    assert await auditor.drain(timeout_seconds=1.0) == 0
+
+    assert first.scheduled is True
+    assert blocked.reason == "task_limit_reached"
+    assert retried.scheduled is True
+    assert service.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_schedule_check_retries_no_llm_skip_when_client_becomes_available() -> (
+    None
+):
+    service = _SlowCrisisRiskService(delay_seconds=0.0)
+    auditor = VoicePostTurnSafetyAuditor(service=service)
+
+    skipped = auditor.schedule_check(
+        _check(
+            llm_client=None,
+            turn_instance_id="retryable-no-llm-turn",
+        )
+    )
+    retried = auditor.schedule_check(
+        _check(
+            llm_client=FakeCrossRestartLLM(),
+            turn_instance_id="retryable-no-llm-turn",
+        )
+    )
+    assert await auditor.drain(timeout_seconds=1.0) == 0
+
+    assert skipped.reason == "no_llm_client"
+    assert retried.scheduled is True
+    assert service.calls == 1
+
+
+@pytest.mark.asyncio
 async def test_schedule_check_reuses_result_for_same_turn_instance() -> None:
     service = _SlowCrisisRiskService(delay_seconds=0.0)
     auditor = VoicePostTurnSafetyAuditor(service=service)

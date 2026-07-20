@@ -35,6 +35,7 @@ _DEFAULT_CLOSE_DRAIN_TIMEOUT_SECONDS = 5.0
 _DEFAULT_MAX_CONCURRENCY = 2
 _DEFAULT_MAX_PENDING_TASKS = 100
 _DEFAULT_MAX_SCHEDULE_RESULTS = 256
+_TRANSIENT_SKIP_REASONS = {"no_llm_client", "task_limit_reached"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -335,7 +336,11 @@ class VoicePostTurnSafetyAuditor:
         result: VoicePostTurnSafetyScheduleResult,
     ) -> VoicePostTurnSafetyScheduleResult:
         turn_instance_id = check.turn_instance_id
-        if turn_instance_id is None:
+        if (
+            turn_instance_id is None
+            or not result.scheduled
+            and result.reason in _TRANSIENT_SKIP_REASONS
+        ):
             return result
         self._schedule_results[(check.thread_id, turn_instance_id)] = result
         while len(self._schedule_results) > self._max_schedule_results:
