@@ -1026,6 +1026,8 @@ async def test_turn_endpoint_succeeds_when_completion_metadata_save_fails(
     pending_diagnostics = pending_state["diagnostics"]
     assert pending_diagnostics.get("voice_recorded_turn_hashes", []) == []
     assert len(pending_diagnostics["voice_pending_turns"]) == 1
+    pending_turn = next(iter(pending_diagnostics["voice_pending_turns"].values()))
+    turn_instance_id = pending_turn["turn_instance_id"]
     assert retry.status_code == 200
     assert retry.json() == first.json()
     assert conflict.status_code == 409
@@ -1040,13 +1042,97 @@ async def test_turn_endpoint_succeeds_when_completion_metadata_save_fails(
     assert llm.crisis_calls == 1
     assert len(audit_records) == 1
     assert audit_records[0].event_type == "voice_missed_crisis"
-    correlation_hash = hashlib.sha256(
-        b"voice-completion-metadata-api\0voice-completion-metadata-turn"
-    ).hexdigest()
     thread_hash = hashlib.sha256(b"voice-completion-metadata-api").hexdigest()
     assert audit_records[0].id == (
-        f"voice-missed-crisis:{thread_hash}:{correlation_hash}"
+        f"voice-missed-crisis:{thread_hash}:{turn_instance_id}"
     )
+
+
+@pytest.mark.asyncio
+async def test_reused_correlation_after_receipt_eviction_gets_new_audit_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "agent.voice.runtime_facade._MAX_RECORDED_VOICE_TURN_HASHES",
+        1,
+    )
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+    )
+    llm = _VoiceCrisisAuditLLM(level=3)
+    common = {
+        "thread_id": "voice-reused-correlation",
+        "user_id": "user-1",
+        "assistant_text": "I'm here with you.",
+    }
+
+    async with runtime:
+        await runtime.voice.record_voice_turn(
+            **common,
+            user_text="First accepted turn.",
+            correlation_hash="recycled-correlation",
+            request_hash="first-request",
+            llm_client=llm,
+        )
+        assert await runtime.voice.drain_post_turn_safety_checks() == 0
+        await runtime.voice.record_voice_turn(
+            **common,
+            user_text="Intervening turn.",
+            correlation_hash="intervening-correlation",
+            request_hash="intervening-request",
+            llm_client=None,
+        )
+        await runtime.voice.record_voice_turn(
+            **common,
+            user_text="Second accepted turn.",
+            correlation_hash="recycled-correlation",
+            request_hash="second-request",
+            llm_client=llm,
+        )
+        assert await runtime.voice.drain_post_turn_safety_checks() == 0
+        audit_records = await utc_crisis_records(runtime.crisis_log_backend)
+
+    missed_crises = [
+        record for record in audit_records if record.event_type == "voice_missed_crisis"
+    ]
+    assert llm.crisis_calls == 2
+    assert len(missed_crises) == 2
+    assert len({record.id for record in missed_crises}) == 2
+
+
+@pytest.mark.asyncio
+async def test_reset_thread_reuse_gets_new_post_turn_safety_identity() -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+    )
+    llm = _VoiceCrisisAuditLLM(level=3)
+    turn = {
+        "thread_id": "voice-reset-reuse",
+        "user_id": "user-1",
+        "user_text": "A difficult turn.",
+        "assistant_text": "I'm here with you.",
+        "correlation_hash": "reused-after-reset",
+        "request_hash": "same-request-after-reset",
+        "llm_client": llm,
+    }
+
+    async with runtime:
+        await runtime.voice.record_voice_turn(**turn)
+        assert await runtime.voice.drain_post_turn_safety_checks() == 0
+        await runtime.end_session("voice-reset-reuse")
+        await runtime.reset_thread("voice-reset-reuse")
+        await runtime.voice.record_voice_turn(**turn)
+        assert await runtime.voice.drain_post_turn_safety_checks() == 0
+        audit_records = await utc_crisis_records(runtime.crisis_log_backend)
+
+    missed_crises = [
+        record for record in audit_records if record.event_type == "voice_missed_crisis"
+    ]
+    assert llm.crisis_calls == 2
+    assert len(missed_crises) == 2
+    assert len({record.id for record in missed_crises}) == 2
 
 
 @pytest.mark.asyncio

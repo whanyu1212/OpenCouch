@@ -50,7 +50,7 @@ class VoicePostTurnSafetyCheck:
     prior_state: AgentState | None
     context: Any
     llm_client: BaseLLMClient | None
-    correlation_hash: str | None = None
+    turn_instance_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,9 +125,9 @@ class VoicePostTurnSafetyAuditor:
             because later classifier completion/failure happens asynchronously.
         """
 
-        if check.correlation_hash is not None:
+        if check.turn_instance_id is not None:
             previous = self._schedule_results.get(
-                (check.thread_id, check.correlation_hash)
+                (check.thread_id, check.turn_instance_id)
             )
             if previous is not None:
                 return previous
@@ -334,10 +334,10 @@ class VoicePostTurnSafetyAuditor:
         check: VoicePostTurnSafetyCheck,
         result: VoicePostTurnSafetyScheduleResult,
     ) -> VoicePostTurnSafetyScheduleResult:
-        correlation_hash = check.correlation_hash
-        if correlation_hash is None:
+        turn_instance_id = check.turn_instance_id
+        if turn_instance_id is None:
             return result
-        self._schedule_results[(check.thread_id, correlation_hash)] = result
+        self._schedule_results[(check.thread_id, turn_instance_id)] = result
         while len(self._schedule_results) > self._max_schedule_results:
             self._schedule_results.pop(next(iter(self._schedule_results)))
         return result

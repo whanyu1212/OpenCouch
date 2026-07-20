@@ -54,7 +54,7 @@ def _check(
     *,
     thread_id: str = "voice-thread",
     llm_client: BaseLLMClient | None = None,
-    correlation_hash: str | None = None,
+    turn_instance_id: str | None = None,
 ) -> VoicePostTurnSafetyCheck:
     return VoicePostTurnSafetyCheck(
         thread_id=thread_id,
@@ -77,7 +77,7 @@ def _check(
             memory_mode=MemoryMode.LOCAL,
         ),
         llm_client=llm_client,
-        correlation_hash=correlation_hash,
+        turn_instance_id=turn_instance_id,
     )
 
 
@@ -119,12 +119,12 @@ async def test_schedule_check_reports_queue_limit_skip() -> None:
 
 
 @pytest.mark.asyncio
-async def test_schedule_check_reuses_result_for_same_correlation_hash() -> None:
+async def test_schedule_check_reuses_result_for_same_turn_instance() -> None:
     service = _SlowCrisisRiskService(delay_seconds=0.0)
     auditor = VoicePostTurnSafetyAuditor(service=service)
     check = _check(
         llm_client=FakeCrossRestartLLM(),
-        correlation_hash="same-voice-turn",
+        turn_instance_id="same-voice-turn",
     )
 
     first = auditor.schedule_check(check)
@@ -138,23 +138,23 @@ async def test_schedule_check_reuses_result_for_same_correlation_hash() -> None:
 
 
 @pytest.mark.asyncio
-async def test_schedule_cache_scopes_correlation_hash_to_thread() -> None:
+async def test_schedule_cache_scopes_results_to_turn_instance() -> None:
     service = _SlowCrisisRiskService(delay_seconds=0.0)
     auditor = VoicePostTurnSafetyAuditor(service=service)
     llm = FakeCrossRestartLLM()
 
     first = auditor.schedule_check(
         _check(
-            thread_id="voice-one",
+            thread_id="voice-thread",
             llm_client=llm,
-            correlation_hash="shared-hash",
+            turn_instance_id="turn-one",
         )
     )
     second = auditor.schedule_check(
         _check(
-            thread_id="voice-two",
+            thread_id="voice-thread",
             llm_client=llm,
-            correlation_hash="shared-hash",
+            turn_instance_id="turn-two",
         )
     )
     pending = await auditor.drain(timeout_seconds=1.0)

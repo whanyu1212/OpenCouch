@@ -22,6 +22,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
+from uuid import uuid4
 
 from agent.audit.capture import capture_crisis_outcome
 from agent.audit.models import CrisisResourceLookupStatus
@@ -859,6 +860,13 @@ class VoiceRuntimeFacade:
                 else None
             )
             if pending_turn is not None:
+                pending_turn_instance_id = pending_turn.get("turn_instance_id")
+                turn_instance_id = (
+                    pending_turn_instance_id
+                    if isinstance(pending_turn_instance_id, str)
+                    and pending_turn_instance_id
+                    else uuid4().hex
+                )
                 if request_hash is not None:
                     _validate_voice_turn_request_hash(
                         prior_state,
@@ -880,6 +888,7 @@ class VoiceRuntimeFacade:
                     state.get("response_style") or response_style or ""
                 )
             else:
+                turn_instance_id = uuid4().hex
                 await self._runtime._prepare_session_for_turn(
                     thread_id=thread_id,
                     prior_state=prior_state,
@@ -929,6 +938,7 @@ class VoiceRuntimeFacade:
                         )
                         if prior_state is not None
                         else 0,
+                        "turn_instance_id": turn_instance_id,
                     }
                     diagnostics["voice_pending_turns"] = pending_turns
                     state["diagnostics"] = diagnostics
@@ -998,7 +1008,7 @@ class VoiceRuntimeFacade:
                     )
                     thread_hash = hashlib.sha256(thread_id.encode("utf-8")).hexdigest()
                     post_turn_diagnostics["voice_missed_crisis_audit_id"] = (
-                        f"voice-missed-crisis:{thread_hash}:{correlation_hash}"
+                        f"voice-missed-crisis:{thread_hash}:{turn_instance_id}"
                     )
                     post_turn_safety_state["diagnostics"] = post_turn_diagnostics
                 safety_schedule = self._post_turn_safety_auditor.schedule_check(
@@ -1016,7 +1026,7 @@ class VoiceRuntimeFacade:
                         ),
                         context=post_turn_context,
                         llm_client=llm_client,
-                        correlation_hash=correlation_hash,
+                        turn_instance_id=turn_instance_id,
                     )
                 )
             diagnostics = dict(state.get("diagnostics", {}) or {})
