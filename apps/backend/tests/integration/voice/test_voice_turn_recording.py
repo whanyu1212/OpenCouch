@@ -10,7 +10,7 @@ from httpx import ASGITransport, AsyncClient
 
 from agent.memory.hashing import hash_session_id
 from agent.memory.modes import MemoryMode
-from agent.models import MessageRole
+from agent.models import CrisisAssessment, MessageRole
 from agent.observability.config import TraceConfig
 from agent.observability.context import TraceContext, use_trace_context
 from agent.observability.events import (
@@ -762,6 +762,63 @@ async def test_voice_turn_retry_resumes_failed_lifecycle_without_duplicate_trans
     assert receipt is not None
     assert receipt.message_count == 2
     assert correlation_hash in state["diagnostics"]["voice_recorded_turn_hashes"]
+    assert "voice_pending_turns" not in state["diagnostics"]
+
+
+@pytest.mark.asyncio
+async def test_safety_interruption_retry_deduplicates_audit_after_receipt_save_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    )
+    original_save_state = runtime._state_store.save_state
+    save_attempts = 0
+
+    async def fail_receipt_save_once(thread_id: str, state: Any) -> None:
+        nonlocal save_attempts
+        save_attempts += 1
+        if save_attempts == 2:
+            raise RuntimeError("simulated receipt save failure")
+        await original_save_state(thread_id, state)
+
+    monkeypatch.setattr(runtime._state_store, "save_state", fail_receipt_save_once)
+    assessment = CrisisAssessment(
+        level=3,
+        confidence="high",
+        reason="verified voice safety interruption",
+        needs_crisis_response=True,
+        needs_clarification=False,
+    )
+    turn = {
+        "thread_id": "voice-safety-audit-retry",
+        "user_id": "user-1",
+        "user_text": "I might hurt myself.",
+        "assistant_text": "",
+        "outcome": "safety_interrupted",
+        "correlation_hash": "stable-safety-correlation",
+        "request_hash": "stable-safety-request",
+        "safety_assessment": assessment,
+        "llm_client": None,
+    }
+
+    async with runtime:
+        with pytest.raises(RuntimeError, match="receipt save failure"):
+            await runtime.voice.record_voice_turn(**turn)
+        assert await runtime.crisis_log_backend.arecord_count() == 1
+
+        state = await runtime.voice.record_voice_turn(**turn)
+        records = await utc_crisis_records(runtime.crisis_log_backend)
+        history = await runtime.get_history("voice-safety-audit-retry")
+
+    assert save_attempts == 4
+    assert len(records) == 1
+    assert records[0].id == ("voice-safety-interruption:stable-safety-correlation")
+    assert [message.content for message in history] == ["I might hurt myself."]
     assert "voice_pending_turns" not in state["diagnostics"]
 
 

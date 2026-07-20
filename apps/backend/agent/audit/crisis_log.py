@@ -64,6 +64,11 @@ class CrisisLogBackend(Protocol):
         """
         ...
 
+    async def aappend_once(self, record: CrisisLogRecord) -> bool:
+        """Append a record unless its deterministic ID already exists."""
+
+        ...
+
     async def alist_by_date(self, day: date) -> list[CrisisLogRecord]:
         """List crisis records for one date.
 
@@ -166,8 +171,13 @@ async def write_crisis_log(
             if trace_context is not None and trace_context.enabled
             else None
         )
+        deterministic_audit_id = diagnostics.get("voice_crisis_audit_id")
         record = CrisisLogRecord(
-            id=str(uuid4()),
+            id=(
+                deterministic_audit_id
+                if isinstance(deterministic_audit_id, str) and deterministic_audit_id
+                else str(uuid4())
+            ),
             session_id_opaque=hash_session_id(state.get("session_id")),
             user_id_or_null=user_id,
             detected_at=iso_now(),
@@ -200,7 +210,10 @@ async def write_crisis_log(
                 enabled_trace_context.runtime_mode if enabled_trace_context else None
             ),
         )
-        await backend.aappend(record)
+        if isinstance(deterministic_audit_id, str) and deterministic_audit_id:
+            await backend.aappend_once(record)
+        else:
+            await backend.aappend(record)
         trace_event(
             AUDIT_CRISIS_LOG_APPEND,
             {
@@ -450,6 +463,19 @@ class InMemoryCrisisLogBackend:
         day = date.fromisoformat(record.detected_at.split("T", 1)[0])
         self._records_by_date[day].append(record)
 
+    async def aappend_once(self, record: CrisisLogRecord) -> bool:
+        """Append a record unless its deterministic ID already exists."""
+
+        self._ensure_open()
+        if any(
+            existing.id == record.id
+            for records in self._records_by_date.values()
+            for existing in records
+        ):
+            return False
+        await self.aappend(record)
+        return True
+
     async def alist_by_date(self, day: date) -> list[CrisisLogRecord]:
         """List in-memory crisis records for one date.
 
@@ -527,6 +553,11 @@ class NullCrisisLogBackend:
         """
 
         return None
+
+    async def aappend_once(self, record: CrisisLogRecord) -> bool:
+        """Discard an idempotent crisis record."""
+
+        return False
 
     async def alist_by_date(self, day: date) -> list[CrisisLogRecord]:
         """List crisis records for one date.

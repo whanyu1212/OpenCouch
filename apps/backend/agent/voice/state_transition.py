@@ -127,6 +127,7 @@ def build_voice_turn_state(inputs: VoiceTurnStateInputs) -> VoiceTurnStateResult
         "voice_tool_call_outcomes",
         "openai_crisis_tool_calls",
         "voice_crisis_resource_turn_hash",
+        "voice_crisis_audit_id",
     ):
         diagnostics_state.pop(key, None)
     session_progress_state = dict(
@@ -180,6 +181,10 @@ def build_voice_turn_state(inputs: VoiceTurnStateInputs) -> VoiceTurnStateResult
                 for call in voice_tool_calls
                 if call.get("tool_name")
             ]
+            if inputs.correlation_hash is not None:
+                diagnostics["voice_crisis_audit_id"] = (
+                    f"voice-safety-interruption:{inputs.correlation_hash}"
+                )
         state["diagnostics"] = diagnostics
         if inputs.safety_assessment is not None:
             state["crisis"] = inputs.safety_assessment.model_copy(deep=True)
