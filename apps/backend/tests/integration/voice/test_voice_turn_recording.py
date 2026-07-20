@@ -863,6 +863,88 @@ async def test_voice_turn_retry_resumes_failed_lifecycle_without_duplicate_trans
 
 
 @pytest.mark.asyncio
+async def test_legacy_pending_turn_retries_reuse_post_turn_safety_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    )
+    original_save_state = runtime._state_store.save_state
+    sdk_attempts = 0
+    llm = _VoiceCrisisAuditLLM(level=3)
+
+    async def fail_sdk_history_once(*args: Any, **kwargs: Any) -> None:
+        nonlocal sdk_attempts
+        sdk_attempts += 1
+        if sdk_attempts == 1:
+            raise RuntimeError("simulated pre-receipt lifecycle failure")
+
+    monkeypatch.setattr(
+        runtime,
+        "_ensure_openai_sdk_turn_recorded",
+        fail_sdk_history_once,
+    )
+    correlation_hash = "legacy-pending-correlation"
+    request_hash = "legacy-pending-request"
+    turn = {
+        "thread_id": "voice-legacy-pending-retry",
+        "user_id": "user-1",
+        "user_text": "I had a difficult day.",
+        "assistant_text": "I'm here with you.",
+        "correlation_hash": correlation_hash,
+        "request_hash": request_hash,
+        "llm_client": llm,
+    }
+
+    async with runtime:
+        with pytest.raises(RuntimeError, match="pre-receipt lifecycle failure"):
+            await runtime.voice.record_voice_turn(**turn)
+
+        pending_state = await runtime.get_state("voice-legacy-pending-retry")
+        assert pending_state is not None
+        pending_turn = pending_state["diagnostics"]["voice_pending_turns"][
+            correlation_hash
+        ]
+        pending_turn.pop("turn_instance_id")
+        await original_save_state("voice-legacy-pending-retry", pending_state)
+
+        async def fail_completion_receipt_saves(
+            thread_id: str,
+            state: Any,
+        ) -> None:
+            diagnostics = state.get("diagnostics", {})
+            if diagnostics.get("voice_recorded_turn_receipts"):
+                raise RuntimeError("persistent completion receipt failure")
+            await original_save_state(thread_id, state)
+
+        monkeypatch.setattr(
+            runtime._state_store,
+            "save_state",
+            fail_completion_receipt_saves,
+        )
+
+        for _ in range(2):
+            with pytest.raises(
+                RuntimeError,
+                match="persistent completion receipt failure",
+            ):
+                await runtime.voice.record_voice_turn(**turn)
+            assert await runtime.voice.drain_post_turn_safety_checks() == 0
+
+        audit_records = await utc_crisis_records(runtime.crisis_log_backend)
+
+    assert llm.crisis_calls == 1
+    missed_crises = [
+        record for record in audit_records if record.event_type == "voice_missed_crisis"
+    ]
+    assert len(missed_crises) == 1
+
+
+@pytest.mark.asyncio
 async def test_safety_interruption_retry_deduplicates_audit_after_receipt_save_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

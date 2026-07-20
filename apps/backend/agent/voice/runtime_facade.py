@@ -861,11 +861,21 @@ class VoiceRuntimeFacade:
             )
             if pending_turn is not None:
                 pending_turn_instance_id = pending_turn.get("turn_instance_id")
+                legacy_request_hash = pending_turn.get("request_hash")
+                legacy_identity = (
+                    legacy_request_hash
+                    if isinstance(legacy_request_hash, str)
+                    else correlation_hash
+                )
                 turn_instance_id = (
                     pending_turn_instance_id
                     if isinstance(pending_turn_instance_id, str)
                     and pending_turn_instance_id
-                    else uuid4().hex
+                    else hashlib.sha256(
+                        f"legacy-voice-turn\0{correlation_hash}\0{legacy_identity}".encode(
+                            "utf-8"
+                        )
+                    ).hexdigest()
                 )
                 if request_hash is not None:
                     _validate_voice_turn_request_hash(
