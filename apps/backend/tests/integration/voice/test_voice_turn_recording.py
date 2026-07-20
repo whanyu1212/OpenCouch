@@ -912,18 +912,15 @@ async def test_safety_interruption_retry_deduplicates_audit_after_receipt_save_f
         with use_trace_context(trace_context, recorder):
             first_state = await runtime.voice.record_voice_turn(**turn)
         assert await runtime.crisis_log_backend.arecord_count() == 1
-        pending_state = await runtime.get_state("voice-safety-audit-retry")
-        assert pending_state is not None
-        assert (
-            "stable-safety-correlation"
-            in pending_state["diagnostics"]["voice_pending_turns"]
-        )
+        persisted_state = await runtime.get_state("voice-safety-audit-retry")
+        assert persisted_state is not None
+        assert "voice_pending_turns" not in persisted_state["diagnostics"]
 
         state = await runtime.voice.record_voice_turn(**turn)
         records = await utc_crisis_records(runtime.crisis_log_backend)
         history = await runtime.get_history("voice-safety-audit-retry")
 
-    assert save_attempts == 4
+    assert save_attempts == 3
     assert first_state["diagnostics"]["voice_post_turn_safety"] == {
         "scheduled": False,
         "status": "skipped",
@@ -1000,7 +997,7 @@ async def test_turn_endpoint_succeeds_when_completion_metadata_save_fails(
             base_url="http://test",
         ) as client:
             first = await client.post("/api/voice/realtime/turn", json=payload)
-            pending_state = await runtime.get_state("voice-completion-metadata-api")
+            persisted_state = await runtime.get_state("voice-completion-metadata-api")
             assert await runtime.voice.drain_post_turn_safety_checks() == 0
             retry = await client.post("/api/voice/realtime/turn", json=payload)
             conflict = await client.post(
@@ -1022,19 +1019,18 @@ async def test_turn_endpoint_succeeds_when_completion_metadata_save_fails(
             "pending_count": 1,
         },
     }
-    assert pending_state is not None
-    pending_diagnostics = pending_state["diagnostics"]
-    assert pending_diagnostics.get("voice_recorded_turn_hashes", []) == []
-    assert len(pending_diagnostics["voice_pending_turns"]) == 1
-    pending_turn = next(iter(pending_diagnostics["voice_pending_turns"].values()))
-    turn_instance_id = pending_turn["turn_instance_id"]
+    assert persisted_state is not None
+    persisted_diagnostics = persisted_state["diagnostics"]
+    assert len(persisted_diagnostics["voice_recorded_turn_hashes"]) == 1
+    assert "voice_pending_turns" not in persisted_diagnostics
+    receipt = next(iter(persisted_diagnostics["voice_recorded_turn_receipts"].values()))
     assert retry.status_code == 200
     assert retry.json() == first.json()
     assert conflict.status_code == 409
     assert conflict.json()["detail"]["code"] == (
         "voice_realtime_turn_idempotency_conflict"
     )
-    assert save_attempts == 4
+    assert save_attempts == 3
     assert [message.content for message in history] == [
         "I had a difficult day.",
         "I'm here with you.",
@@ -1043,6 +1039,7 @@ async def test_turn_endpoint_succeeds_when_completion_metadata_save_fails(
     assert len(audit_records) == 1
     assert audit_records[0].event_type == "voice_missed_crisis"
     thread_hash = hashlib.sha256(b"voice-completion-metadata-api").hexdigest()
+    turn_instance_id = receipt["turn_instance_id"]
     assert audit_records[0].id == (
         f"voice-missed-crisis:{thread_hash}:{turn_instance_id}"
     )
@@ -1099,6 +1096,68 @@ async def test_reused_correlation_after_receipt_eviction_gets_new_audit_identity
     assert llm.crisis_calls == 2
     assert len(missed_crises) == 2
     assert len({record.id for record in missed_crises}) == 2
+
+
+@pytest.mark.asyncio
+async def test_turn_endpoint_fails_when_completion_receipt_cannot_be_persisted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    )
+    original_save_state = runtime._state_store.save_state
+    save_attempts = 0
+
+    async def fail_completion_receipt_saves(thread_id: str, state: Any) -> None:
+        nonlocal save_attempts
+        save_attempts += 1
+        if save_attempts >= 2:
+            raise RuntimeError("persistent completion receipt failure")
+        await original_save_state(thread_id, state)
+
+    monkeypatch.setattr(
+        runtime._state_store,
+        "save_state",
+        fail_completion_receipt_saves,
+    )
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
+    app.dependency_overrides[get_llm_client] = lambda: None
+
+    async with runtime:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post(
+                "/api/voice/realtime/turn",
+                json={
+                    "thread_id": "voice-persistent-receipt-failure",
+                    "client_turn_id": "voice-persistent-receipt-failure-turn",
+                    "user_text": "I had a difficult day.",
+                    "assistant_text": "I'm here with you.",
+                },
+            )
+        state = await runtime.get_state("voice-persistent-receipt-failure")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == {
+        "code": "voice_realtime_turn_record_failed",
+        "message": "persistent completion receipt failure",
+    }
+    assert save_attempts == 3
+    assert state is not None
+    assert len(state["transcript"]) == 2
+    assert len(state["diagnostics"]["voice_pending_turns"]) == 1
 
 
 @pytest.mark.asyncio

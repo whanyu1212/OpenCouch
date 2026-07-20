@@ -1065,6 +1065,7 @@ class VoiceRuntimeFacade:
                     "request_hash": request_hash,
                     "message_count": len(state.get("transcript", []) or []),
                     "post_turn_safety": safety_schedule.as_dict(),
+                    "turn_instance_id": turn_instance_id,
                 }
                 retained_hashes = set(
                     diagnostics.get("voice_recorded_turn_hashes", []) or []
@@ -1102,6 +1103,7 @@ class VoiceRuntimeFacade:
                     VOICE_TURN_COMPLETION_METADATA_PERSIST_FAILED,
                     attributes,
                 )
+                await self._state_store.save_state(thread_id, state)
             return state
 
 
