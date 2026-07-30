@@ -113,6 +113,9 @@ class InMemorySessionFeedbackBackend:
     NOT thread-safe. Each runtime instance should own its own backend.
     """
 
+    #: Records live in memory only, so incognito runtimes may use this backend.
+    supports_incognito: bool = True
+
     def __init__(self) -> None:
         """Initialize the in-memory feedback backend.
 
@@ -247,6 +250,9 @@ class NullSessionFeedbackBackend:
     process restart. Using this null backend in production would
     silently drop feedback rather than respecting the user's rating.
     """
+
+    #: Discards every record, so incognito runtimes may use this backend.
+    supports_incognito: bool = True
 
     async def aappend(self, record: SessionFeedbackRecord) -> None:  # noqa: ARG002
         """Discard a feedback record.

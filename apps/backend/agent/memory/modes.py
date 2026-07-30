@@ -16,7 +16,7 @@ CLI argument parsing and JSON serialization.
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, Protocol, runtime_checkable
 
 
 class MemoryMode(StrEnum):
@@ -28,6 +28,46 @@ class MemoryMode(StrEnum):
     INCOGNITO = "incognito"
     LOCAL = "local"
     SYNCED = "synced"
+
+
+#: Attribute a dependency sets to declare it is safe for incognito runtimes.
+EPHEMERAL_CAPABILITY_ATTRIBUTE = "supports_incognito"
+
+
+@runtime_checkable
+class EphemeralCapable(Protocol):
+    """Marker for dependencies an incognito runtime may use.
+
+    Incognito runtimes promise never to touch disk, a database, or a remote
+    service. Runtime-owned backend selection honors that, but callers can also
+    inject their own stores and providers, and an injected dependency would
+    otherwise override the mode's choice silently.
+
+    Rather than rejecting a known list of durable implementations, a
+    dependency must *opt in* by setting ``supports_incognito = True``. This
+    fails closed: an implementation the runtime has never seen — including a
+    caller's own durable wrapper — is rejected until it declares itself
+    ephemeral. A blocklist would fail open for exactly those cases.
+
+    Declaring this attribute is an assertion by the implementation that it
+    performs no durable writes and makes no network calls. In-repo ephemeral
+    backends declare it; durable ones deliberately do not.
+    """
+
+    supports_incognito: bool
+
+
+def is_ephemeral_capable(dependency: object) -> bool:
+    """Return whether a dependency declares itself incognito-safe.
+
+    Args:
+        dependency (object): Injected store, backend, or provider.
+
+    Returns:
+        bool: ``True`` when the dependency opts in to incognito use.
+    """
+
+    return getattr(dependency, EPHEMERAL_CAPABILITY_ATTRIBUTE, False) is True
 
 
 EffectiveMemoryMode = Literal["incognito", "persistent"]

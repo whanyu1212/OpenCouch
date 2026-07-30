@@ -282,16 +282,19 @@ def build_runtime_resources(
         memory_store=memory_store,
         memory_backend=backend_selection.memory_store_backend,
         memory_database_url=memory_database_url,
+        memory_mode=memory_mode,
     )
     resolved_crisis_log_backend = create_crisis_log_backend(
         crisis_log_backend=crisis_log_backend,
         crisis_log_persistence_backend=backend_selection.crisis_log_backend,
         crisis_log_database_url=crisis_log_database_url,
+        memory_mode=memory_mode,
     )
     resolved_session_feedback_backend = create_session_feedback_backend(
         session_feedback_backend=session_feedback_backend,
         session_feedback_persistence_backend=backend_selection.session_feedback_backend,
         session_feedback_database_url=session_feedback_database_url,
+        memory_mode=memory_mode,
     )
     resolved_embedding_provider = create_embedding_provider(
         memory_mode=memory_mode,
