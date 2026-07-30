@@ -77,6 +77,49 @@ async def test_in_memory_state_close_clears_and_rejects_reuse() -> None:
 
 
 @pytest.mark.asyncio
+async def test_in_memory_mutation_claim_requires_unclaimed_or_owned_marker() -> None:
+    """The in-memory store applies the durable backend's ownership condition."""
+
+    store = InMemoryActiveSessionStore()
+    await store.save_payload("thread-claim", "payload")
+
+    await store.set_mutation(
+        "thread-claim",
+        mutation_token="owner-token",
+        mutation_kind="turn",
+    )
+    await store.set_mutation(
+        "thread-claim",
+        mutation_token="intruder-token",
+        mutation_kind="rotation",
+    )
+    row = await store.load_row("thread-claim")
+    assert row is not None
+    assert row[1] == "owner-token"
+    assert row[2] == "turn"
+
+    # The owning token may update its own claim, and release frees the marker.
+    await store.set_mutation(
+        "thread-claim",
+        mutation_token="owner-token",
+        mutation_kind="finalize",
+    )
+    row = await store.load_row("thread-claim")
+    assert row is not None
+    assert row[2] == "finalize"
+
+    await store.clear_mutation("thread-claim", "owner-token")
+    await store.set_mutation(
+        "thread-claim",
+        mutation_token="next-token",
+        mutation_kind="turn",
+    )
+    row = await store.load_row("thread-claim")
+    assert row is not None
+    assert row[1] == "next-token"
+
+
+@pytest.mark.asyncio
 async def test_in_memory_active_session_store_preserves_coordination_state() -> None:
     store = InMemoryActiveSessionStore()
 

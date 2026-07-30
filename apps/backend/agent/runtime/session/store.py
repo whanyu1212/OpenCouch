@@ -126,6 +126,11 @@ class InMemoryActiveSessionStore:
             existing = self._rows.get(thread_id)
             if existing is None:
                 return
+            # Claim only an unclaimed marker or one this token already holds,
+            # matching the durable backend's ownership condition.
+            existing_token = existing[1]
+            if existing_token is not None and existing_token != mutation_token:
+                return
             self._rows[thread_id] = (
                 existing[0],
                 mutation_token,
@@ -358,15 +363,31 @@ class PostgresActiveSessionStore:
         mutation_kind: str,
         finalize_required_reason: str | None = None,
     ) -> None:
-        """Persist mutation-coordination metadata for one thread."""
+        """Persist mutation-coordination metadata for one thread.
+
+        The claim only lands when the marker is unclaimed or already held by
+        this token, mirroring the ownership check ``clear_mutation`` already
+        applies. Callers mint a fresh token per mutation and clear it when the
+        mutation ends, so a claim never renews an existing one.
+
+        OpenCouch serves from a single worker (see ``api/worker_contract``),
+        so this condition is defense in depth rather than the mechanism that
+        makes concurrent claims safe.
+        """
 
         if finalize_required_reason is None:
             sql = """
                 UPDATE opencouch_active_sessions
                 SET mutation_token = %s, mutation_kind = %s
                 WHERE thread_id = %s
+                    AND (mutation_token IS NULL OR mutation_token = %s)
                 """
-            params: tuple[Any, ...] = (mutation_token, mutation_kind, thread_id)
+            params: tuple[Any, ...] = (
+                mutation_token,
+                mutation_kind,
+                thread_id,
+                mutation_token,
+            )
         else:
             sql = """
                 UPDATE opencouch_active_sessions
@@ -375,12 +396,14 @@ class PostgresActiveSessionStore:
                     mutation_kind = %s,
                     finalize_required_reason = %s
                 WHERE thread_id = %s
+                    AND (mutation_token IS NULL OR mutation_token = %s)
                 """
             params = (
                 mutation_token,
                 mutation_kind,
                 finalize_required_reason,
                 thread_id,
+                mutation_token,
             )
         conn = await self._ensure_connection()
         async with conn.cursor() as cursor:
