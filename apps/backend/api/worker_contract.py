@@ -11,6 +11,21 @@ The exception is the durable active-session mutation marker, which two
 processes can both claim, leaving runtime state last-writer-wins with no
 error. A silent corruption path is worse than a refused boot, so startup
 rejects a multi-worker configuration outright rather than serving unsafely.
+
+Detection combines three signals, because no single one covers every route:
+
+- an explicit ``--workers``/``-w`` count on the command line, which uvicorn
+  never exports to the environment;
+- the conventional worker-count environment variables;
+- gunicorn's resolved configuration, which is the only in-process evidence
+  of a config-file worker count.
+
+Process identity is deliberately *not* the general backstop: it catches
+spawn-based children (uvicorn) but a ``fork``-based prefork worker inherits
+``MainProcess`` and ``parent_process() is None``, so it is invisible to
+introspection. Detection is therefore best-effort against unenumerated
+supervisors, and the deployment contract in the backend README remains the
+authority.
 """
 
 from __future__ import annotations
@@ -81,19 +96,23 @@ def _parse_worker_count(raw: str | None) -> int | None:
 
 
 def _detect_cli_worker_count(argv: list[str] | None = None) -> tuple[str, int] | None:
-    """Return a worker count passed on the command line, if above one.
+    """Return any worker count passed on the command line.
 
     ``uvicorn main:app --workers 2`` is the standard way to request workers
     and exports nothing to the environment, so an environment-only check
     would miss the most common multi-worker configuration.
+
+    The count is returned whatever its value, including ``1``. An explicit
+    CLI value overrides the ``WEB_CONCURRENCY`` default, so the caller needs
+    to see ``--workers 1`` in order to stop consulting the environment.
 
     Args:
         argv (list[str] | None): Argument vector to scan. Defaults to
             ``sys.argv``.
 
     Returns:
-        tuple[str, int] | None: The flag and count when a multi-worker
-            configuration is declared, otherwise ``None``.
+        tuple[str, int] | None: The flag and count when one is declared,
+            otherwise ``None``.
     """
 
     args = sys.argv if argv is None else argv
@@ -106,17 +125,18 @@ def _detect_cli_worker_count(argv: list[str] | None = None) -> tuple[str, int] |
                 count = _parse_worker_count(arg.split("=", 1)[1])
             else:
                 continue
-            if count is not None and count > 1:
+            if count is not None:
                 return flag, count
     return None
 
 
 def detect_configured_worker_count() -> tuple[str, int] | None:
-    """Return the first declared worker count above one.
+    """Return a declared worker count above one, if any.
 
-    Checks the command line before the environment, because an explicit
-    ``--workers`` value overrides the ``WEB_CONCURRENCY`` default it would
-    otherwise fall back to.
+    An explicit command-line value wins outright: uvicorn documents
+    ``--workers`` as defaulting to ``$WEB_CONCURRENCY``, so ``--workers 1``
+    alongside ``WEB_CONCURRENCY=2`` runs one worker and must be allowed.
+    The environment is consulted only when the command line declares nothing.
 
     Returns:
         tuple[str, int] | None: The source and count when a multi-worker
@@ -125,7 +145,8 @@ def detect_configured_worker_count() -> tuple[str, int] | None:
 
     cli_detection = _detect_cli_worker_count()
     if cli_detection is not None:
-        return cli_detection
+        flag, count = cli_detection
+        return (flag, count) if count > 1 else None
 
     for name in WORKER_COUNT_ENV_VARS:
         count = _parse_worker_count(os.getenv(name))
@@ -159,17 +180,49 @@ def is_reload_child(argv: list[str] | None = None) -> bool:
     )
 
 
+def detect_gunicorn_worker_count() -> tuple[str, int] | None:
+    """Return a worker count gunicorn resolved, including from a config file.
+
+    Gunicorn forks its workers, and a forked child keeps
+    ``MainProcess`` as its process name with ``parent_process()`` returning
+    ``None``, so no process-identity check can recognize one. Its resolved
+    configuration is the only in-process evidence, and it covers the
+    config-file route that neither argv nor the environment reveals.
+
+    Returns:
+        tuple[str, int] | None: The source and count when gunicorn is running
+            with more than one worker, otherwise ``None``.
+    """
+
+    gunicorn_app = sys.modules.get("gunicorn.app.base")
+    if gunicorn_app is None:
+        return None
+    try:
+        from gunicorn.arbiter import Arbiter  # noqa: PLC0415
+    except Exception:
+        return None
+
+    arbiter_cfg = getattr(Arbiter, "cfg", None)
+    workers = getattr(arbiter_cfg, "workers", None)
+    if isinstance(workers, int) and workers > 1:
+        return "gunicorn configuration", workers
+    return None
+
+
 def is_spawned_worker_process() -> bool:
-    """Return whether this process is a server-spawned worker child.
+    """Return whether this process is a spawn-based server worker child.
 
     Uvicorn's multiprocess supervisor starts each worker with
     ``multiprocessing.Process``, so a child sees a non-main process name even
     when it can observe neither an environment flag nor an explicit count.
-    This is the backstop that catches worker configurations supplied by a
-    route this module does not enumerate.
 
     Auto-reload children are excluded: they are also spawned and share the
     same process name, but run exactly one application instance.
+
+    This covers spawn-based supervisors only. A ``fork``-based prefork worker
+    (gunicorn) keeps the parent's ``MainProcess`` identity, so it is
+    unreachable from process introspection and is handled by
+    :func:`detect_gunicorn_worker_count` instead.
 
     Returns:
         bool: ``True`` when running inside a spawned worker child.
@@ -190,7 +243,7 @@ def enforce_single_worker_contract() -> None:
         MultiWorkerConfigurationError: If a worker count above one is set.
     """
 
-    detected = detect_configured_worker_count()
+    detected = detect_configured_worker_count() or detect_gunicorn_worker_count()
     if detected is not None:
         source, count = detected
         raise MultiWorkerConfigurationError(
@@ -211,6 +264,7 @@ __all__ = [
     "WORKER_COUNT_CLI_FLAGS",
     "WORKER_COUNT_ENV_VARS",
     "detect_configured_worker_count",
+    "detect_gunicorn_worker_count",
     "enforce_single_worker_contract",
     "is_reload_child",
     "is_spawned_worker_process",

@@ -168,6 +168,31 @@ def test_command_line_takes_precedence_over_environment(
     assert detect_configured_worker_count() == ("--workers", 6)
 
 
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["uvicorn", "main:app", "--workers", "1"],
+        ["uvicorn", "main:app", "--workers=1"],
+        ["uvicorn", "main:app", "-w", "1"],
+    ],
+)
+def test_explicit_one_worker_overrides_a_multi_worker_environment(
+    argv: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``--workers 1`` beside ``WEB_CONCURRENCY=2`` runs one worker.
+
+    Uvicorn documents ``--workers`` as defaulting to ``$WEB_CONCURRENCY``, so
+    an explicit CLI value replaces it. Falling through to the environment
+    would reject a deployment that is actually single-worker.
+    """
+
+    monkeypatch.setenv("WEB_CONCURRENCY", "2")
+    monkeypatch.setattr(worker_contract.sys, "argv", argv)
+
+    assert detect_configured_worker_count() is None
+    enforce_single_worker_contract()
+
+
 # ─── Spawned-worker backstop ─────────────────────────────────────────
 
 
@@ -253,3 +278,79 @@ def test_spawned_worker_child_refuses_to_start(
     assert is_spawned_worker_process() is True
     with pytest.raises(MultiWorkerConfigurationError, match="SpawnProcess-1"):
         enforce_single_worker_contract()
+
+
+# ─── Gunicorn prefork detection ──────────────────────────────────────
+#
+# Gunicorn forks its workers, so a child keeps ``MainProcess`` and
+# ``parent_process()`` returns ``None`` — no process-identity check can see
+# one. Its resolved configuration is the only in-process evidence, and it is
+# the sole route that reveals a config-file worker count.
+
+
+def test_gunicorn_absent_is_not_treated_as_multi_worker() -> None:
+    """The check is inert when gunicorn is not the server."""
+
+    assert worker_contract.detect_gunicorn_worker_count() is None
+    enforce_single_worker_contract()
+
+
+def _install_fake_gunicorn(monkeypatch: pytest.MonkeyPatch, *, workers: object) -> None:
+    """Register a minimal fake gunicorn exposing a resolved worker count."""
+
+    import sys as real_sys
+    import types
+
+    arbiter_module = types.ModuleType("gunicorn.arbiter")
+
+    class _Config:
+        pass
+
+    _Config.workers = workers  # type: ignore[attr-defined]
+
+    class _Arbiter:
+        cfg = _Config()
+
+    arbiter_module.Arbiter = _Arbiter  # type: ignore[attr-defined]
+
+    base_module = types.ModuleType("gunicorn.app.base")
+    monkeypatch.setitem(real_sys.modules, "gunicorn.app.base", base_module)
+    monkeypatch.setitem(real_sys.modules, "gunicorn.arbiter", arbiter_module)
+
+
+def test_gunicorn_config_file_worker_count_is_detected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A config-file worker count is invisible to argv and env scans."""
+
+    _install_fake_gunicorn(monkeypatch, workers=4)
+    monkeypatch.setattr(worker_contract.sys, "argv", ["gunicorn", "main:app"])
+
+    assert worker_contract.detect_gunicorn_worker_count() == (
+        "gunicorn configuration",
+        4,
+    )
+    with pytest.raises(MultiWorkerConfigurationError, match="gunicorn"):
+        enforce_single_worker_contract()
+
+
+def test_gunicorn_single_worker_configuration_is_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_gunicorn(monkeypatch, workers=1)
+    monkeypatch.setattr(worker_contract.sys, "argv", ["gunicorn", "main:app"])
+
+    assert worker_contract.detect_gunicorn_worker_count() is None
+    enforce_single_worker_contract()
+
+
+def test_gunicorn_unreadable_worker_count_does_not_block_startup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-integer count is left to gunicorn rather than failing startup."""
+
+    _install_fake_gunicorn(monkeypatch, workers=None)
+    monkeypatch.setattr(worker_contract.sys, "argv", ["gunicorn", "main:app"])
+
+    assert worker_contract.detect_gunicorn_worker_count() is None
+    enforce_single_worker_contract()
