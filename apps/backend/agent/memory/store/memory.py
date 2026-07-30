@@ -49,6 +49,9 @@ class OpenCouchMemoryStore:
     across multiple concurrent calls.
     """
 
+    #: Records live in memory only, so incognito runtimes may use this store.
+    supports_incognito: bool = True
+
     def __init__(self) -> None:
         """Initialize an empty in-memory store.
 

@@ -448,6 +448,9 @@ class InMemoryCrisisLogBackend:
     NOT thread-safe. Each runtime instance should own its own backend.
     """
 
+    #: Records live in memory only, so incognito runtimes may use this backend.
+    supports_incognito: bool = True
+
     def __init__(self) -> None:
         """Initialize the in-memory crisis backend.
 
@@ -575,6 +578,9 @@ class NullCrisisLogBackend:
     production backend — the always-on crisis log promise requires
     a real backend in all three memory modes.
     """
+
+    #: Discards every record, so incognito runtimes may use this backend.
+    supports_incognito: bool = True
 
     async def aappend(self, record: CrisisLogRecord) -> None:
         """Discard a crisis record.
