@@ -345,3 +345,98 @@ async def test_apply_semantic_write_supersedes_stale_same_slot_record() -> None:
     active_records = await fetch_existing_semantic_records(store, owner_id="user-1")
     assert len(active_records) == 2
     assert existing_records[-1].key == outcome.fact.id
+
+
+class _FailingBatchStore(OpenCouchMemoryStore):
+    """Store whose batch writes always fail, simulating a broken commit."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.batch_calls = 0
+
+    async def aput_batch(self, items: Any) -> None:
+        self.batch_calls += 1
+        raise RuntimeError("simulated batch failure")
+
+
+async def test_apply_semantic_write_supersede_plan_commits_as_one_batch() -> None:
+    """The replacement and its supersede updates share a single batch call."""
+
+    store = OpenCouchMemoryStore()
+    batched: list[list[Any]] = []
+    original_aput_batch = store.aput_batch
+
+    async def _recording_aput_batch(items: Any) -> None:
+        batched.append(list(items))
+        await original_aput_batch(items)
+
+    store.aput_batch = _recording_aput_batch  # type: ignore[method-assign]
+
+    old_fact = memory_write_to_semantic_fact(_memory_write())
+    await write_new_semantic_fact(store, owner_id="user-1", fact=old_fact)
+    existing_records = await fetch_existing_semantic_records(store, owner_id="user-1")
+    new_write = _memory_write().model_copy(
+        update={
+            "object": EntityRef(type="Person", identifier="Sarah Chen"),
+            "evidence_quote": "My sister Sarah Chen called last night.",
+        }
+    )
+
+    outcome = await apply_semantic_write(
+        store,
+        owner_id="user-1",
+        write=new_write,
+        existing_records=existing_records,
+        llm_client=_FakeReconciliationLLM(),
+        write_timing="immediate",
+        write_reason="more specific",
+        policy_version="test_v1",
+    )
+
+    assert outcome.written == 1
+    assert outcome.fact is not None
+    assert len(batched) == 1
+    committed_keys = {item[1] for item in batched[0]}
+    assert committed_keys == {outcome.fact.id, old_fact.id}
+
+
+async def test_apply_semantic_write_rolls_back_when_supersede_commit_fails() -> None:
+    """A failed reconciliation commit leaves no replacement and no stale edit."""
+
+    store = _FailingBatchStore()
+    old_fact = memory_write_to_semantic_fact(_memory_write())
+    await write_new_semantic_fact(store, owner_id="user-1", fact=old_fact)
+    existing_records = await fetch_existing_semantic_records(store, owner_id="user-1")
+    new_write = _memory_write().model_copy(
+        update={
+            "object": EntityRef(type="Person", identifier="Sarah Chen"),
+            "evidence_quote": "My sister Sarah Chen called last night.",
+        }
+    )
+
+    outcome = await apply_semantic_write(
+        store,
+        owner_id="user-1",
+        write=new_write,
+        existing_records=existing_records,
+        llm_client=_FakeReconciliationLLM(),
+        write_timing="immediate",
+        write_reason="more specific",
+        policy_version="test_v1",
+    )
+
+    assert store.batch_calls == 1
+    assert outcome.written == 0
+    assert outcome.skipped == 1
+    assert outcome.fact is None
+
+    # The replacement must not be active, and the fact it would have
+    # superseded must remain untouched rather than dormant-without-successor.
+    remaining = await fetch_existing_semantic_records(store, owner_id="user-1")
+    assert len(remaining) == 1
+    assert remaining[0].key == old_fact.id
+    assert remaining[0].value["superseded_by"] is None
+    assert remaining[0].value["dormant_at"] is None
+
+    # The caller's dedup cache must not gain a fact that was never persisted.
+    assert [record.key for record in existing_records] == [old_fact.id]

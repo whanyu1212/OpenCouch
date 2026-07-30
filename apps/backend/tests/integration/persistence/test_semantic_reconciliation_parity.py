@@ -25,6 +25,43 @@ from tests.support.persistence_contracts import (
 )
 
 
+class _SupersedeReconciliationLLM(BaseLLMClient):
+    """Fake classifier that always supersedes the first collision record."""
+
+    async def generate_text(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> str:
+        raise AssertionError("Text generation is not used by reconciliation.")
+
+    async def generate_text_stream(
+        self,
+        *,
+        prompt: str,
+        system_instruction: str | None = None,
+    ) -> AsyncIterator[str]:
+        yield "unused"
+
+    async def generate_structured(
+        self,
+        *,
+        prompt: str,
+        response_schema: type[StructuredResponseT],
+        system_instruction: str | None = None,
+        use_search: bool = False,
+    ) -> StructuredResponseT:
+        response: dict[str, Any] = {
+            "action": "supersede",
+            "record_indexes": [0],
+            "reason": "the new fact replaces the stale one",
+            "confidence": "high",
+        }
+        return response_schema(**response)
+
+
 class _CoexistReconciliationLLM(BaseLLMClient):
     """Fake classifier that would allow duplicates if exact dedup missed."""
 
@@ -216,3 +253,131 @@ async def test_duplicate_bump_preserves_dense_retrieval_metadata(
         limit=5,
     )
     assert [hit.key for hit in dense_hits] == [seeded_fact.id]
+
+
+def _sister_name_write(
+    *,
+    owner_id: str,
+    session_id: str,
+    name: str,
+) -> MemoryWrite:
+    """Return a sister-name write that collides with the seeded Sarah fact."""
+
+    return MemoryWrite(
+        category="relationship",
+        subject=EntityRef(type="User", identifier=owner_id),
+        predicate="KNOWS",
+        object=EntityRef(type="Person", identifier=name),
+        evidence_quote=f"My sister {name} moved to Berlin last spring.",
+        confidence="high",
+        source_session_id=session_id,
+        source_turn_index=1,
+    )
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_plan_commits_replacement_and_supersede_together(
+    reconciliation_store: tuple[MemoryStore, str],
+) -> None:
+    """A supersede plan lands the replacement and the dormant record as a unit."""
+
+    store, owner_id = reconciliation_store
+    session_id = f"thread-{uuid4()}"
+    stale_fact = memory_write_to_semantic_fact(
+        _sarah_write(subject_identifier=owner_id, session_id=session_id),
+        write_timing="immediate",
+        write_reason="seeded stale fact",
+        policy_version="test_v1",
+    )
+    await write_new_semantic_fact(store, owner_id=owner_id, fact=stale_fact)
+
+    outcome = await apply_semantic_writes_batch(
+        store,
+        owner_id=owner_id,
+        items=[
+            BatchWriteItem(
+                candidate=build_semantic_candidate(
+                    _sister_name_write(
+                        owner_id=owner_id,
+                        session_id=session_id,
+                        name="Sarah Chen",
+                    ),
+                    message="My sister Sarah Chen moved to Berlin last spring.",
+                ),
+                write_timing="session_end",
+                write_reason="more specific name",
+                policy_version="test_v1",
+            )
+        ],
+        llm_client=_SupersedeReconciliationLLM(),
+        log_context="semantic_reconciliation_parity_test",
+    )
+
+    assert outcome.written == 1
+    assert await store.arecord_count((owner_id, "semantic")) == 2
+
+    records = {
+        record.key: record
+        for record in await store.asearch((owner_id, "semantic"), query=None, limit=10)
+    }
+    replacement_id = outcome.written_items[0].id
+    assert records[stale_fact.id].value["superseded_by"] == replacement_id
+    assert records[stale_fact.id].value["dormant_at"] is not None
+    assert records[replacement_id].value["superseded_by"] is None
+
+
+@pytest.mark.asyncio
+async def test_failed_reconciliation_commit_leaves_no_partial_state(
+    reconciliation_store: tuple[MemoryStore, str],
+) -> None:
+    """A failing plan commit leaves neither a replacement nor a dormant fact."""
+
+    store, owner_id = reconciliation_store
+    session_id = f"thread-{uuid4()}"
+    stale_fact = memory_write_to_semantic_fact(
+        _sarah_write(subject_identifier=owner_id, session_id=session_id),
+        write_timing="immediate",
+        write_reason="seeded stale fact",
+        policy_version="test_v1",
+    )
+    await write_new_semantic_fact(store, owner_id=owner_id, fact=stale_fact)
+
+    async def _failing_aput_batch(items: Any) -> None:
+        raise RuntimeError("simulated batch failure")
+
+    original_aput_batch = store.aput_batch
+    store.aput_batch = _failing_aput_batch  # type: ignore[method-assign]
+    try:
+        outcome = await apply_semantic_writes_batch(
+            store,
+            owner_id=owner_id,
+            items=[
+                BatchWriteItem(
+                    candidate=build_semantic_candidate(
+                        _sister_name_write(
+                            owner_id=owner_id,
+                            session_id=session_id,
+                            name="Sarah Chen",
+                        ),
+                        message="My sister Sarah Chen moved to Berlin last spring.",
+                    ),
+                    write_timing="session_end",
+                    write_reason="more specific name",
+                    policy_version="test_v1",
+                )
+            ],
+            llm_client=_SupersedeReconciliationLLM(),
+            log_context="semantic_reconciliation_parity_test",
+        )
+    finally:
+        store.aput_batch = original_aput_batch  # type: ignore[method-assign]
+
+    assert outcome.written == 0
+    assert outcome.skipped == 1
+
+    # The stale fact must remain fully active: a dormant record whose
+    # replacement was never written would silently drop the memory entirely.
+    [record] = await store.asearch((owner_id, "semantic"), query=None, limit=10)
+    assert record.key == stale_fact.id
+    assert record.value["superseded_by"] is None
+    assert record.value["dormant_at"] is None

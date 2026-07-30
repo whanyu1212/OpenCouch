@@ -80,6 +80,33 @@ async def test_batch_round_trip_overwrite_and_namespace_isolation(
     assert await store.arecord_count(semantic) == 1
 
 
+async def test_failed_batch_leaves_no_partial_writes(
+    store_contract: tuple[MemoryStore, str],
+) -> None:
+    """A rejected batch commits none of its items on any backend."""
+
+    store, owner_id = store_contract
+    semantic = (owner_id, "semantic")
+    await store.aput(semantic, "existing", {"value": "original"})
+
+    with pytest.raises(ValueError):
+        await store.aput_batch(
+            [
+                (semantic, "existing", {"value": "overwritten"}, None, None),
+                (semantic, "fresh", {"value": "new"}, None, None),
+                # Malformed namespace: rejected by both backends, so the two
+                # preceding items must not survive either.
+                (("only-one-element",), "doomed", {"value": "doomed"}, None, None),
+            ]
+        )
+
+    existing = await store.aget(semantic, "existing")
+    assert existing is not None
+    assert existing.value == {"value": "original"}
+    assert await store.aget(semantic, "fresh") is None
+    assert await store.arecord_count(semantic) == 1
+
+
 async def test_filtering_happens_before_result_truncation(
     store_contract: tuple[MemoryStore, str],
 ) -> None:

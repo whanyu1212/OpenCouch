@@ -24,6 +24,7 @@ from agent.memory.store.base import (
     Namespace,
     StoreRecord,
     memory_record_matches_filter,
+    unpack_memory_namespace,
 )
 
 
@@ -131,7 +132,12 @@ class OpenCouchMemoryStore:
             ]
         ],
     ) -> None:
-        """Write multiple in-memory records.
+        """Write multiple in-memory records atomically.
+
+        Records are materialized before any bucket is touched so that a
+        malformed item cannot leave the batch half-applied. This mirrors the
+        transactional guarantee the PostgreSQL backend gets from wrapping its
+        writes in one transaction.
 
         Args:
             items (list[tuple[Namespace, str, dict[str, Any], list[float] | None, str | None]]):
@@ -142,15 +148,26 @@ class OpenCouchMemoryStore:
         """
 
         self._ensure_open()
+        staged: list[tuple[Namespace, StoreRecord]] = []
         for namespace, key, value, embedding, embedding_model in items:
-            bucket = self._bucket(namespace)
-            bucket.records[key] = StoreRecord(
-                namespace=namespace,
-                key=key,
-                value=dict(value),
-                embedding=list(embedding) if embedding is not None else None,
-                embedding_model=embedding_model,
+            # Validate eagerly so a malformed namespace rejects the whole batch,
+            # matching the PostgreSQL backend instead of writing the good items
+            # and raising partway through.
+            unpack_memory_namespace(namespace)
+            staged.append(
+                (
+                    namespace,
+                    StoreRecord(
+                        namespace=namespace,
+                        key=key,
+                        value=dict(value),
+                        embedding=list(embedding) if embedding is not None else None,
+                        embedding_model=embedding_model,
+                    ),
+                )
             )
+        for namespace, record in staged:
+            self._bucket(namespace).records[record.key] = record
 
     async def aget(
         self,
