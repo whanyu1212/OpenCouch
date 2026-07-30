@@ -165,6 +165,46 @@ def test_instance_attribute_cannot_grant_the_capability() -> None:
         )
 
 
+def test_inherited_capability_does_not_opt_a_subclass_in() -> None:
+    """A durable wrapper over an ephemeral store must declare for itself.
+
+    Subclassing an in-memory store is exactly how someone would build a
+    durable wrapper, so inheriting the marker would defeat the fail-closed
+    guarantee: the base class cannot vouch for an override's behavior.
+    """
+
+    class _DiskMirroringStore(OpenCouchMemoryStore):
+        """Ephemeral by inheritance, durable in practice."""
+
+    store = _DiskMirroringStore()
+
+    assert "supports_incognito" not in vars(_DiskMirroringStore)
+    assert not is_ephemeral_capable(store)
+    with pytest.raises(ValueError, match="_DiskMirroringStore"):
+        create_memory_store(
+            memory_store=store,
+            memory_backend="memory",
+            memory_database_url=None,
+            memory_mode=MemoryMode.INCOGNITO,
+        )
+
+
+def test_subclass_may_declare_the_capability_for_itself() -> None:
+    """Opting in stays possible, but must be an explicit, auditable line."""
+
+    class _DeclaredEphemeralStore(OpenCouchMemoryStore):
+        supports_incognito: bool = True
+
+    store = create_memory_store(
+        memory_store=_DeclaredEphemeralStore(),
+        memory_backend="memory",
+        memory_database_url=None,
+        memory_mode=MemoryMode.INCOGNITO,
+    )
+
+    assert isinstance(store, _DeclaredEphemeralStore)
+
+
 @pytest.mark.parametrize("truthy_value", [1, "yes", ["non-empty"]])
 def test_truthy_marker_values_do_not_grant_the_capability(
     truthy_value: Any,

@@ -60,11 +60,21 @@ class EphemeralCapable(Protocol):
 def is_ephemeral_capable(dependency: object) -> bool:
     """Return whether a dependency declares itself incognito-safe.
 
-    The declaration must live on the dependency's **class**, not on an
-    instance. Reading the attribute off the instance would let a stray
-    ``store.supports_incognito = True`` anywhere in caller code silently
-    disable a privacy control, with no class-level declaration to review.
-    Requiring it on the type keeps the opt-in auditable.
+    The declaration must live on the dependency's **own class**, and the
+    capability is never inherited. Two escapes this closes:
+
+    - Reading the attribute off the *instance* would let a stray
+      ``store.supports_incognito = True`` anywhere in caller code disable a
+      privacy control with no class-level declaration to review.
+    - Accepting an *inherited* marker would opt in any subclass of an
+      ephemeral store, including a durable wrapper that overrides writes to
+      mirror them to disk or a remote service. Subclassing an in-memory
+      store is precisely how such a wrapper would be written.
+
+    Each concrete implementation therefore restates the marker, which is the
+    point: the assertion "this performs no durable writes and no network
+    calls" is about the concrete behavior, so it cannot be delegated to a
+    base class that knows nothing about the override.
 
     The value must be exactly ``True``. Truthy stand-ins are rejected so that
     a partially-migrated or accidentally-typed value cannot grant capability,
@@ -77,7 +87,7 @@ def is_ephemeral_capable(dependency: object) -> bool:
         bool: ``True`` when the dependency opts in to incognito use.
     """
 
-    declared = getattr(type(dependency), EPHEMERAL_CAPABILITY_ATTRIBUTE, False)
+    declared = vars(type(dependency)).get(EPHEMERAL_CAPABILITY_ATTRIBUTE, False)
     return declared is True
 
 
