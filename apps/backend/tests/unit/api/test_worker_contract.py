@@ -175,6 +175,60 @@ def test_main_process_is_not_treated_as_a_spawned_worker() -> None:
     assert is_spawned_worker_process() is False
 
 
+def test_reload_child_is_allowed_to_start(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--reload`` also spawns a child, and it must not be rejected.
+
+    Uvicorn names reload and worker children identically
+    (``SpawnProcess-N``), so the process name alone cannot distinguish them.
+    Rejecting the reload child would break the repository's default
+    development paths: ``compose.yml`` and the Dockerfile dev target both
+    pass ``--reload``.
+    """
+
+    class _ReloadChildProcess:
+        name = "SpawnProcess-1"
+
+    monkeypatch.setattr(
+        worker_contract.multiprocessing,
+        "current_process",
+        lambda: _ReloadChildProcess(),
+    )
+    monkeypatch.setattr(
+        worker_contract.sys, "argv", ["uvicorn", "main:app", "--reload"]
+    )
+
+    assert worker_contract.is_reload_child() is True
+    assert is_spawned_worker_process() is False
+    enforce_single_worker_contract()
+
+
+def test_reload_child_with_explicit_worker_count_is_still_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit worker count wins even alongside a reload flag.
+
+    Uvicorn rejects the combination itself, but the guard should not become
+    a way to opt out of the contract by adding ``--reload``.
+    """
+
+    class _ReloadChildProcess:
+        name = "SpawnProcess-1"
+
+    monkeypatch.setattr(
+        worker_contract.multiprocessing,
+        "current_process",
+        lambda: _ReloadChildProcess(),
+    )
+    monkeypatch.setattr(
+        worker_contract.sys,
+        "argv",
+        ["uvicorn", "main:app", "--reload", "--workers", "4"],
+    )
+
+    with pytest.raises(MultiWorkerConfigurationError, match="--workers"):
+        enforce_single_worker_contract()
+
+
 def test_spawned_worker_child_refuses_to_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -193,6 +247,8 @@ def test_spawned_worker_child_refuses_to_start(
         "current_process",
         lambda: _WorkerChildProcess(),
     )
+    # No reload flag: this child belongs to a multi-worker supervisor.
+    monkeypatch.setattr(worker_contract.sys, "argv", ["uvicorn", "main:app"])
 
     assert is_spawned_worker_process() is True
     with pytest.raises(MultiWorkerConfigurationError, match="SpawnProcess-1"):

@@ -30,6 +30,9 @@ WORKER_COUNT_ENV_VARS: tuple[str, ...] = (
 #: Command-line flags that carry a worker count.
 WORKER_COUNT_CLI_FLAGS: tuple[str, ...] = ("--workers", "-w")
 
+#: Flags that put the server in auto-reload mode, which excludes workers.
+RELOAD_CLI_FLAGS: tuple[str, ...] = ("--reload",)
+
 _CONTRACT_MESSAGE = (
     "OpenCouch supports a single worker process only. "
     "{source} requests {count} workers.\n"
@@ -131,20 +134,50 @@ def detect_configured_worker_count() -> tuple[str, int] | None:
     return None
 
 
+def is_reload_child(argv: list[str] | None = None) -> bool:
+    """Return whether this process is the auto-reload child.
+
+    ``--reload`` also runs the application in a spawned child, and uvicorn
+    names reload and worker children identically (``SpawnProcess-N``), so the
+    process name cannot tell them apart. A spawned child inherits the
+    parent's argv, and uvicorn rejects ``--reload`` together with
+    ``--workers``, so the reload flag identifies a single-application child.
+
+    Args:
+        argv (list[str] | None): Argument vector to scan. Defaults to
+            ``sys.argv``.
+
+    Returns:
+        bool: ``True`` when the process was started in auto-reload mode.
+    """
+
+    args = sys.argv if argv is None else argv
+    return any(
+        arg == flag or arg.startswith(f"{flag}=")
+        for arg in args
+        for flag in RELOAD_CLI_FLAGS
+    )
+
+
 def is_spawned_worker_process() -> bool:
     """Return whether this process is a server-spawned worker child.
 
     Uvicorn's multiprocess supervisor starts each worker with
     ``multiprocessing.Process``, so a child sees a non-main process name even
-    when it can observe neither the parent's argv nor an environment flag.
+    when it can observe neither an environment flag nor an explicit count.
     This is the backstop that catches worker configurations supplied by a
     route this module does not enumerate.
+
+    Auto-reload children are excluded: they are also spawned and share the
+    same process name, but run exactly one application instance.
 
     Returns:
         bool: ``True`` when running inside a spawned worker child.
     """
 
-    return multiprocessing.current_process().name != "MainProcess"
+    if multiprocessing.current_process().name == "MainProcess":
+        return False
+    return not is_reload_child()
 
 
 def enforce_single_worker_contract() -> None:
@@ -174,9 +207,11 @@ def enforce_single_worker_contract() -> None:
 
 __all__ = [
     "MultiWorkerConfigurationError",
+    "RELOAD_CLI_FLAGS",
     "WORKER_COUNT_CLI_FLAGS",
     "WORKER_COUNT_ENV_VARS",
     "detect_configured_worker_count",
     "enforce_single_worker_contract",
+    "is_reload_child",
     "is_spawned_worker_process",
 ]
