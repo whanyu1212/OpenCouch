@@ -149,3 +149,70 @@ async def test_session_end_semantic_reconciliation_dedups_user_subject_aliases(
     [record] = await store.asearch((owner_id, "semantic"), query=None, limit=10)
     assert record.value["subject"]["identifier"] == owner_id
     assert record.value["object"]["identifier"] == "Sarah"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_bump_preserves_dense_retrieval_metadata(
+    reconciliation_store: tuple[MemoryStore, str],
+) -> None:
+    """A duplicate bump keeps the stored fact visible to dense retrieval."""
+
+    store, owner_id = reconciliation_store
+    session_id = f"thread-{uuid4()}"
+    seeded_embedding = [1.0, 0.0, 0.0]
+    seeded_fact = memory_write_to_semantic_fact(
+        _sarah_write(subject_identifier=owner_id, session_id=session_id),
+        write_timing="immediate",
+        write_reason="seeded test fact",
+        policy_version="test_v1",
+    )
+    await write_new_semantic_fact(
+        store,
+        owner_id=owner_id,
+        fact=seeded_fact,
+        embedding=seeded_embedding,
+        embedding_model="test-embedding",
+    )
+
+    duplicate_write = _sarah_write(
+        subject_identifier=owner_id,
+        session_id=session_id,
+    )
+    outcome = await apply_semantic_writes_batch(
+        store,
+        owner_id=owner_id,
+        items=[
+            BatchWriteItem(
+                candidate=build_semantic_candidate(
+                    duplicate_write,
+                    message="I have a sister named Sarah",
+                ),
+                write_timing="session_end",
+                write_reason="session-end restatement",
+                policy_version="test_v1",
+            )
+        ],
+        llm_client=_CoexistReconciliationLLM(),
+        log_context="semantic_reconciliation_parity_test",
+    )
+
+    assert outcome.written == 0
+    assert outcome.bumped == 1
+    assert await store.arecord_count((owner_id, "semantic")) == 1
+
+    [record] = await store.asearch((owner_id, "semantic"), query=None, limit=10)
+    assert record.value["last_referenced_at"] != seeded_fact.last_referenced_at
+    assert record.embedding == seeded_embedding
+    assert record.embedding_model == "test-embedding"
+
+    # A paraphrase query with no token overlap can only match densely, so
+    # retrieval succeeding here proves the bump kept the record in the
+    # dense cohort rather than demoting it to lexical-only visibility.
+    dense_hits = await store.asearch_similar(
+        (owner_id, "semantic"),
+        query_text="worried about tomorrow's presentation",
+        query_embedding=seeded_embedding,
+        embedding_model="test-embedding",
+        limit=5,
+    )
+    assert [hit.key for hit in dense_hits] == [seeded_fact.id]
