@@ -17,6 +17,26 @@ Planned implementation order:
 4. background summarization and jobs
 5. observability
 
+## Deployment contract: single worker
+
+OpenCouch serves from **one worker process**. Runtime mutual exclusion is
+process-local: `ThreadLockManager` (`agent/runtime/session/lock.py`) holds
+per-thread `asyncio.Lock` objects and binds itself to a single OS thread and
+event loop, so session finalization, feedback atomicity, and active-session
+mutation serialize within a worker and not across workers.
+
+Startup refuses to boot when a worker count above one is configured via
+`WEB_CONCURRENCY`, `UVICORN_WORKERS`, `GUNICORN_WORKERS`, or
+`OPENCOUCH_WORKERS`. Most cross-process misuse would fail loudly — the lock
+manager raises — but the durable active-session mutation marker would
+interleave silently and lose session state, so the guard turns that into a
+deploy-time error instead.
+
+Deploy one worker per process, stop-then-start, without overlapping replicas.
+Supporting multiple workers would mean replacing every process-local lock with
+a durable equivalent; treat it as a deliberate architectural change rather than
+a configuration flag.
+
 Local CLI:
 
 ```bash

@@ -13,6 +13,9 @@ from typing import TYPE_CHECKING, Any, cast
 from agent.memory.providers.embeddings import EmbeddingProvider
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.modes import MemoryMode
+from agent.memory.operations.procedural_profile import (
+    prune_idle_procedural_profile_locks,
+)
 from agent.memory.policy.candidates import SessionMemoryBuffer
 from agent.memory.policy.write import text_contains_memory_control_request
 from agent.memory.store import MemoryStore
@@ -110,7 +113,16 @@ class SessionLifecycleService:
         return self._thread_lock_manager.get_lock(thread_id)
 
     def prune_idle_thread_locks(self) -> int:
-        """Drop in-process locks for threads with no live or tracked work."""
+        """Drop in-process locks for threads with no live or tracked work.
+
+        Also prunes the module-level procedural-profile lock registry, which
+        otherwise grows one entry per user id for the process lifetime.
+
+        Returns:
+            int: Number of thread locks dropped. The procedural count is not
+                included, since callers report on thread-lock pruning.
+        """
+        prune_idle_procedural_profile_locks()
         return self._thread_lock_manager.prune_idle_locks(
             is_tracked=self._session_tracker.has_tracking
         )

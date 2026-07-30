@@ -52,6 +52,7 @@ from agent.runtime import (
     RuntimeDependencies,
     RuntimePersistenceConfig,
 )
+from api.worker_contract import enforce_single_worker_contract
 from config import (
     ResponseModelTier,
     Settings,
@@ -109,6 +110,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
     """
 
     global _default_memory_mode, _llm_client, _response_llm_clients, _runtimes  # noqa: PLW0603
+
+    # Reject an unsupported multi-worker deployment before opening any
+    # resources. Runtime mutual exclusion is process-local, and the durable
+    # active-session mutation marker would interleave silently.
+    enforce_single_worker_contract()
 
     # Resolve clients once so request handlers do not pay setup cost.
     # Missing API keys leave clients as None, keeping deterministic paths available.
