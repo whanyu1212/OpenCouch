@@ -290,6 +290,18 @@ def test_uvicorn_reload_env_ignores_web_concurrency_default(
     enforce_single_worker_contract()
 
 
+def test_uvicorn_reload_env_ignores_uvicorn_workers_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UVICORN_RELOAD", "true")
+    monkeypatch.setenv("UVICORN_WORKERS", "4")
+    monkeypatch.setattr(worker_contract.sys, "argv", ["uvicorn", "main:app"])
+
+    assert worker_contract.is_reload_child() is True
+    assert detect_configured_worker_count() is None
+    enforce_single_worker_contract()
+
+
 def test_uvicorn_reload_env_false_keeps_web_concurrency_enforced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -365,6 +377,59 @@ def test_generic_multiprocessing_child_is_allowed(
     monkeypatch.setattr(worker_contract.sys, "argv", ["python", "serve_once.py"])
 
     assert is_spawned_worker_process() is False
+    enforce_single_worker_contract()
+
+
+# ─── Uvicorn config detection ─────────────────────────────────────────
+
+
+def _install_fake_uvicorn_config(
+    monkeypatch: pytest.MonkeyPatch, *, workers: object, reload: bool = False
+) -> None:
+    """Register a minimal fake uvicorn exposing a resolved config instance."""
+
+    import sys as real_sys
+    import types
+
+    uvicorn_module = types.ModuleType("uvicorn")
+    uvicorn_module.__path__ = []  # type: ignore[attr-defined]
+    config_module = types.ModuleType("uvicorn.config")
+
+    class _Config:
+        pass
+
+    cfg = _Config()
+    cfg.workers = workers  # type: ignore[attr-defined]
+    cfg.reload = reload  # type: ignore[attr-defined]
+    cfg.should_reload = reload  # type: ignore[attr-defined]
+    config_module.Config = _Config  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(real_sys.modules, "uvicorn", uvicorn_module)
+    monkeypatch.setitem(real_sys.modules, "uvicorn.config", config_module)
+    monkeypatch.setattr(worker_contract.gc, "get_objects", lambda: [cfg])
+
+
+def test_uvicorn_config_worker_count_is_detected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_uvicorn_config(monkeypatch, workers=4)
+    monkeypatch.setattr(worker_contract.sys, "argv", ["python", "serve.py"])
+
+    assert worker_contract.detect_uvicorn_worker_count() == (
+        "uvicorn configuration",
+        4,
+    )
+    with pytest.raises(MultiWorkerConfigurationError, match="uvicorn configuration"):
+        enforce_single_worker_contract()
+
+
+def test_uvicorn_reload_config_worker_count_is_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_uvicorn_config(monkeypatch, workers=4, reload=True)
+    monkeypatch.setattr(worker_contract.sys, "argv", ["python", "serve.py"])
+
+    assert worker_contract.detect_uvicorn_worker_count() is None
     enforce_single_worker_contract()
 
 

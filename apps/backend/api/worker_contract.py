@@ -18,6 +18,8 @@ Detection combines explicit signals, because no single one covers every route:
   never exports to the environment;
 - the conventional worker-count environment variables;
 - ``GUNICORN_CMD_ARGS``, which gunicorn parses as additional CLI arguments;
+- uvicorn's resolved configuration instances, which cover programmatic
+  ``uvicorn.run(..., workers=N)`` launches;
 - gunicorn's resolved configuration instances, which are the in-process
   evidence of a config-file worker count.
 
@@ -54,6 +56,10 @@ RELOAD_CLI_FLAGS: tuple[str, ...] = ("--reload",)
 RELOAD_ENV_VARS: tuple[str, ...] = ("UVICORN_RELOAD",)
 
 _TRUTHY_ENV_VALUES: frozenset[str] = frozenset({"1", "true", "t", "yes", "y", "on"})
+
+_RELOAD_IGNORED_WORKER_ENV_VARS: frozenset[str] = frozenset(
+    {"WEB_CONCURRENCY", "UVICORN_WORKERS"}
+)
 
 _CONTRACT_MESSAGE = (
     "OpenCouch supports a single worker process only. "
@@ -144,9 +150,9 @@ def detect_configured_worker_count() -> tuple[str, int] | None:
     An explicit command-line value wins unless auto-reload is enabled: uvicorn
     documents ``--workers`` as defaulting to ``$WEB_CONCURRENCY``, so
     ``--workers 1`` alongside ``WEB_CONCURRENCY=2`` runs one worker and must be
-    allowed. Under ``--reload``, uvicorn ignores both ``--workers`` and
-    ``WEB_CONCURRENCY`` entirely, so those inherited defaults are skipped before
-    checking app-owned declarations.
+    allowed. Under reload, uvicorn ignores ``--workers`` and its own worker
+    environment defaults entirely, so those inherited defaults are skipped
+    before checking app-owned declarations.
 
     Returns:
         tuple[str, int] | None: The source and count when a multi-worker
@@ -160,7 +166,7 @@ def detect_configured_worker_count() -> tuple[str, int] | None:
         return (flag, count) if count > 1 else None
 
     for name in WORKER_COUNT_ENV_VARS:
-        if name == "WEB_CONCURRENCY" and reload_enabled:
+        if reload_enabled and name in _RELOAD_IGNORED_WORKER_ENV_VARS:
             continue
         count = _parse_worker_count(os.getenv(name))
         if count is not None and count > 1:
@@ -198,6 +204,41 @@ def is_reload_child(argv: list[str] | None = None) -> bool:
         for arg in args
         for flag in RELOAD_CLI_FLAGS
     )
+
+
+def detect_uvicorn_worker_count() -> tuple[str, int] | None:
+    """Return a worker count uvicorn resolved programmatically.
+
+    ``uvicorn.run(..., workers=N)`` can configure workers without argv or
+    environment evidence. The resolved count lives on uvicorn ``Config``
+    instances. Reload-enabled configs are ignored because uvicorn runs the
+    single reload application child in that mode.
+
+    Returns:
+        tuple[str, int] | None: The source and count when uvicorn declares more
+            than one effective worker, otherwise ``None``.
+    """
+
+    try:
+        from uvicorn.config import Config  # noqa: PLC0415
+    except Exception:
+        return None
+
+    for obj in gc.get_objects():
+        try:
+            if not isinstance(obj, Config):
+                continue
+            reload_enabled = bool(
+                getattr(obj, "reload", False) or getattr(obj, "should_reload", False)
+            )
+            if reload_enabled:
+                continue
+            workers = getattr(obj, "workers", None)
+        except Exception:
+            continue
+        if isinstance(workers, int) and workers > 1:
+            return "uvicorn configuration", workers
+    return None
 
 
 def detect_gunicorn_worker_count() -> tuple[str, int] | None:
@@ -279,7 +320,11 @@ def enforce_single_worker_contract() -> None:
         MultiWorkerConfigurationError: If a worker count above one is set.
     """
 
-    detected = detect_configured_worker_count() or detect_gunicorn_worker_count()
+    detected = (
+        detect_configured_worker_count()
+        or detect_uvicorn_worker_count()
+        or detect_gunicorn_worker_count()
+    )
     if detected is not None:
         source, count = detected
         raise MultiWorkerConfigurationError(
@@ -302,6 +347,7 @@ __all__ = [
     "WORKER_COUNT_ENV_VARS",
     "detect_configured_worker_count",
     "detect_gunicorn_worker_count",
+    "detect_uvicorn_worker_count",
     "enforce_single_worker_contract",
     "is_reload_child",
     "is_spawned_worker_process",
