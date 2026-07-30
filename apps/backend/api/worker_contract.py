@@ -21,10 +21,9 @@ Detection combines explicit signals, because no single one covers every route:
 - gunicorn's resolved configuration instances, which are the in-process
   evidence of a config-file worker count.
 
-Process identity is deliberately *not* the general backstop: it catches
-spawn-based children (uvicorn) but a ``fork``-based prefork worker inherits
-``MainProcess`` and ``parent_process() is None``, so it is invisible to
-introspection. Detection is therefore best-effort against unenumerated
+Process identity alone is deliberately not a backstop: a generic
+``multiprocessing.Process`` also has a non-main name while still running a
+single API instance. Detection is therefore best-effort against unenumerated
 supervisors, and the deployment contract in the backend README remains the
 authority.
 """
@@ -137,25 +136,26 @@ def _detect_cli_worker_count(argv: list[str] | None = None) -> tuple[str, int] |
 def detect_configured_worker_count() -> tuple[str, int] | None:
     """Return a declared worker count above one, if any.
 
-    An explicit command-line value wins outright: uvicorn documents
-    ``--workers`` as defaulting to ``$WEB_CONCURRENCY``, so ``--workers 1``
-    alongside ``WEB_CONCURRENCY=2`` runs one worker and must be allowed.
-    The environment is consulted only when the command line declares nothing.
-    Under ``--reload``, uvicorn ignores ``WEB_CONCURRENCY`` entirely, so that
-    inherited default is skipped before checking app-owned declarations.
+    An explicit command-line value wins unless auto-reload is enabled: uvicorn
+    documents ``--workers`` as defaulting to ``$WEB_CONCURRENCY``, so
+    ``--workers 1`` alongside ``WEB_CONCURRENCY=2`` runs one worker and must be
+    allowed. Under ``--reload``, uvicorn ignores both ``--workers`` and
+    ``WEB_CONCURRENCY`` entirely, so those inherited defaults are skipped before
+    checking app-owned declarations.
 
     Returns:
         tuple[str, int] | None: The source and count when a multi-worker
             configuration is declared, otherwise ``None``.
     """
 
+    reload_enabled = is_reload_child()
     cli_detection = _detect_cli_worker_count()
-    if cli_detection is not None:
+    if cli_detection is not None and not reload_enabled:
         flag, count = cli_detection
         return (flag, count) if count > 1 else None
 
     for name in WORKER_COUNT_ENV_VARS:
-        if name == "WEB_CONCURRENCY" and is_reload_child():
+        if name == "WEB_CONCURRENCY" and reload_enabled:
             continue
         count = _parse_worker_count(os.getenv(name))
         if count is not None and count > 1:
@@ -236,27 +236,25 @@ def detect_gunicorn_worker_count() -> tuple[str, int] | None:
 
 
 def is_spawned_worker_process() -> bool:
-    """Return whether this process is a spawn-based server worker child.
+    """Return whether argv identifies this spawned process as a worker child.
 
     Uvicorn's multiprocess supervisor starts each worker with
-    ``multiprocessing.Process``, so a child sees a non-main process name even
-    when it can observe neither an environment flag nor an explicit count.
+    ``multiprocessing.Process``, but so can unrelated deployment or test
+    harnesses that run exactly one API instance. A non-main process name is
+    therefore not enough evidence by itself; the child must also carry an
+    effective non-reload worker count in argv.
 
     Auto-reload children are excluded: they are also spawned and share the
     same process name, but run exactly one application instance.
 
-    This covers spawn-based supervisors only. A ``fork``-based prefork worker
-    (gunicorn) keeps the parent's ``MainProcess`` identity, so it is
-    unreachable from process introspection and is handled by
-    :func:`detect_gunicorn_worker_count` instead.
-
     Returns:
-        bool: ``True`` when running inside a spawned worker child.
+        bool: ``True`` when this process is spawned and argv requests workers.
     """
 
-    if multiprocessing.current_process().name == "MainProcess":
+    if multiprocessing.current_process().name == "MainProcess" or is_reload_child():
         return False
-    return not is_reload_child()
+    detection = _detect_cli_worker_count()
+    return detection is not None and detection[1] > 1
 
 
 def enforce_single_worker_contract() -> None:

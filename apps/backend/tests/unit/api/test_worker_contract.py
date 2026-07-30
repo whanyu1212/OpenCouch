@@ -220,7 +220,7 @@ def test_last_repeated_command_line_worker_count_wins(
             enforce_single_worker_contract()
 
 
-# ─── Spawned-worker backstop ─────────────────────────────────────────
+# ─── Spawned-worker classification ───────────────────────────────────
 
 
 def test_main_process_is_not_treated_as_a_spawned_worker() -> None:
@@ -276,14 +276,10 @@ def test_reload_child_ignores_web_concurrency_default(
     enforce_single_worker_contract()
 
 
-def test_reload_child_with_explicit_worker_count_is_still_rejected(
+def test_reload_child_with_explicit_worker_count_is_allowed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An explicit worker count wins even alongside a reload flag.
-
-    Uvicorn rejects the combination itself, but the guard should not become
-    a way to opt out of the contract by adding ``--reload``.
-    """
+    """Uvicorn ignores ``--workers`` when auto-reload is enabled."""
 
     class _ReloadChildProcess:
         name = "SpawnProcess-1"
@@ -299,19 +295,15 @@ def test_reload_child_with_explicit_worker_count_is_still_rejected(
         ["uvicorn", "main:app", "--reload", "--workers", "4"],
     )
 
-    with pytest.raises(MultiWorkerConfigurationError, match="--workers"):
-        enforce_single_worker_contract()
+    assert detect_configured_worker_count() is None
+    assert is_spawned_worker_process() is False
+    enforce_single_worker_contract()
 
 
-def test_spawned_worker_child_refuses_to_start(
+def test_spawned_worker_child_with_cli_worker_count_refuses_to_start(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A worker child rejects startup even without argv or env evidence.
-
-    Uvicorn's supervisor spawns workers with ``multiprocessing.Process``, so
-    a child can detect its own status when it can see neither the parent's
-    command line nor an environment flag.
-    """
+    """A spawned child rejects startup when argv also requests workers."""
 
     class _WorkerChildProcess:
         name = "SpawnProcess-1"
@@ -321,12 +313,32 @@ def test_spawned_worker_child_refuses_to_start(
         "current_process",
         lambda: _WorkerChildProcess(),
     )
-    # No reload flag: this child belongs to a multi-worker supervisor.
-    monkeypatch.setattr(worker_contract.sys, "argv", ["uvicorn", "main:app"])
+    monkeypatch.setattr(
+        worker_contract.sys, "argv", ["uvicorn", "main:app", "--workers", "4"]
+    )
 
     assert is_spawned_worker_process() is True
-    with pytest.raises(MultiWorkerConfigurationError, match="SpawnProcess-1"):
+    with pytest.raises(MultiWorkerConfigurationError, match="--workers"):
         enforce_single_worker_contract()
+
+
+def test_generic_multiprocessing_child_is_allowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-main process name alone does not imply concurrent workers."""
+
+    class _GenericChildProcess:
+        name = "SpawnProcess-1"
+
+    monkeypatch.setattr(
+        worker_contract.multiprocessing,
+        "current_process",
+        lambda: _GenericChildProcess(),
+    )
+    monkeypatch.setattr(worker_contract.sys, "argv", ["python", "serve_once.py"])
+
+    assert is_spawned_worker_process() is False
+    enforce_single_worker_contract()
 
 
 # ─── Gunicorn prefork detection ──────────────────────────────────────
