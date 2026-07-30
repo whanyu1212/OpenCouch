@@ -12,13 +12,14 @@ processes can both claim, leaving runtime state last-writer-wins with no
 error. A silent corruption path is worse than a refused boot, so startup
 rejects a multi-worker configuration outright rather than serving unsafely.
 
-Detection combines three signals, because no single one covers every route:
+Detection combines explicit signals, because no single one covers every route:
 
 - an explicit ``--workers``/``-w`` count on the command line, which uvicorn
   never exports to the environment;
 - the conventional worker-count environment variables;
-- gunicorn's resolved configuration, which is the only in-process evidence
-  of a config-file worker count.
+- ``GUNICORN_CMD_ARGS``, which gunicorn parses as additional CLI arguments;
+- gunicorn's resolved configuration instances, which are the in-process
+  evidence of a config-file worker count.
 
 Process identity is deliberately *not* the general backstop: it catches
 spawn-based children (uvicorn) but a ``fork``-based prefork worker inherits
@@ -30,8 +31,10 @@ authority.
 
 from __future__ import annotations
 
+import gc
 import multiprocessing
 import os
+import shlex
 import sys
 
 #: Environment variables that conventionally carry a worker count.
@@ -116,6 +119,7 @@ def _detect_cli_worker_count(argv: list[str] | None = None) -> tuple[str, int] |
     """
 
     args = sys.argv if argv is None else argv
+    detected: tuple[str, int] | None = None
     for index, arg in enumerate(args):
         for flag in WORKER_COUNT_CLI_FLAGS:
             if arg == flag:
@@ -126,8 +130,8 @@ def _detect_cli_worker_count(argv: list[str] | None = None) -> tuple[str, int] |
             else:
                 continue
             if count is not None:
-                return flag, count
-    return None
+                detected = (flag, count)
+    return detected
 
 
 def detect_configured_worker_count() -> tuple[str, int] | None:
@@ -181,31 +185,49 @@ def is_reload_child(argv: list[str] | None = None) -> bool:
 
 
 def detect_gunicorn_worker_count() -> tuple[str, int] | None:
-    """Return a worker count gunicorn resolved, including from a config file.
+    """Return a worker count gunicorn resolved or declared.
 
-    Gunicorn forks its workers, and a forked child keeps
-    ``MainProcess`` as its process name with ``parent_process()`` returning
-    ``None``, so no process-identity check can recognize one. Its resolved
-    configuration is the only in-process evidence, and it covers the
-    config-file route that neither argv nor the environment reveals.
+    Gunicorn parses this variable as additional command-line arguments
+    (``Config.get_cmd_args_from_env``), so a count set there never reaches
+    ``sys.argv`` and is invisible to the argv scan.
+
+    Gunicorn config-file values are available on ``Config`` instances, not the
+    ``Arbiter`` class. A forked worker keeps those instances in memory, so the
+    guard scans live objects for the resolved worker count when gunicorn is
+    importable.
 
     Returns:
-        tuple[str, int] | None: The source and count when gunicorn is running
-            with more than one worker, otherwise ``None``.
+        tuple[str, int] | None: The source and count when gunicorn declares
+            more than one worker, otherwise ``None``.
     """
 
-    gunicorn_app = sys.modules.get("gunicorn.app.base")
-    if gunicorn_app is None:
-        return None
+    if _detect_cli_worker_count() is None:
+        raw = os.getenv("GUNICORN_CMD_ARGS")
+        if raw:
+            try:
+                args = shlex.split(raw)
+            except ValueError:
+                # Unbalanced quoting is gunicorn's to reject, not this guard's.
+                return None
+            detection = _detect_cli_worker_count(args)
+            if detection is not None:
+                _, count = detection
+                return ("GUNICORN_CMD_ARGS", count) if count > 1 else None
+
     try:
-        from gunicorn.arbiter import Arbiter  # noqa: PLC0415
+        from gunicorn.config import Config  # noqa: PLC0415
     except Exception:
         return None
 
-    arbiter_cfg = getattr(Arbiter, "cfg", None)
-    workers = getattr(arbiter_cfg, "workers", None)
-    if isinstance(workers, int) and workers > 1:
-        return "gunicorn configuration", workers
+    for obj in gc.get_objects():
+        try:
+            if not isinstance(obj, Config):
+                continue
+            workers = getattr(obj, "workers", None)
+        except Exception:
+            continue
+        if isinstance(workers, int) and workers > 1:
+            return "gunicorn configuration", workers
     return None
 
 

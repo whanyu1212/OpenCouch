@@ -25,6 +25,7 @@ def _clear_worker_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
     for name in WORKER_COUNT_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.delenv("GUNICORN_CMD_ARGS", raising=False)
 
 
 def test_unset_worker_count_is_allowed() -> None:
@@ -193,6 +194,32 @@ def test_explicit_one_worker_overrides_a_multi_worker_environment(
     enforce_single_worker_contract()
 
 
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["uvicorn", "main:app", "--workers", "4", "--workers", "1"], None),
+        (["uvicorn", "main:app", "--workers", "1", "--workers", "4"], 4),
+        (["uvicorn", "main:app", "-w", "8", "--workers=1"], None),
+    ],
+)
+def test_last_repeated_command_line_worker_count_wins(
+    argv: list[str], expected: int | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Click resolves repeated non-multiple options to the last occurrence."""
+
+    monkeypatch.setenv("WEB_CONCURRENCY", "2")
+    monkeypatch.setattr(worker_contract.sys, "argv", argv)
+
+    detected = detect_configured_worker_count()
+    if expected is None:
+        assert detected is None
+        enforce_single_worker_contract()
+    else:
+        assert detected == ("--workers", expected)
+        with pytest.raises(MultiWorkerConfigurationError, match="--workers"):
+            enforce_single_worker_contract()
+
+
 # ─── Spawned-worker backstop ─────────────────────────────────────────
 
 
@@ -284,8 +311,8 @@ def test_spawned_worker_child_refuses_to_start(
 #
 # Gunicorn forks its workers, so a child keeps ``MainProcess`` and
 # ``parent_process()`` returns ``None`` — no process-identity check can see
-# one. Its resolved configuration is the only in-process evidence, and it is
-# the sole route that reveals a config-file worker count.
+# one. ``GUNICORN_CMD_ARGS`` and its resolved configuration cover routes that
+# are invisible to argv and the conventional worker-count environment scan.
 
 
 def test_gunicorn_absent_is_not_treated_as_multi_worker() -> None:
@@ -295,27 +322,62 @@ def test_gunicorn_absent_is_not_treated_as_multi_worker() -> None:
     enforce_single_worker_contract()
 
 
-def _install_fake_gunicorn(monkeypatch: pytest.MonkeyPatch, *, workers: object) -> None:
-    """Register a minimal fake gunicorn exposing a resolved worker count."""
+def _install_fake_gunicorn_config(
+    monkeypatch: pytest.MonkeyPatch, *, workers: object
+) -> None:
+    """Register a minimal fake gunicorn exposing a resolved config instance."""
 
     import sys as real_sys
     import types
 
-    arbiter_module = types.ModuleType("gunicorn.arbiter")
+    gunicorn_module = types.ModuleType("gunicorn")
+    gunicorn_module.__path__ = []  # type: ignore[attr-defined]
+    config_module = types.ModuleType("gunicorn.config")
 
     class _Config:
         pass
 
-    _Config.workers = workers  # type: ignore[attr-defined]
+    cfg = _Config()
+    cfg.workers = workers  # type: ignore[attr-defined]
+    config_module.Config = _Config  # type: ignore[attr-defined]
 
-    class _Arbiter:
-        cfg = _Config()
+    monkeypatch.setitem(real_sys.modules, "gunicorn", gunicorn_module)
+    monkeypatch.setitem(real_sys.modules, "gunicorn.config", config_module)
+    monkeypatch.setattr(worker_contract.gc, "get_objects", lambda: [cfg])
 
-    arbiter_module.Arbiter = _Arbiter  # type: ignore[attr-defined]
 
-    base_module = types.ModuleType("gunicorn.app.base")
-    monkeypatch.setitem(real_sys.modules, "gunicorn.app.base", base_module)
-    monkeypatch.setitem(real_sys.modules, "gunicorn.arbiter", arbiter_module)
+def test_gunicorn_cmd_args_worker_count_is_detected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GUNICORN_CMD_ARGS", "--workers 4")
+    monkeypatch.setattr(worker_contract.sys, "argv", ["gunicorn", "main:app"])
+
+    assert worker_contract.detect_gunicorn_worker_count() == ("GUNICORN_CMD_ARGS", 4)
+    with pytest.raises(MultiWorkerConfigurationError, match="GUNICORN_CMD_ARGS"):
+        enforce_single_worker_contract()
+
+
+def test_gunicorn_cmd_args_honors_last_repeated_worker_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GUNICORN_CMD_ARGS", "--workers 4 --workers 1")
+    monkeypatch.setattr(worker_contract.sys, "argv", ["gunicorn", "main:app"])
+
+    assert worker_contract.detect_gunicorn_worker_count() is None
+    enforce_single_worker_contract()
+
+
+def test_explicit_cli_overrides_gunicorn_cmd_args(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GUNICORN_CMD_ARGS", "--workers 4")
+    monkeypatch.setattr(
+        worker_contract.sys, "argv", ["gunicorn", "--workers", "1", "main:app"]
+    )
+
+    assert detect_configured_worker_count() is None
+    assert worker_contract.detect_gunicorn_worker_count() is None
+    enforce_single_worker_contract()
 
 
 def test_gunicorn_config_file_worker_count_is_detected(
@@ -323,7 +385,7 @@ def test_gunicorn_config_file_worker_count_is_detected(
 ) -> None:
     """A config-file worker count is invisible to argv and env scans."""
 
-    _install_fake_gunicorn(monkeypatch, workers=4)
+    _install_fake_gunicorn_config(monkeypatch, workers=4)
     monkeypatch.setattr(worker_contract.sys, "argv", ["gunicorn", "main:app"])
 
     assert worker_contract.detect_gunicorn_worker_count() == (
@@ -337,7 +399,7 @@ def test_gunicorn_config_file_worker_count_is_detected(
 def test_gunicorn_single_worker_configuration_is_allowed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _install_fake_gunicorn(monkeypatch, workers=1)
+    _install_fake_gunicorn_config(monkeypatch, workers=1)
     monkeypatch.setattr(worker_contract.sys, "argv", ["gunicorn", "main:app"])
 
     assert worker_contract.detect_gunicorn_worker_count() is None
@@ -349,7 +411,7 @@ def test_gunicorn_unreadable_worker_count_does_not_block_startup(
 ) -> None:
     """A non-integer count is left to gunicorn rather than failing startup."""
 
-    _install_fake_gunicorn(monkeypatch, workers=None)
+    _install_fake_gunicorn_config(monkeypatch, workers=None)
     monkeypatch.setattr(worker_contract.sys, "argv", ["gunicorn", "main:app"])
 
     assert worker_contract.detect_gunicorn_worker_count() is None
