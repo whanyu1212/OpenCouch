@@ -322,6 +322,10 @@ class MemoryStore(Protocol):
         operations perform data work rather than migrations. Ephemeral
         backends implement this as a no-op.
 
+        Added after the public dependency-injection hooks shipped, so the
+        runtime skips injected stores that do not implement it rather than
+        failing startup; those keep connecting lazily on first use.
+
         Returns:
             None: Prepares the backend.
         """

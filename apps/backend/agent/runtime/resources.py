@@ -48,6 +48,35 @@ class _Closable(Protocol):
     async def aclose(self) -> None: ...
 
 
+async def _prepare_if_supported(name: str, backend: object) -> bool:
+    """Prepare one backend's schema when it implements the hook.
+
+    ``ensure_schema`` was added to the storage protocols after the public
+    dependency-injection hooks shipped, so a caller-supplied backend may not
+    implement it. Skipping those keeps startup working for implementations
+    that satisfied the earlier protocols; they fall back to connecting lazily
+    on first use, exactly as before.
+
+    Args:
+        name (str): Backend name used in log messages.
+        backend (object): Runtime-owned or caller-injected backend.
+
+    Returns:
+        bool: ``True`` when the backend was prepared.
+    """
+
+    ensure_schema = getattr(backend, "ensure_schema", None)
+    if ensure_schema is None:
+        logger.info(
+            "RuntimeResources.ensure_schema: %s does not implement "
+            "ensure_schema; falling back to lazy preparation on first use.",
+            name,
+        )
+        return False
+    await ensure_schema()
+    return True
+
+
 @dataclass(slots=True)
 class RuntimeResources:
     """Runtime-owned storage backends and warmup/close helpers."""
@@ -76,6 +105,11 @@ class RuntimeResources:
         already prepared hold open connections. Close them before propagating
         so a failed startup does not leak resources.
 
+        Backends injected through the public dependency hooks may predate
+        ``ensure_schema``; those are skipped rather than failing startup with
+        an ``AttributeError``. They keep the previous lazy connect-on-first-use
+        behavior.
+
         Returns:
             None: Prepares every runtime-owned durable backend.
 
@@ -89,11 +123,13 @@ class RuntimeResources:
             prepared.append("state_store")
             await self.active_session_manager.ensure_schema()
             prepared.append("active_session_manager")
-            await self.memory_store.ensure_schema()
-            prepared.append("memory_store")
-            await self.crisis_log_backend.ensure_schema()
-            prepared.append("crisis_log_backend")
-            await self.session_feedback_backend.ensure_schema()
+            for name, backend in (
+                ("memory_store", self.memory_store),
+                ("crisis_log_backend", self.crisis_log_backend),
+                ("session_feedback_backend", self.session_feedback_backend),
+            ):
+                if await _prepare_if_supported(name, backend):
+                    prepared.append(name)
         except BaseException:
             logger.warning(
                 "RuntimeResources.ensure_schema: preparation failed after "
@@ -101,10 +137,10 @@ class RuntimeResources:
                 ", ".join(prepared) or "no backends",
                 exc_info=True,
             )
-            await self._aclose_quietly()
+            await self.aclose_quietly()
             raise
 
-    async def _aclose_quietly(self) -> None:
+    async def aclose_quietly(self) -> None:
         """Close runtime-owned resources, logging rather than raising.
 
         Used when unwinding a failed startup: the original failure must
