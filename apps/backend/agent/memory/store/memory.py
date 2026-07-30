@@ -342,6 +342,19 @@ class OpenCouchMemoryStore:
         del bucket.records[key]
         return True
 
+    async def ensure_schema(self) -> None:
+        """Prepare the in-memory store.
+
+        Records live in per-instance dicts, so there is no schema to create
+        and no connection to open. Kept to satisfy the store protocol and to
+        keep incognito startup credential-free.
+
+        Returns:
+            None: No preparation is required.
+        """
+
+        self._ensure_open()
+
     async def aclose(self) -> None:
         """Close the in-memory store.
 

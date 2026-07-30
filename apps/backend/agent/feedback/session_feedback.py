@@ -80,6 +80,18 @@ class SessionFeedbackBackend(Protocol):
         """
         ...
 
+    async def ensure_schema(self) -> None:
+        """Prepare durable storage before the backend serves traffic.
+
+        Durable backends connect and apply schema DDL here so request-time
+        operations perform data work rather than migrations. Ephemeral
+        backends implement this as a no-op.
+
+        Returns:
+            None: Prepares the backend.
+        """
+        ...
+
     async def aclose(self) -> None:
         """Release backend resources.
 
@@ -153,6 +165,18 @@ class InMemorySessionFeedbackBackend:
 
         self._ensure_open()
         return list(self._records_by_session.get(session_id_opaque, []))
+
+    async def ensure_schema(self) -> None:
+        """Prepare the in-memory feedback backend.
+
+        Records live in per-instance dicts, so there is nothing to create and
+        no connection to open.
+
+        Returns:
+            None: No preparation is required.
+        """
+
+        self._ensure_open()
 
     async def aclose(self) -> None:
         """Close the in-memory feedback backend.
@@ -229,6 +253,15 @@ class NullSessionFeedbackBackend:
 
         Args:
             record (SessionFeedbackRecord): Feedback record to ignore.
+
+        Returns:
+            None: No-op for the null backend.
+        """
+
+        return None
+
+    async def ensure_schema(self) -> None:
+        """Prepare the null feedback backend.
 
         Returns:
             None: No-op for the null backend.

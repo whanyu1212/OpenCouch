@@ -173,6 +173,19 @@ class PostgresMemoryStore:
                 )
         await PostgresMemoryStore._backfill_embedding_vector_3072(conn)
 
+    async def ensure_schema(self) -> None:
+        """Connect, apply schema DDL, and run migrations before serving traffic.
+
+        Preparation includes extension creation, the fixed-dimension vector
+        column migration, and its backfill. Running it at startup keeps that
+        work off the first user request.
+
+        Returns:
+            None: Opens the shared connection and prepares the schema.
+        """
+
+        await self._ensure_connection()
+
     @staticmethod
     def _embedding_to_vector_literal(embedding: list[float] | None) -> str | None:
         """Serialize an embedding for pgvector SQL casts.

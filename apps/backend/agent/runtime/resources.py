@@ -58,9 +58,65 @@ class RuntimeResources:
     active_session_manager: ActiveSessionManager
 
     async def ensure_schema(self) -> None:
-        """Create runtime-owned tables."""
-        await self.state_store.ensure_schema()
-        await self.active_session_manager.ensure_schema()
+        """Create runtime-owned tables before serving traffic.
+
+        Every durable backend the runtime owns is prepared here so that
+        request-time operations perform data work rather than connecting and
+        migrating. This matters most for the crisis log, whose appends run
+        inside a bounded safety-capture timeout, and for the memory store,
+        whose preparation includes a vector-column backfill.
+
+        Preparation is not atomic across backends: if one fails, the ones
+        already prepared hold open connections. Close them before propagating
+        so a failed startup does not leak resources.
+
+        Returns:
+            None: Prepares every runtime-owned durable backend.
+
+        Raises:
+            Exception: Re-raises the first preparation failure after unwinding.
+        """
+
+        prepared: list[str] = []
+        try:
+            await self.state_store.ensure_schema()
+            prepared.append("state_store")
+            await self.active_session_manager.ensure_schema()
+            prepared.append("active_session_manager")
+            await self.memory_store.ensure_schema()
+            prepared.append("memory_store")
+            await self.crisis_log_backend.ensure_schema()
+            prepared.append("crisis_log_backend")
+            await self.session_feedback_backend.ensure_schema()
+        except BaseException:
+            logger.warning(
+                "RuntimeResources.ensure_schema: preparation failed after "
+                "preparing %s; closing opened resources.",
+                ", ".join(prepared) or "no backends",
+                exc_info=True,
+            )
+            await self._aclose_quietly()
+            raise
+
+    async def _aclose_quietly(self) -> None:
+        """Close runtime-owned resources, logging rather than raising.
+
+        Used when unwinding a failed startup: the original failure must
+        propagate, so cleanup errors are logged and swallowed instead of
+        masking it.
+
+        Returns:
+            None: Closes what can be closed.
+        """
+
+        try:
+            await self.aclose()
+        except Exception:
+            logger.warning(
+                "RuntimeResources: cleanup after failed startup raised; "
+                "ignoring so the original failure propagates.",
+                exc_info=True,
+            )
 
     async def prewarm(self, *, get_text_runtime: Callable[[], object]) -> None:
         """Warm runtime resources before the first user turn."""
