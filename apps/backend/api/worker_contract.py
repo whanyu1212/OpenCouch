@@ -141,6 +141,8 @@ def detect_configured_worker_count() -> tuple[str, int] | None:
     ``--workers`` as defaulting to ``$WEB_CONCURRENCY``, so ``--workers 1``
     alongside ``WEB_CONCURRENCY=2`` runs one worker and must be allowed.
     The environment is consulted only when the command line declares nothing.
+    Under ``--reload``, uvicorn ignores ``WEB_CONCURRENCY`` entirely, so that
+    inherited default is skipped before checking app-owned declarations.
 
     Returns:
         tuple[str, int] | None: The source and count when a multi-worker
@@ -153,6 +155,8 @@ def detect_configured_worker_count() -> tuple[str, int] | None:
         return (flag, count) if count > 1 else None
 
     for name in WORKER_COUNT_ENV_VARS:
+        if name == "WEB_CONCURRENCY" and is_reload_child():
+            continue
         count = _parse_worker_count(os.getenv(name))
         if count is not None and count > 1:
             return name, count

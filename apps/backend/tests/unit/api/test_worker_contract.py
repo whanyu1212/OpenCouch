@@ -254,6 +254,28 @@ def test_reload_child_is_allowed_to_start(monkeypatch: pytest.MonkeyPatch) -> No
     enforce_single_worker_contract()
 
 
+def test_reload_child_ignores_web_concurrency_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Uvicorn ignores ``WEB_CONCURRENCY`` when auto-reload is enabled."""
+
+    class _ReloadChildProcess:
+        name = "SpawnProcess-1"
+
+    monkeypatch.setenv("WEB_CONCURRENCY", "4")
+    monkeypatch.setattr(
+        worker_contract.multiprocessing,
+        "current_process",
+        lambda: _ReloadChildProcess(),
+    )
+    monkeypatch.setattr(
+        worker_contract.sys, "argv", ["uvicorn", "main:app", "--reload"]
+    )
+
+    assert detect_configured_worker_count() is None
+    enforce_single_worker_contract()
+
+
 def test_reload_child_with_explicit_worker_count_is_still_rejected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
