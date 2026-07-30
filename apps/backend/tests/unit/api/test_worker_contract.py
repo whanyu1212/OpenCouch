@@ -26,6 +26,7 @@ def _clear_worker_env(monkeypatch: pytest.MonkeyPatch) -> None:
     for name in WORKER_COUNT_ENV_VARS:
         monkeypatch.delenv(name, raising=False)
     monkeypatch.delenv("GUNICORN_CMD_ARGS", raising=False)
+    monkeypatch.delenv("UVICORN_RELOAD", raising=False)
 
 
 def test_unset_worker_count_is_allowed() -> None:
@@ -274,6 +275,32 @@ def test_reload_child_ignores_web_concurrency_default(
 
     assert detect_configured_worker_count() is None
     enforce_single_worker_contract()
+
+
+@pytest.mark.parametrize("raw_value", ["1", "true", "True", "yes", "on"])
+def test_uvicorn_reload_env_ignores_web_concurrency_default(
+    raw_value: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("UVICORN_RELOAD", raw_value)
+    monkeypatch.setenv("WEB_CONCURRENCY", "4")
+    monkeypatch.setattr(worker_contract.sys, "argv", ["uvicorn", "main:app"])
+
+    assert worker_contract.is_reload_child() is True
+    assert detect_configured_worker_count() is None
+    enforce_single_worker_contract()
+
+
+def test_uvicorn_reload_env_false_keeps_web_concurrency_enforced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UVICORN_RELOAD", "false")
+    monkeypatch.setenv("WEB_CONCURRENCY", "4")
+    monkeypatch.setattr(worker_contract.sys, "argv", ["uvicorn", "main:app"])
+
+    assert worker_contract.is_reload_child() is False
+    assert detect_configured_worker_count() == ("WEB_CONCURRENCY", 4)
+    with pytest.raises(MultiWorkerConfigurationError, match="WEB_CONCURRENCY"):
+        enforce_single_worker_contract()
 
 
 def test_reload_child_with_explicit_worker_count_is_allowed(

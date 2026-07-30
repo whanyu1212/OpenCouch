@@ -50,6 +50,11 @@ WORKER_COUNT_CLI_FLAGS: tuple[str, ...] = ("--workers", "-w")
 #: Flags that put the server in auto-reload mode, which excludes workers.
 RELOAD_CLI_FLAGS: tuple[str, ...] = ("--reload",)
 
+#: Environment variables that put uvicorn in auto-reload mode.
+RELOAD_ENV_VARS: tuple[str, ...] = ("UVICORN_RELOAD",)
+
+_TRUTHY_ENV_VALUES: frozenset[str] = frozenset({"1", "true", "t", "yes", "y", "on"})
+
 _CONTRACT_MESSAGE = (
     "OpenCouch supports a single worker process only. "
     "{source} requests {count} workers.\n"
@@ -169,8 +174,9 @@ def is_reload_child(argv: list[str] | None = None) -> bool:
     ``--reload`` also runs the application in a spawned child, and uvicorn
     names reload and worker children identically (``SpawnProcess-N``), so the
     process name cannot tell them apart. A spawned child inherits the
-    parent's argv, and uvicorn rejects ``--reload`` together with
-    ``--workers``, so the reload flag identifies a single-application child.
+    parent's argv and environment, and uvicorn ignores worker counts when
+    reload is enabled, so the reload setting identifies a single-application
+    child.
 
     Args:
         argv (list[str] | None): Argument vector to scan. Defaults to
@@ -179,6 +185,12 @@ def is_reload_child(argv: list[str] | None = None) -> bool:
     Returns:
         bool: ``True`` when the process was started in auto-reload mode.
     """
+
+    if any(
+        os.getenv(name, "").strip().lower() in _TRUTHY_ENV_VALUES
+        for name in RELOAD_ENV_VARS
+    ):
+        return True
 
     args = sys.argv if argv is None else argv
     return any(
@@ -285,6 +297,7 @@ def enforce_single_worker_contract() -> None:
 __all__ = [
     "MultiWorkerConfigurationError",
     "RELOAD_CLI_FLAGS",
+    "RELOAD_ENV_VARS",
     "WORKER_COUNT_CLI_FLAGS",
     "WORKER_COUNT_ENV_VARS",
     "detect_configured_worker_count",
