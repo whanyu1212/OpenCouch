@@ -144,20 +144,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
             llm_client=_llm_client,
         )
 
+    # Runtime __aexit__ owns shutdown finalization, gated by its
+    # finalize_active_sessions_on_close behavior flag. Finalizing here as well
+    # gave shutdown two owners: the second pass re-listed active sessions and
+    # usually found none, but a session becoming active between the two calls
+    # could be finalized twice. The exit stack unwinds each runtime, so
+    # entering them here is enough.
     async with AsyncExitStack() as stack:
         for runtime in _runtimes.values():
             await stack.enter_async_context(runtime)
-        try:
-            yield
-        finally:
-            for runtime in _runtimes.values():
-                try:
-                    await runtime.finalize_active_sessions(llm_client=_llm_client)
-                except Exception:
-                    logger.warning(
-                        "api lifespan shutdown: failed to finalize active sessions",
-                        exc_info=True,
-                    )
+        yield
 
     _runtimes = {}
     _default_memory_mode = ApiMemoryMode.PERSISTENT
