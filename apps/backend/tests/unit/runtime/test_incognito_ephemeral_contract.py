@@ -144,6 +144,45 @@ def test_incognito_rejects_explicitly_opted_out_dependency() -> None:
         )
 
 
+def test_instance_attribute_cannot_grant_the_capability() -> None:
+    """The declaration must be on the class, not stamped onto an instance.
+
+    Reading the marker off the instance would let a stray
+    ``store.supports_incognito = True`` anywhere in caller code silently
+    disable a privacy control, with no class-level declaration to review.
+    """
+
+    store = PostgresMemoryStore(_DURABLE_DSN)
+    store.supports_incognito = True  # type: ignore[attr-defined]
+
+    assert not is_ephemeral_capable(store)
+    with pytest.raises(ValueError, match="PostgresMemoryStore"):
+        create_memory_store(
+            memory_store=store,
+            memory_backend="memory",
+            memory_database_url=None,
+            memory_mode=MemoryMode.INCOGNITO,
+        )
+
+
+@pytest.mark.parametrize("truthy_value", [1, "yes", ["non-empty"]])
+def test_truthy_marker_values_do_not_grant_the_capability(
+    truthy_value: Any,
+) -> None:
+    """Only exactly ``True`` opts in, so a mistyped value cannot grant it."""
+
+    class _TruthyStore(PostgresMemoryStore):
+        supports_incognito = truthy_value
+
+    with pytest.raises(ValueError, match="_TruthyStore"):
+        create_memory_store(
+            memory_store=_TruthyStore(_DURABLE_DSN),
+            memory_backend="memory",
+            memory_database_url=None,
+            memory_mode=MemoryMode.INCOGNITO,
+        )
+
+
 def test_incognito_accepts_declared_ephemeral_dependencies() -> None:
     """Legitimate in-memory overrides keep working under incognito."""
 
