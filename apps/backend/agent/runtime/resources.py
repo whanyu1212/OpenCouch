@@ -6,7 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 from agent.audit.crisis_log import CrisisLogBackend
 from agent.feedback.session_feedback import SessionFeedbackBackend
@@ -40,6 +40,12 @@ from agent.runtime.session_store import (
 from agent.runtime.state_store import RuntimeStateStore, create_runtime_state_store
 
 logger = logging.getLogger(__name__)
+
+
+class _Closable(Protocol):
+    """Minimal shape shared by every runtime-owned closable resource."""
+
+    async def aclose(self) -> None: ...
 
 
 @dataclass(slots=True)
@@ -103,7 +109,8 @@ class RuntimeResources:
 
         Used when unwinding a failed startup: the original failure must
         propagate, so cleanup errors are logged and swallowed instead of
-        masking it.
+        masking it. ``aclose`` already releases each resource independently,
+        so one failure cannot strand the rest.
 
         Returns:
             None: Closes what can be closed.
@@ -137,14 +144,46 @@ class RuntimeResources:
             )
 
     async def aclose(self) -> None:
-        """Close runtime-owned resources in deterministic order."""
-        await self.memory_store.aclose()
-        await self.crisis_log_backend.aclose()
-        await self.session_feedback_backend.aclose()
+        """Close runtime-owned resources in deterministic order.
+
+        Each resource is closed independently: one backend raising must not
+        strand the ones after it, since that would leak connections during
+        both normal shutdown and startup unwinding. The first failure is
+        re-raised once every resource has been given a chance to close.
+
+        Returns:
+            None: Closes every runtime-owned resource.
+
+        Raises:
+            Exception: Re-raises the first close failure, if any.
+        """
+
+        closables: list[tuple[str, _Closable]] = [
+            ("memory_store", self.memory_store),
+            ("crisis_log_backend", self.crisis_log_backend),
+            ("session_feedback_backend", self.session_feedback_backend),
+        ]
         if self.text_session_store is not None:
-            await self.text_session_store.aclose()
-        await self.state_store.aclose()
-        await self.active_session_store.aclose()
+            closables.append(("text_session_store", self.text_session_store))
+        closables.append(("state_store", self.state_store))
+        closables.append(("active_session_store", self.active_session_store))
+
+        first_failure: BaseException | None = None
+        for name, closable in closables:
+            try:
+                await closable.aclose()
+            except Exception as exc:
+                logger.warning(
+                    "RuntimeResources.aclose: closing %s raised; continuing "
+                    "so remaining resources are still released.",
+                    name,
+                    exc_info=True,
+                )
+                if first_failure is None:
+                    first_failure = exc
+
+        if first_failure is not None:
+            raise first_failure
 
 
 def build_runtime_resources(

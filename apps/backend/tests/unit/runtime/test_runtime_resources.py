@@ -211,6 +211,100 @@ async def test_runtime_resources_aclose_closes_owned_resources_in_order() -> Non
     ]
 
 
+@pytest.mark.asyncio
+async def test_runtime_resources_aclose_releases_every_resource_despite_failure() -> (
+    None
+):
+    """One backend raising on close must not strand the remaining ones."""
+
+    class _RaisingClosable:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def ensure_schema(self) -> None:
+            return None
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+            raise RuntimeError("simulated close failure")
+
+    memory_store = _RaisingClosable()
+    crisis_log_backend = _CountingClosable()
+    session_feedback_backend = _CountingClosable()
+    state_store = _CountingStateStore()
+    active_session_store = _CountingClosable()
+    resources = RuntimeResources(
+        thread_persistence_backend="memory",
+        thread_database_url=None,
+        state_store=state_store,  # type: ignore[arg-type]
+        text_session_store=None,
+        memory_store=memory_store,  # type: ignore[arg-type]
+        crisis_log_backend=crisis_log_backend,  # type: ignore[arg-type]
+        session_feedback_backend=session_feedback_backend,  # type: ignore[arg-type]
+        embedding_provider=NullEmbeddingProvider(),
+        active_session_store=active_session_store,  # type: ignore[arg-type]
+        active_session_manager=_CountingActiveSessionManager(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError, match="simulated close failure"):
+        await resources.aclose()
+
+    # Every resource after the failing one is still released.
+    assert crisis_log_backend.close_calls == 1
+    assert session_feedback_backend.close_calls == 1
+    assert state_store.close_calls == 1
+    assert active_session_store.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_startup_unwind_releases_every_resource_despite_close_failure() -> None:
+    """A failed startup releases all resources even if one close raises.
+
+    Without this, a raising ``aclose`` mid-sequence would leave the remaining
+    backends holding open connections while the startup error propagates,
+    defeating the unwinding guarantee.
+    """
+
+    class _RaisingClosable:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def ensure_schema(self) -> None:
+            return None
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+            raise RuntimeError("simulated close failure")
+
+    memory_store = _RaisingClosable()
+    crisis_log_backend = _FailingSchemaBackend()
+    session_feedback_backend = _CountingClosable()
+    state_store = _CountingStateStore()
+    active_session_store = _CountingClosable()
+    resources = RuntimeResources(
+        thread_persistence_backend="memory",
+        thread_database_url=None,
+        state_store=state_store,  # type: ignore[arg-type]
+        text_session_store=None,
+        memory_store=memory_store,  # type: ignore[arg-type]
+        crisis_log_backend=crisis_log_backend,  # type: ignore[arg-type]
+        session_feedback_backend=session_feedback_backend,  # type: ignore[arg-type]
+        embedding_provider=NullEmbeddingProvider(),
+        active_session_store=active_session_store,  # type: ignore[arg-type]
+        active_session_manager=_CountingActiveSessionManager(),  # type: ignore[arg-type]
+    )
+
+    # The startup failure propagates, not the cleanup failure that followed it.
+    with pytest.raises(RuntimeError, match="simulated schema preparation failure"):
+        await resources.ensure_schema()
+
+    assert memory_store.close_calls == 1
+    assert crisis_log_backend.close_calls == 1
+    assert session_feedback_backend.close_calls == 1
+    assert state_store.close_calls == 1
+    assert active_session_store.close_calls == 1
+
+
 def test_build_runtime_resources_requires_database_url_for_postgres_thread_backend() -> (
     None
 ):
