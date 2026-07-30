@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import pytest
 
+from api import worker_contract
 from api.worker_contract import (
     WORKER_COUNT_ENV_VARS,
     MultiWorkerConfigurationError,
     detect_configured_worker_count,
     enforce_single_worker_contract,
+    is_spawned_worker_process,
 )
 
 
@@ -96,3 +98,102 @@ def test_first_declared_multi_worker_variable_is_reported(
     detected = detect_configured_worker_count()
 
     assert detected == ("GUNICORN_WORKERS", 8)
+
+
+# ─── Command-line detection ──────────────────────────────────────────
+#
+# ``uvicorn main:app --workers 2`` is the standard way to request workers and
+# exports nothing to the environment, so an environment-only guard would miss
+# the most common multi-worker configuration entirely.
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["uvicorn", "main:app", "--workers", "2"],
+        ["uvicorn", "main:app", "--workers=4"],
+        ["uvicorn", "main:app", "-w", "3"],
+        ["uvicorn", "main:app", "-w=5"],
+        ["gunicorn", "-w", "8", "main:app"],
+    ],
+)
+def test_command_line_worker_count_is_detected(
+    argv: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(worker_contract.sys, "argv", argv)
+
+    detected = detect_configured_worker_count()
+
+    assert detected is not None
+    flag, count = detected
+    assert flag in {"--workers", "-w"}
+    assert count > 1
+
+    with pytest.raises(MultiWorkerConfigurationError, match="single worker"):
+        enforce_single_worker_contract()
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["uvicorn", "main:app"],
+        ["uvicorn", "main:app", "--workers", "1"],
+        ["uvicorn", "main:app", "--workers=1"],
+        ["uvicorn", "main:app", "--reload"],
+        # A trailing flag with no value must not raise IndexError.
+        ["uvicorn", "main:app", "--workers"],
+        # Unrelated flags whose values look like counts.
+        ["uvicorn", "main:app", "--port", "8080"],
+    ],
+)
+def test_single_or_absent_command_line_worker_count_is_allowed(
+    argv: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(worker_contract.sys, "argv", argv)
+
+    assert detect_configured_worker_count() is None
+    enforce_single_worker_contract()
+
+
+def test_command_line_takes_precedence_over_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit ``--workers`` overrides the ``WEB_CONCURRENCY`` default."""
+
+    monkeypatch.setenv("WEB_CONCURRENCY", "1")
+    monkeypatch.setattr(
+        worker_contract.sys, "argv", ["uvicorn", "main:app", "--workers", "6"]
+    )
+
+    assert detect_configured_worker_count() == ("--workers", 6)
+
+
+# ─── Spawned-worker backstop ─────────────────────────────────────────
+
+
+def test_main_process_is_not_treated_as_a_spawned_worker() -> None:
+    assert is_spawned_worker_process() is False
+
+
+def test_spawned_worker_child_refuses_to_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A worker child rejects startup even without argv or env evidence.
+
+    Uvicorn's supervisor spawns workers with ``multiprocessing.Process``, so
+    a child can detect its own status when it can see neither the parent's
+    command line nor an environment flag.
+    """
+
+    class _WorkerChildProcess:
+        name = "SpawnProcess-1"
+
+    monkeypatch.setattr(
+        worker_contract.multiprocessing,
+        "current_process",
+        lambda: _WorkerChildProcess(),
+    )
+
+    assert is_spawned_worker_process() is True
+    with pytest.raises(MultiWorkerConfigurationError, match="SpawnProcess-1"):
+        enforce_single_worker_contract()
