@@ -102,6 +102,19 @@ class PostgresCrisisLogBackend:
                 for ddl in CRISIS_LOG_SCHEMA_DDL:
                     await cursor.execute(ddl)
 
+    async def ensure_schema(self) -> None:
+        """Connect and apply schema DDL ahead of serving traffic.
+
+        Crisis appends run inside a bounded safety-capture timeout, so the
+        connection and DDL must be established at startup rather than inside
+        the first append's budget.
+
+        Returns:
+            None: Opens the shared connection and prepares the schema.
+        """
+
+        await self._ensure_connection()
+
     async def aappend(self, record: CrisisLogRecord) -> None:
         """Append one crisis record."""
 

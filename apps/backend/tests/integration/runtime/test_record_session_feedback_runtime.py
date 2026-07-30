@@ -59,6 +59,9 @@ class _FailingFeedbackBackend:
     async def apurge_before(self, cutoff: Any) -> int:
         return 0
 
+    async def ensure_schema(self) -> None:
+        return None
+
     async def aclose(self) -> None:
         return None
 

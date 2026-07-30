@@ -101,6 +101,15 @@ class PostgresSessionFeedbackBackend:
                 for ddl in SESSION_FEEDBACK_SCHEMA_DDL:
                     await cursor.execute(ddl)
 
+    async def ensure_schema(self) -> None:
+        """Connect and apply schema DDL ahead of serving traffic.
+
+        Returns:
+            None: Opens the shared connection and prepares the schema.
+        """
+
+        await self._ensure_connection()
+
     async def aappend(self, record: SessionFeedbackRecord) -> None:
         """Append one feedback record."""
 

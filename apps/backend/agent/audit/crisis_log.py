@@ -99,6 +99,18 @@ class CrisisLogBackend(Protocol):
         """
         ...
 
+    async def ensure_schema(self) -> None:
+        """Prepare durable storage before the backend serves traffic.
+
+        Crisis appends run inside a bounded safety-capture timeout, so durable
+        backends connect and apply DDL here rather than inside the first
+        append. Ephemeral backends implement this as a no-op.
+
+        Returns:
+            None: Prepares the backend.
+        """
+        ...
+
     async def aclose(self) -> None:
         """Release backend resources.
 
@@ -499,6 +511,18 @@ class InMemoryCrisisLogBackend:
         self._ensure_open()
         return list(self._records_by_date.get(day, []))
 
+    async def ensure_schema(self) -> None:
+        """Prepare the in-memory crisis backend.
+
+        Records live in per-instance dicts, so there is nothing to create and
+        no connection to open.
+
+        Returns:
+            None: No preparation is required.
+        """
+
+        self._ensure_open()
+
     async def aclose(self) -> None:
         """Close the in-memory crisis backend.
 
@@ -568,6 +592,15 @@ class NullCrisisLogBackend:
         """Discard an idempotent crisis record."""
 
         return False
+
+    async def ensure_schema(self) -> None:
+        """Prepare the null crisis backend.
+
+        Returns:
+            None: No-op for the null backend.
+        """
+
+        return None
 
     async def alist_by_date(self, day: date) -> list[CrisisLogRecord]:
         """List crisis records for one date.

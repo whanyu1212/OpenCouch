@@ -315,6 +315,22 @@ class MemoryStore(Protocol):
         """
         ...
 
+    async def ensure_schema(self) -> None:
+        """Prepare durable storage before the store serves traffic.
+
+        Durable backends connect and apply schema DDL here so request-time
+        operations perform data work rather than migrations. Ephemeral
+        backends implement this as a no-op.
+
+        Added after the public dependency-injection hooks shipped, so the
+        runtime skips injected stores that do not implement it rather than
+        failing startup; those keep connecting lazily on first use.
+
+        Returns:
+            None: Prepares the backend.
+        """
+        ...
+
     async def aclose(self) -> None:
         """Release backend resources.
 

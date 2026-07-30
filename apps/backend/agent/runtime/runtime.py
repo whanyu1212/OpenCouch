@@ -236,15 +236,33 @@ class PersistentAgentRuntime:
     async def __aenter__(self) -> PersistentAgentRuntime:
         """Open runtime resources.
 
+        Schema preparation opens durable connections, so every later startup
+        step runs under an unwind guard. Python does not call ``__aexit__``
+        when ``__aenter__`` raises, so a failure or cancellation after
+        preparation would otherwise leak those connections.
+
         Returns:
             The initialized runtime instance.
+
+        Raises:
+            BaseException: Re-raises the startup failure after releasing
+                already-opened resources.
         """
 
         await self._ensure_runtime_schema()
-        await self._prewarm()
-        self._session_lifecycle.start_background_tasks(
-            finalize_expired_sessions_once=self._finalize_expired_sessions_once
-        )
+        try:
+            await self._prewarm()
+            self._session_lifecycle.start_background_tasks(
+                finalize_expired_sessions_once=self._finalize_expired_sessions_once
+            )
+        except BaseException:
+            logger.warning(
+                "PersistentAgentRuntime: startup failed after schema "
+                "preparation; releasing opened resources.",
+                exc_info=True,
+            )
+            await self._resources.aclose_quietly()
+            raise
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
