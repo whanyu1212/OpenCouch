@@ -171,6 +171,8 @@ async def test_persistent_voice_turn_request_still_persists_runtime_state(
 
 
 class _FakeEndRuntime:
+    """Fake runtime covering both the combined and finalize-only end paths."""
+
     def __init__(self) -> None:
         self.called = False
         self.feedback_called = False
@@ -183,6 +185,22 @@ class _FakeEndRuntime:
         assert label == "positive"
         assert source == "api_end"
         assert modality == "voice"
+
+    async def end_session_with_feedback(
+        self,
+        thread_id: str,
+        *,
+        label: str,
+        source: str,
+        modality: str = "text",
+        llm_client: object | None = None,
+    ) -> tuple[None, Any]:
+        """Record feedback and finalize as one operation, as the runtime does."""
+
+        await self.record_session_feedback(
+            thread_id, label=label, source=source, modality=modality
+        )
+        return None, await self.end_session(thread_id, llm_client=llm_client)
 
     async def end_session(self, thread_id: str, *, llm_client: object | None) -> Any:
         self.called = True

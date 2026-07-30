@@ -922,6 +922,66 @@ class PersistentAgentRuntime:
                 finalize_only_if_expired=finalize_only_if_expired,
             )
 
+    async def end_session_with_feedback(
+        self,
+        thread_id: str,
+        *,
+        label: FeedbackLabel,
+        source: FeedbackSource,
+        modality: FeedbackModality = "text",
+        llm_client: BaseLLMClient | None = None,
+    ) -> tuple[SessionFeedbackRecord | None, StoredSessionArc | None]:
+        """Record end-of-session feedback and finalize under one lock.
+
+        Recording feedback and finalizing separately lets a concurrent turn
+        change the session between them, so the stored ``turn_count_at_end``
+        would describe a window that was never the one summarized. Holding the
+        thread lock across both makes the feedback metadata and the finalized
+        session the same observation.
+
+        Feedback failures stay best-effort and never block finalization, which
+        preserves the existing end-session contract.
+
+        Args:
+            thread_id: The thread whose session is ending.
+            label: The explicit feedback label the user provided.
+            source: Which end-session surface produced this feedback.
+            modality: Which interaction channel the user is rating.
+            llm_client: The optional LLM client for session summarization.
+
+        Returns:
+            The written feedback record (``None`` on failure) and the written
+            session arc (``None`` when summarization is skipped).
+        """
+
+        async with self._thread_lock(thread_id):
+            try:
+                state = await self.get_state(thread_id)
+            except Exception:
+                logger.warning(
+                    "session feedback write failed for thread %s",
+                    thread_id,
+                    exc_info=True,
+                )
+                state = None
+                feedback_record = None
+            else:
+                feedback_record = await record_runtime_session_feedback(
+                    backend=self._session_feedback_backend,
+                    thread_id=thread_id,
+                    state=state,
+                    memory_mode=self.memory_mode,
+                    label=label,
+                    source=source,
+                    modality=modality,
+                )
+
+            arc = await self._end_session_unlocked(
+                thread_id,
+                llm_client=llm_client,
+            )
+            return feedback_record, arc
+
     async def _end_session_unlocked(
         self,
         thread_id: str,
