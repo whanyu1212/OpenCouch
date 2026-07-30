@@ -197,6 +197,8 @@ async def bump_semantic_last_referenced_at(
         matched_record.namespace,
         key=matched_record.key,
         value=updated_value,
+        embedding=getattr(matched_record, "embedding", None),
+        embedding_model=getattr(matched_record, "embedding_model", None),
     )
 
 
