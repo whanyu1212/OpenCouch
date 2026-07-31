@@ -7,7 +7,7 @@ from typing import Literal
 from urllib.parse import urlsplit
 
 from agent.audit.models import CrisisResourceLookupStatus
-from agent.tools.crisis import crisis_support_template_parts
+from agent.guardrails.crisis_response import build_crisis_response_plan
 from agent.voice.concurrent_safety import VoiceConcurrentSafetyResult
 
 VoiceSafetyAction = Literal["continue", "interrupt"]
@@ -67,16 +67,16 @@ class VoiceSafetyOverlayService:
             return VoiceSafetyDecision(action="continue")
 
         risk_level: VoiceSafetyRiskLevel = 3 if assessment.level == 3 else 2
-        opening, validation, immediate_step, _ = crisis_support_template_parts(
-            "imminent" if risk_level == 3 else "moderate"
+        plan = build_crisis_response_plan(
+            crisis_level=risk_level,
         )
         return VoiceSafetyDecision(
             action="interrupt",
             risk_level=risk_level,
             support=VoiceSafetySupport(
-                headline=opening,
-                validation=validation,
-                immediate_step=immediate_step,
+                headline=plan.opening,
+                validation=plan.validation,
+                immediate_step=plan.immediate_safety_step,
             ),
         )
 

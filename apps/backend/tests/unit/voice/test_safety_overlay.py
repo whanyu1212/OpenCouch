@@ -4,6 +4,7 @@ from dataclasses import asdict
 
 import pytest
 
+from agent.guardrails.crisis_response import build_crisis_response_plan
 from agent.models import CrisisAssessment
 from agent.voice.concurrent_safety import VoiceConcurrentSafetyResult
 from agent.voice.safety_overlay import VoiceSafetyOverlayService
@@ -81,6 +82,12 @@ def test_high_confidence_crisis_interrupts_with_public_support(level: int) -> No
     assert set(support) == {"headline", "validation", "immediate_step"}
     assert all(support.values())
     assert "private classifier reason" not in str(support)
+    plan = build_crisis_response_plan(crisis_level=level)
+    assert support == {
+        "headline": plan.opening,
+        "validation": plan.validation,
+        "immediate_step": plan.immediate_safety_step,
+    }
 
 
 @pytest.mark.parametrize(
