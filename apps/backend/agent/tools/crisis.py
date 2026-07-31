@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal, cast
+from typing import Any, cast
 
 from agents import RunContextWrapper, function_tool
 from pydantic import BaseModel, Field
 
 from agent.audit.models import CrisisResourceLookupStatus
+from agent.guardrails.crisis_response import (
+    CrisisSupportRiskLevel,
+    build_crisis_response_plan,
+)
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
@@ -43,9 +47,6 @@ class CrisisResourceLookupToolResult(BaseModel):
         default=True,
         description="Whether retrying the lookup can duplicate side effects.",
     )
-
-
-CrisisSupportRiskLevel = Literal["moderate", "high", "imminent"]
 
 
 class CrisisSupportTemplateToolResult(BaseModel):
@@ -135,11 +136,11 @@ async def execute_crisis_resource_lookup_tool(
         llm_client=llm_client,
     )
     result = CrisisResourceLookupToolResult(
-        response_text=_resource_lookup_response_text(
+        response_text=build_crisis_response_plan(
             inferred_location=inferred_location,
             found_resources=found_resources,
-            status=cast(CrisisResourceLookupStatus, status),
-        ),
+            resource_lookup_status=cast(CrisisResourceLookupStatus, status),
+        ).resource_guidance,
         inferred_location=inferred_location,
         found_resources=found_resources,
         resource_lookup_status=cast(CrisisResourceLookupStatus, status),
@@ -173,47 +174,38 @@ async def lookup_crisis_resources(
 async def execute_crisis_support_template_tool(
     *,
     risk_level: str,
+    crisis_level: int | None = None,
     inferred_location: str = "",
     found_resources: list[dict[str, str]] | None = None,
     resource_lookup_status: CrisisResourceLookupStatus = "not_attempted",
 ) -> CrisisSupportTemplateToolResult:
     """Return a deterministic safety scaffold for the crisis specialist."""
 
-    normalized_risk = _normalize_crisis_support_risk_level(risk_level)
-    resources = [dict(resource) for resource in found_resources or []]
-    opening, validation, immediate_safety_step, one_question = (
-        crisis_support_template_parts(normalized_risk)
-    )
-    resource_guidance = _resource_lookup_response_text(
+    plan = build_crisis_response_plan(
+        crisis_level=crisis_level,
+        requested_risk_level=risk_level,
         inferred_location=inferred_location,
-        found_resources=resources,
-        status=resource_lookup_status,
+        found_resources=found_resources,
+        resource_lookup_status=resource_lookup_status,
     )
-    avoid = [
-        "Do not diagnose the user or make clinical certainty claims.",
-        "Do not promise confidentiality or that everything will be okay.",
-        "Do not claim OpenCouch has contacted emergency services or another person.",
-        "Do not invent phone numbers, URLs, or local crisis resources.",
-        "Do not give instructions involving self-harm methods or lethal means.",
-    ]
     response_text = "\n\n".join(
         [
-            f"Opening: {opening}",
-            f"Validation: {validation}",
-            f"Immediate safety step: {immediate_safety_step}",
-            f"Resource guidance: {resource_guidance}",
-            f"Ask one question: {one_question}",
-            "Avoid:\n" + "\n".join(f"- {item}" for item in avoid),
+            f"Opening: {plan.opening}",
+            f"Validation: {plan.validation}",
+            f"Immediate safety step: {plan.immediate_safety_step}",
+            f"Resource guidance: {plan.resource_guidance}",
+            f"Ask one question: {plan.one_question}",
+            "Avoid:\n" + "\n".join(f"- {item}" for item in plan.avoid),
         ]
     )
     return CrisisSupportTemplateToolResult(
-        risk_level=normalized_risk,
-        opening=opening,
-        validation=validation,
-        immediate_safety_step=immediate_safety_step,
-        resource_guidance=resource_guidance,
-        one_question=one_question,
-        avoid=avoid,
+        risk_level=plan.risk_level,
+        opening=plan.opening,
+        validation=plan.validation,
+        immediate_safety_step=plan.immediate_safety_step,
+        resource_guidance=plan.resource_guidance,
+        one_question=plan.one_question,
+        avoid=list(plan.avoid),
         response_text=response_text,
     )
 
@@ -258,6 +250,7 @@ async def get_crisis_support_template(
 
     return await execute_crisis_support_template_tool(
         risk_level=risk_level,
+        crisis_level=_crisis_level_from_state(wrapper.context.agent_state),
         inferred_location=inferred_location,
         found_resources=found_resources,
         resource_lookup_status=resource_lookup_status,
@@ -288,107 +281,10 @@ def _single_resource_from_tool_args(
     return [resource]
 
 
-def _normalize_crisis_support_risk_level(risk_level: str) -> CrisisSupportRiskLevel:
-    value = " ".join(str(risk_level or "").strip().lower().split())
-    if value in {"moderate", "level 2", "2"}:
-        return "moderate"
-    if value in {"imminent", "level 3", "3"}:
-        return "imminent"
-    return "high"
-
-
-def crisis_support_template_parts(
-    risk_level: CrisisSupportRiskLevel,
-) -> tuple[str, str, str, str]:
-    if risk_level == "moderate":
-        return (
-            "I’m here with you, and I want to help you stay safe right now.",
-            "What you’re describing sounds really painful, and you do not have to handle it alone.",
-            "Pause and move to a safer place if you can, away from anything you could use to hurt yourself.",
-            "Are you somewhere safe enough to keep talking for the next few minutes?",
-        )
-    if risk_level == "imminent":
-        return (
-            "Your safety matters most right now.",
-            "I’m taking this seriously, and the next step is immediate support from someone nearby or emergency care.",
-            "If you might act soon, call local emergency services now, go to the nearest emergency department if safe, or ask a trusted person nearby to stay with you.",
-            "Can you contact emergency services or a trusted nearby person right now?",
-        )
-    return (
-        "I’m really glad you said this here.",
-        "These feelings can be intense and frightening, and you deserve immediate support.",
-        "Please move away from anything you could use to hurt yourself and reach out to someone nearby who can stay with you.",
-        "Is there someone nearby you can ask to stay with you while we keep this simple?",
-    )
-
-
-def _resource_lookup_response_text(
-    *,
-    inferred_location: str,
-    found_resources: list[dict[str, str]],
-    status: CrisisResourceLookupStatus,
-) -> str:
-    if found_resources:
-        location_label = inferred_location or "the user's region"
-        resources = "\n".join(_format_resource_row(row) for row in found_resources)
-        return (
-            f"Verified local crisis resources for {location_label}:\n"
-            f"{resources}\n"
-            "Include at least one specific resource above in the response. Do not "
-            "modify phone numbers, and do not include phone numbers that are not "
-            "listed above."
-        )
-    if status == "location_refused":
-        return (
-            "The user declined location-based help. Respect that boundary. Give "
-            "immediate safety guidance that does not require location: contact "
-            "local emergency services if they might act soon, go to the nearest "
-            "emergency department if safe, move away from means, and contact a "
-            "trusted person nearby. Do not invent phone numbers."
-        )
-    if status == "no_location":
-        return (
-            "The user has not stated their location. Give immediate safety "
-            "guidance that does not require location: local emergency services, "
-            "nearest emergency department, moving away from means, and asking "
-            "someone nearby to stay with them. Do not invent phone numbers."
-        )
-    if status == "no_verified_results":
-        location_label = inferred_location or "the user's stated region"
-        return (
-            f"The user gave this location: {location_label}. No verified, "
-            "actionable local crisis line was found. Give immediate safety "
-            "guidance using local emergency services, the nearest emergency "
-            "department, moving away from means, and contacting a trusted person "
-            "nearby. Briefly state that a local crisis line could not be verified. "
-            "Do not invent phone numbers."
-        )
-    if status == "lookup_error":
-        return (
-            "Looking up local crisis resources failed due to a temporary issue, "
-            "so none could be verified this turn. Do not claim a lookup was "
-            "completed or that none exist. Give immediate safety guidance using "
-            "local emergency services, the nearest emergency department, moving "
-            "away from means, and contacting a trusted person nearby. Do not "
-            "invent phone numbers."
-        )
-    return (
-        "No verified local resources were found. Ask once for country or region "
-        "only if the user is comfortable sharing it, and do not invent phone "
-        "numbers."
-    )
-
-
-def _format_resource_row(resource: dict[str, str]) -> str:
-    name = resource.get("name", "Crisis Line")
-    phone = resource.get("phone", "")
-    url = resource.get("url", "")
-    entry = f"- {name}"
-    if phone:
-        entry += f": {phone}"
-    if url:
-        entry += f" ({url})"
-    return entry
+def _crisis_level_from_state(state: AgentState | None) -> int | None:
+    crisis = (state or {}).get("crisis")
+    level = getattr(crisis, "level", None)
+    return int(level) if isinstance(level, int) else None
 
 
 __all__ = [
@@ -397,7 +293,6 @@ __all__ = [
     "build_crisis_resource_lookup_delta",
     "build_crisis_response_tools",
     "crisis_response_delta",
-    "crisis_support_template_parts",
     "execute_crisis_resource_lookup_tool",
     "execute_crisis_support_template_tool",
     "get_crisis_support_template",

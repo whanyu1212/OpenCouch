@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from agent.guardrails.crisis_response import CRISIS_RESPONSE_AVOID
+
 
 def build_voice_instructions(
     *,
@@ -62,9 +64,9 @@ def build_voice_instructions(
         "lookup_crisis_resources to obtain any specific crisis resource names, "
         "phone numbers, URLs, or local availability. Those tools are the only "
         "source for crisis resources; never invent or guess a phone number or "
-        "service. Do not diagnose, do not promise confidentiality or that "
-        "everything will be okay, and never claim OpenCouch has contacted "
-        "emergency services or another person."
+        "service. "
+        f"{CRISIS_RESPONSE_AVOID[0]} {CRISIS_RESPONSE_AVOID[1]} and "
+        f"{CRISIS_RESPONSE_AVOID[2].replace('Do not', 'never', 1)}"
     )
     exercise_policy = (
         "# Guided Exercises\n"
