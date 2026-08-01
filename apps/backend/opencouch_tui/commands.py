@@ -526,3 +526,16 @@ def format_commands_for_llm() -> str:
         f"- {command.display} — {command.description}" for command in help_commands()
     ]
     return "\n".join(lines)
+
+
+def format_command_guidance_for_llm() -> str:
+    """Return TUI-owned prompt guidance for available slash commands."""
+
+    return (
+        "CLI slash commands available in this TUI:\n"
+        f"{format_commands_for_llm()}\n"
+        "- Suggest slash commands only when clearly useful.\n"
+        "- Use the exact command syntax listed above.\n"
+        "- Never invent slash commands.\n"
+        "- Do not imply a slash command has executed unless the user typed it."
+    )

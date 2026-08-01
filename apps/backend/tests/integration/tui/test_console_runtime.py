@@ -80,6 +80,8 @@ async def test_console_runtime_reports_recoverable_turn_errors(monkeypatch) -> N
         ConsoleRuntime,
     )
 
+    received: dict[str, Any] = {}
+
     class _FailingPersistentRuntime:
         async def __aenter__(self):
             return self
@@ -94,6 +96,7 @@ async def test_console_runtime_reports_recoverable_turn_errors(monkeypatch) -> N
             return None
 
         async def run_turn_stream(self, **kwargs):
+            received.update(kwargs)
             yield StatusEvent(stage="triage")
             raise RuntimeError("crisis gate failed")
 
@@ -125,6 +128,8 @@ async def test_console_runtime_reports_recoverable_turn_errors(monkeypatch) -> N
     assert error.prefix == "Turn failed"
     assert error.exception_type == "RuntimeError"
     assert "crisis gate failed" in error.message
+    assert "CLI slash commands available in this TUI" in received["prompt_appendix"]
+    assert "/summary [short|full]" in received["prompt_appendix"]
 
 
 @pytest.mark.asyncio

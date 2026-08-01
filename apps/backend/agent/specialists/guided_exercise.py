@@ -71,7 +71,11 @@ def build_guided_exercise_agent(
     )
 
 
-def build_guided_exercise_system_prompt(state: AgentState) -> str:
+def build_guided_exercise_system_prompt(
+    state: AgentState,
+    *,
+    prompt_appendix: str | None = None,
+) -> str:
     """Build the system prompt owned by the guided-exercise specialist."""
 
     exercise_state = state.get("exercise_state", {})
@@ -83,7 +87,10 @@ def build_guided_exercise_system_prompt(state: AgentState) -> str:
     files = _knowledge_for_response_style("guided_exercise", approach)
     knowledge = _compose(*files)
     return _compose_system_prompt_with_state(
-        knowledge, _GUIDED_EXERCISE_INSTRUCTIONS, state
+        knowledge,
+        _GUIDED_EXERCISE_INSTRUCTIONS,
+        state,
+        prompt_appendix=prompt_appendix,
     )
 
 

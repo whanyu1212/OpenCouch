@@ -38,6 +38,7 @@ class InputTextForState(Protocol):
         state: AgentState,
         *,
         include_recent_history: bool = True,
+        prompt_appendix: str | None = None,
     ) -> str: ...
 
 

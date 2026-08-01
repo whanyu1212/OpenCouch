@@ -59,6 +59,7 @@ async def execute_therapeutic_response_skill_tool(
         state,
         response_style=style,
         therapeutic_approach=approach,
+        prompt_appendix=context.workflow_context.prompt_appendix,
     )
     result = TherapeuticResponseSkillToolResult(
         skill_context=skill_context,

@@ -35,11 +35,16 @@ def therapeutic_approach_from_state(state: Mapping[str, Any]) -> str:
     return approach if approach else "none"
 
 
-def therapeutic_system_prompt_for_state(state: AgentState) -> str:
+def therapeutic_system_prompt_for_state(
+    state: AgentState,
+    *,
+    prompt_appendix: str | None = None,
+) -> str:
     return render_therapeutic_response_style_guidance(
         state,
         response_style=response_style_from_state(state),
         therapeutic_approach=therapeutic_approach_from_state(state),
+        prompt_appendix=prompt_appendix,
     )
 
 
@@ -71,17 +76,25 @@ def build_therapeutic_response_llm_request(
     state: AgentState,
     *,
     include_recent_history: bool,
+    prompt_appendix: str | None = None,
 ) -> TherapeuticResponseLLMRequest:
     return TherapeuticResponseLLMRequest(
         prompt=response_llm_prompt_for_state(
             state,
             include_recent_history=include_recent_history,
         ),
-        system_instruction=therapeutic_system_prompt_for_state(state),
+        system_instruction=therapeutic_system_prompt_for_state(
+            state,
+            prompt_appendix=prompt_appendix,
+        ),
     )
 
 
-def therapeutic_agent_prompt_for_state(state: AgentState) -> str:
+def therapeutic_agent_prompt_for_state(
+    state: AgentState,
+    *,
+    prompt_appendix: str | None = None,
+) -> str:
     memory_block = _format_working_memory(state)
     style = response_style_from_state(state)
     approach = therapeutic_approach_from_state(state)
@@ -89,6 +102,7 @@ def therapeutic_agent_prompt_for_state(state: AgentState) -> str:
         state,
         response_style=style,
         therapeutic_approach=approach,
+        prompt_appendix=prompt_appendix,
     )
     return (
         "Write the next assistant message for a mental health support "
@@ -164,11 +178,15 @@ def build_therapeutic_agent_input(
     state: AgentState,
     *,
     include_recent_history: bool,
+    prompt_appendix: str | None = None,
 ) -> str:
     prompt_state = (
         state if include_recent_history else state_without_prompt_history(state)
     )
-    prompt = therapeutic_agent_prompt_for_state(prompt_state)
+    prompt = therapeutic_agent_prompt_for_state(
+        prompt_state,
+        prompt_appendix=prompt_appendix,
+    )
     operational_context = operational_context_for_prompt(state)
     if not operational_context:
         return prompt
