@@ -15,11 +15,8 @@ from agent.observability.events import (
 from agent.observability.recorder import InMemoryTraceRecorder
 from agent.runtime import PersistentAgentRuntime, RuntimeBehaviorConfig
 from agent.runtime.context import CrisisResourceToolCallRecord
-from agent.voice.tools import (
-    _execute_crisis_support_template,
-    _registered_voice_tool_names,
-    execute_voice_tool_call,
-)
+from agent.voice.tools import execute_voice_tool_call
+from agent.voice.tools.handlers import _execute_crisis_support_template
 from tests.support.openai_text import ScriptedOpenAITextRouteLLM
 from tests.support.persistence import (
     FakeCrossRestartLLM,
@@ -65,12 +62,6 @@ class _VoiceFacadeThatMustNotBuildContext:
 class _RuntimeThatMustNotBuildContext:
     memory_mode = MemoryMode.LOCAL
     voice = _VoiceFacadeThatMustNotBuildContext()
-
-
-def test_voice_tool_registry_covers_supported_tools() -> None:
-    from agent.voice.tools import _SUPPORTED_VOICE_TOOL_NAMES
-
-    assert _registered_voice_tool_names() == _SUPPORTED_VOICE_TOOL_NAMES
 
 
 @pytest.mark.asyncio

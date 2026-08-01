@@ -479,12 +479,8 @@ VOICE_TOOL_SPECS_BY_NAME: dict[str, VoiceToolSpec] = {
 if len(VOICE_TOOL_SPECS_BY_NAME) != len(VOICE_TOOL_SPECS):
     raise ValueError("Voice tool specs must have unique names")
 
-_SUPPORTED_VOICE_TOOL_NAMES: set[str] = set(VOICE_TOOL_SPECS_BY_NAME)
-
-
 __all__ = [
     "VOICE_TOOL_SPECS",
     "VOICE_TOOL_SPECS_BY_NAME",
     "VoiceToolSpec",
-    "_SUPPORTED_VOICE_TOOL_NAMES",
 ]

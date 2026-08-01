@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import pytest
 
+import agent.voice.tools as voice_tools
+from agent.voice import runtime_facade
 from agent.voice.tools.schemas import build_voice_realtime_tools
 from agent.voice.tools.specs import (
     VOICE_TOOL_SPECS,
     VOICE_TOOL_SPECS_BY_NAME,
     VoiceToolSpec,
-    _SUPPORTED_VOICE_TOOL_NAMES,
 )
 
 
@@ -34,7 +35,7 @@ def test_voice_tool_specs_preserve_realtime_order() -> None:
 
 
 def test_voice_tool_specs_drive_supported_surface_and_policies() -> None:
-    assert set(VOICE_TOOL_SPECS_BY_NAME) == _SUPPORTED_VOICE_TOOL_NAMES
+    assert set(VOICE_TOOL_SPECS_BY_NAME) == {spec.name for spec in VOICE_TOOL_SPECS}
     assert len(VOICE_TOOL_SPECS_BY_NAME) == len(VOICE_TOOL_SPECS)
 
     persistent_names = {spec.name for spec in VOICE_TOOL_SPECS if spec.persistent_only}
@@ -87,6 +88,17 @@ def test_voice_tool_specs_build_isolated_realtime_schemas() -> None:
     assert [
         tool["name"] for tool in build_voice_realtime_tools(memory_mode="incognito")
     ] == [spec.name for spec in VOICE_TOOL_SPECS if not spec.persistent_only]
+
+
+def test_voice_public_exports_exclude_private_implementations() -> None:
+    assert set(voice_tools.__all__) == {
+        "VOICE_TOOL_SPECS",
+        "VoiceToolSpec",
+        "build_voice_realtime_tools",
+        "execute_voice_tool_call",
+    }
+    assert all(not name.startswith("_") for name in voice_tools.__all__)
+    assert runtime_facade.__all__ == ["VoiceRuntimeFacade"]
 
 
 async def _noop_handler(context: object, arguments: dict[str, object]) -> object:
