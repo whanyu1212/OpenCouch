@@ -1,10 +1,9 @@
 """Facade grouping voice-specific runtime methods.
 
 Extracted from ``PersistentAgentRuntime`` to shrink the runtime module and
-give the voice surface a clear ownership boundary.  The facade holds a
-back-pointer to the runtime for the handful of private orchestration helpers
-it still needs (``_context_for_turn``, ``_prepare_session_for_turn``, etc.)
-and receives the most-used shared resources via constructor injection.
+give the voice surface a clear ownership boundary. The facade receives only
+the runtime operations it needs through an explicit collaboration bundle and
+receives its shared resources via constructor injection.
 
 The locking protocol is identical to the text path: ``_lock_for(thread_id)``
 returns the **same** per-thread ``asyncio.Lock`` instance the runtime uses,
@@ -21,7 +20,7 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from agent.audit.capture import capture_crisis_outcome
@@ -64,11 +63,9 @@ from agent.voice.safety_overlay import (
     VoiceSafetyOverlayService,
     VoiceSafetyResourceResolution,
 )
+from agent.voice.runtime_collaboration import VoiceRuntimeCollaboration
 from agent.voice.state_transition import VoiceTurnStateInputs, build_voice_turn_state
 from llm.base import BaseLLMClient
-
-if TYPE_CHECKING:
-    from agent.runtime.runtime import PersistentAgentRuntime
 
 logger = logging.getLogger(__name__)
 
@@ -176,7 +173,7 @@ class VoiceRuntimeFacade:
     def __init__(
         self,
         *,
-        runtime: PersistentAgentRuntime,
+        collaboration: VoiceRuntimeCollaboration,
         state_store: RuntimeStateStore,
         memory_store: MemoryStore,
         active_session_manager: ActiveSessionManager,
@@ -184,7 +181,7 @@ class VoiceRuntimeFacade:
         lock_for: Callable[[str], asyncio.Lock],
         memory_mode: MemoryMode,
     ) -> None:
-        self._runtime = runtime
+        self._collaboration = collaboration
         self._state_store = state_store
         self._memory_store = memory_store
         self._active_session_manager = active_session_manager
@@ -354,9 +351,9 @@ class VoiceRuntimeFacade:
         )
         if not effective_user_message:
             effective_user_message = "voice tool call"
-        prior_state = await self._runtime.get_state(thread_id)
+        prior_state = await self._collaboration.get_state(thread_id)
         prior_turn_count = turn_count_from_state(prior_state)
-        initial_state = self._runtime._build_turn_initial_state(
+        initial_state = self._collaboration.build_turn_initial_state(
             thread_id=thread_id,
             message=effective_user_message,
             channel=Channel.VOICE,
@@ -389,7 +386,7 @@ class VoiceRuntimeFacade:
             if isinstance(memory_control, Mapping)
             else None
         )
-        workflow_context = self._runtime._context_for_turn(
+        workflow_context = self._collaboration.build_workflow_context(
             thread_id=thread_id,
             message=effective_user_message,
             prior_state=prior_state,
@@ -535,7 +532,7 @@ class VoiceRuntimeFacade:
                 state = cast(
                     AgentState,
                     dict(
-                        self._runtime._build_turn_initial_state(
+                        self._collaboration.build_turn_initial_state(
                             thread_id=thread_id,
                             message=effective_user_message,
                             channel=Channel.VOICE,
@@ -567,8 +564,8 @@ class VoiceRuntimeFacade:
         """
 
         async with self._lock_for(thread_id):
-            prior_state = await self._runtime.get_state(thread_id)
-            await self._runtime._prepare_session_for_turn(
+            prior_state = await self._collaboration.get_state(thread_id)
+            await self._collaboration.prepare_session_for_turn(
                 thread_id=thread_id,
                 prior_state=prior_state,
                 llm_client=llm_client,
@@ -603,7 +600,7 @@ class VoiceRuntimeFacade:
                 state = cast(
                     AgentState,
                     dict(
-                        self._runtime._build_turn_initial_state(
+                        self._collaboration.build_turn_initial_state(
                             thread_id=thread_id,
                             message=effective_user_message,
                             channel=Channel.VOICE,
@@ -655,7 +652,7 @@ class VoiceRuntimeFacade:
                 state = cast(
                     AgentState,
                     dict(
-                        self._runtime._build_turn_initial_state(
+                        self._collaboration.build_turn_initial_state(
                             thread_id=thread_id,
                             message="voice tool call",
                             channel=Channel.VOICE,
@@ -840,8 +837,8 @@ class VoiceRuntimeFacade:
             route = f"voice_{outcome}"
             response_style = f"voice_{outcome}"
         async with self._lock_for(thread_id):
-            self._runtime._remember_llm_client(thread_id, llm_client)
-            prior_state = await self._runtime.get_state(thread_id)
+            self._collaboration.remember_llm_client(thread_id, llm_client)
+            prior_state = await self._collaboration.get_state(thread_id)
             if (
                 correlation_hash is not None
                 and prior_state is not None
@@ -899,16 +896,16 @@ class VoiceRuntimeFacade:
                 )
             else:
                 turn_instance_id = uuid4().hex
-                await self._runtime._prepare_session_for_turn(
+                await self._collaboration.prepare_session_for_turn(
                     thread_id=thread_id,
                     prior_state=prior_state,
                     llm_client=llm_client,
                 )
-                prior_state = await self._runtime.get_state(thread_id)
+                prior_state = await self._collaboration.get_state(thread_id)
                 safety_prior_state = prior_state
                 prior_turn_count = turn_count_from_state(prior_state)
                 seed_message = user_text.strip() or assistant_text.strip()
-                initial_state = self._runtime._build_turn_initial_state(
+                initial_state = self._collaboration.build_turn_initial_state(
                     thread_id=thread_id,
                     message=seed_message,
                     channel=Channel.VOICE,
@@ -964,7 +961,7 @@ class VoiceRuntimeFacade:
                 thread_id,
                 mutation_kind="voice_turn",
             ) as mutation_token:
-                post_turn_context = self._runtime._context_for_turn(
+                post_turn_context = self._collaboration.build_workflow_context(
                     thread_id=thread_id,
                     message=state.get("message", ""),
                     prior_state=prior_state,
@@ -980,7 +977,7 @@ class VoiceRuntimeFacade:
                     workflow_context=post_turn_context,
                     mutation_token=mutation_token,
                     ensure_sdk_turn_recorded=(
-                        self._runtime._ensure_openai_sdk_turn_recorded
+                        self._collaboration.ensure_sdk_turn_recorded
                     ),
                     session_transcript_soft_limit=None,
                     capture_safety_event=turn_route == "crisis",
