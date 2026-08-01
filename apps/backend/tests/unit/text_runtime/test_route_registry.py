@@ -12,7 +12,11 @@ from agent.runtime.route_registry import (
     TextRouteRegistry,
     build_default_text_route_registry,
 )
-from agent.runtime.text_turn_graph import PreparedTurn, TextRoutePlan
+from agent.runtime.text_turn_graph import (
+    PreparedTurn,
+    TextRouteKind,
+    TextRoutePlan,
+)
 from agent.runtime.types import (
     RouteHandler,
     TextRuntimeStateEvent,
@@ -40,17 +44,10 @@ def _handler() -> RouteHandler:
     return RouteHandler(execute=_execute_handler, stream=_stream_handler)
 
 
-def _plan(kind: str = "therapeutic") -> TextRoutePlan:
+def _plan(kind: TextRouteKind = "therapeutic") -> TextRoutePlan:
     state: dict[str, Any] = {"route": kind}
     prepared = PreparedTurn(state=state, eligible=True)
-    return TextRoutePlan(
-        kind=kind,  # type: ignore[arg-type]
-        state=state,
-        prepared=prepared,
-        runtime_mode=kind,
-        response_style="supportive",
-        selected_agent="test-agent",
-    )
+    return TextRoutePlan(kind=kind, prepared=prepared)
 
 
 def test_route_registry_resolves_explicit_handlers_without_mutating_input() -> None:
