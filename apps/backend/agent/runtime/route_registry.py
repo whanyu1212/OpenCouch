@@ -14,16 +14,10 @@ from agent.runtime.types import RouteHandler
 
 
 class TextRouteRegistry:
-    """Immutable route-to-handler mapping with an explicit default handler."""
+    """Immutable mapping from text route kinds to flow-owned handlers."""
 
-    def __init__(
-        self,
-        handlers: Mapping[str, RouteHandler],
-        *,
-        default_handler: RouteHandler,
-    ) -> None:
+    def __init__(self, handlers: Mapping[str, RouteHandler]) -> None:
         self._handlers = MappingProxyType(dict(handlers))
-        self._default_handler = default_handler
 
     @property
     def handlers(self) -> Mapping[str, RouteHandler]:
@@ -31,16 +25,14 @@ class TextRouteRegistry:
 
         return self._handlers
 
-    @property
-    def default_handler(self) -> RouteHandler:
-        """Return the handler used for therapeutic and unknown route kinds."""
-
-        return self._default_handler
-
     def handler_for(self, kind: str) -> RouteHandler:
-        """Resolve one route kind, falling back to the therapeutic handler."""
+        """Return the registered handler for one route kind.
 
-        return self._handlers.get(kind, self._default_handler)
+        Raises:
+            KeyError: If no handler is registered for ``kind``.
+        """
+
+        return self._handlers[kind]
 
 
 TextRouteRegistryFactory = Callable[[TextRuntimeServicesFactory], TextRouteRegistry]
@@ -52,14 +44,16 @@ def build_default_text_route_registry(
     """Compose the product's default flow-owned text route handlers."""
 
     crisis = build_crisis_route_handler(services_factory)
+    therapeutic = build_therapeutic_route_handler(services_factory)
     return TextRouteRegistry(
         {
             "crisis_response": crisis,
             "crisis_clarification": crisis,
             "grounded_lookup": build_grounded_lookup_route_handler(services_factory),
             "guided_exercise": build_guided_exercise_route_handler(services_factory),
-        },
-        default_handler=build_therapeutic_route_handler(services_factory),
+            "memory_control": therapeutic,
+            "therapeutic": therapeutic,
+        }
     )
 
 
