@@ -32,14 +32,15 @@ from agent.memory.control.read_service import (
     owner_or_failure_result,
 )
 from agent.memory.control.types import (
+    MemoryControlDependencies,
     MemoryControlRequest,
     MemoryControlServiceResult,
     PreferenceRuleDecision,
 )
 from agent.memory.modes import MemoryMode
-from agent.runtime.workflow_context import WorkflowContext
 
 __all__ = [
+    "MemoryControlDependencies",
     "MemoryControlRequest",
     "MemoryControlServiceResult",
     "PreferenceRuleDecision",
@@ -49,20 +50,20 @@ __all__ = [
 
 async def execute_memory_control_request(
     request: MemoryControlRequest,
-    context: WorkflowContext,
+    dependencies: MemoryControlDependencies,
 ) -> MemoryControlServiceResult:
     """Execute an explicit memory-management action from neutral input.
 
     Args:
         request: Framework-neutral memory action request.
-        context: Workflow context carrying memory dependencies.
+        dependencies: Explicit memory-control dependencies.
 
     Returns:
         MemoryControlServiceResult: User-facing reply plus memory-management state
             updates.
     """
 
-    if context.memory_mode == MemoryMode.INCOGNITO:
+    if dependencies.memory_mode == MemoryMode.INCOGNITO:
         return incognito_memory_control_result()
 
     owner_id, failure_result = owner_or_failure_result(request.owner_id)
@@ -76,13 +77,13 @@ async def execute_memory_control_request(
         raise ValueError("Memory action must be a mapping.")
     action = parse_memory_control_action(dict(raw_action))
 
-    store = context.memory_store
+    store = dependencies.memory_store
 
     match action:
         case ListAction():
             return await handle_memory_list(store=store, owner_id=owner_id)
         case StatusAction():
-            return await handle_memory_status(owner_id=owner_id, context=context)
+            return await handle_memory_status(owner_id=owner_id, store=store)
         case SetRecallAction():
             return await handle_set_recall(
                 action=action,
@@ -92,7 +93,8 @@ async def execute_memory_control_request(
         case SavePreferenceAction():
             return await handle_save_preference(
                 action=action,
-                context=context,
+                store=store,
+                llm_client=dependencies.llm_client,
                 owner_id=owner_id,
                 request=request,
             )

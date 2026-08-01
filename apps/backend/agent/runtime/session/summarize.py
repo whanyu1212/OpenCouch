@@ -158,14 +158,13 @@ async def run_summarize_session(
     try:
         result: SummarizationResult = await llm_client.generate_structured(
             prompt=build_summarization_user_prompt(
-                state,
+                transcript_entries=transcript_entries,
                 session_id=session_id,
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_seconds=duration_seconds,
                 turn_count=user_turn_count,
                 approach_hint=approach_hint,
-                transcript_entries=transcript_entries,
             ),
             response_schema=SummarizationResult,
             system_instruction=build_summarization_system_prompt(),

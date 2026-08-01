@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from agent.memory.control.actions import SavePreferenceAction, SetRecallAction
 from agent.memory.control.operations import save_preference_rule, set_memory_recall
 from agent.memory.control.types import (
@@ -11,7 +9,8 @@ from agent.memory.control.types import (
     MemoryControlServiceResult,
     PreferenceRuleDecision,
 )
-from agent.runtime.workflow_context import WorkflowContext
+from agent.memory.store import MemoryStore
+from llm.base import BaseLLMClient
 
 
 def _build_preference_rule_prompt(
@@ -55,15 +54,15 @@ def _build_preference_rule_system_prompt() -> str:
 async def _write_preference_rule(
     *,
     action: SavePreferenceAction,
-    context: WorkflowContext,
+    llm_client: BaseLLMClient | None,
     current_user_message: str,
 ) -> str:
     """Generate the final procedural rule for an explicit preference."""
 
-    if context.llm_client is None:
+    if llm_client is None:
         raise RuntimeError("save_preference requires an LLM client.")
 
-    decision = await context.llm_client.generate_structured(
+    decision = await llm_client.generate_structured(
         prompt=_build_preference_rule_prompt(
             current_user_message=current_user_message,
             preference_text=action.preference_text,
@@ -77,7 +76,7 @@ async def _write_preference_rule(
 async def handle_set_recall(
     *,
     action: SetRecallAction,
-    store: Any,
+    store: MemoryStore,
     owner_id: str,
 ) -> MemoryControlServiceResult:
     """Enable or disable proactive recall for one owner."""
@@ -99,26 +98,27 @@ async def handle_set_recall(
 async def handle_save_preference(
     *,
     action: SavePreferenceAction,
-    context: WorkflowContext,
+    store: MemoryStore,
+    llm_client: BaseLLMClient | None,
     owner_id: str,
     request: MemoryControlRequest,
 ) -> MemoryControlServiceResult:
     """Persist one explicit response-style or memory-use preference."""
 
-    if context.llm_client is None:
+    if llm_client is None:
         raise RuntimeError("save_preference requires an LLM client.")
 
     rule_text = await _write_preference_rule(
         action=action,
-        context=context,
+        llm_client=llm_client,
         current_user_message=request.current_user_message,
     )
     saved_rule = await save_preference_rule(
-        context.memory_store,
+        store,
         owner_id=owner_id,
         rule_text=rule_text,
         evidence=request.current_user_message,
-        llm_client=context.llm_client,
+        llm_client=llm_client,
     )
     return MemoryControlServiceResult(
         response_text=f"Saved: {saved_rule}",

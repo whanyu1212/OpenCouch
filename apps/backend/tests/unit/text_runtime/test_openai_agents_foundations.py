@@ -16,7 +16,7 @@ from agent.flows.guided_exercise import _build_guided_exercise_agent
 from agent.flows.therapeutic import run_therapeutic_turn
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.memory.types import TurnDispatchDecision
+from agent.runtime.dispatch_models import TurnDispatchDecision
 from agent.models import AgentInput, CrisisAssessment
 from agent.runtime import build_initial_state
 from agent.runtime.workflow_context import WorkflowContext

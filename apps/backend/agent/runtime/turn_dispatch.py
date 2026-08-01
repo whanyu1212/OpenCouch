@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from agent.memory.types import TurnDispatchDecision
+from agent.runtime.dispatch_models import TurnDispatchDecision
 from agent.specialists.triage import TRIAGE_AGENT_NAME
 from agent.state import AgentState
 

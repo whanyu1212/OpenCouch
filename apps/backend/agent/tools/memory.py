@@ -7,9 +7,10 @@ from typing import Any, Literal, Mapping, cast
 from agents import RunContextWrapper, function_tool
 from pydantic import BaseModel, Field
 
-from agent.memory.control.service import (
+from agent.memory.control.service import execute_memory_control_request
+from agent.memory.control.types import (
+    MemoryControlDependencies,
     MemoryControlRequest,
-    execute_memory_control_request,
 )
 from agent.runtime.context import (
     MemoryActionType,
@@ -91,9 +92,14 @@ async def execute_memory_tool_action(
     }:
         raise ValueError(f"Unsupported memory action: {action_type!r}")
 
+    workflow_context = context.workflow_context
     result = await execute_memory_control_request(
         memory_control_request_from_context(context, action),
-        context.workflow_context,
+        MemoryControlDependencies(
+            memory_store=workflow_context.memory_store,
+            memory_mode=workflow_context.memory_mode,
+            llm_client=workflow_context.llm_client,
+        ),
     )
     tool_result = MemoryToolResult(
         response_text=result.response_text,

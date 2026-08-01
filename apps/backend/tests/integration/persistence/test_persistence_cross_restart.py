@@ -114,7 +114,7 @@ class _FakeIncognitoExerciseContinuityLLM(FakeCrossRestartLLM):
             )
 
         self.dispatch_calls += 1
-        from agent.memory.types import DispatchDecision
+        from agent.runtime.dispatch_models import DispatchDecision
 
         lowered = prompt.lower()
         current_message = lowered.rsplit("current user message:", 1)[-1]

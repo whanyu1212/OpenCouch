@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from agent.memory.types.primitives import MemoryWriteTiming
-from agent.memory.types.therapeutic import TherapeuticApproach
+from agent.models import TherapeuticApproach
 
 
 class CBTContext(BaseModel):

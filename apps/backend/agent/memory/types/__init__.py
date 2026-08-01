@@ -37,19 +37,6 @@ from agent.memory.types.semantic import (
     SemanticCategory,
     SemanticFact,
 )
-from agent.memory.types.therapeutic import (
-    ActiveFlowAction,
-    DispatchDecision,
-    ExerciseStartBasis,
-    GuidancePermission,
-    SessionIntent,
-    SessionStage,
-    TherapeuticApproach,
-    TherapeuticResponseGuidanceStyle,
-    TherapeuticResponseStyle,
-    TurnDispatchDecision,
-    TurnRoute,
-)
 
 __all__ = [
     "ConfidenceLevel",
@@ -57,7 +44,6 @@ __all__ = [
     "EntityType",
     "EntityRef",
     "HotPathEdgeType",
-    "TherapeuticApproach",
     "SemanticCategory",
     "MemoryWrite",
     "SemanticFact",
@@ -79,14 +65,4 @@ __all__ = [
     "ProceduralProfile",
     "ProceduralRuleDraft",
     "ProceduralExtractionResult",
-    "TherapeuticResponseStyle",
-    "TherapeuticResponseGuidanceStyle",
-    "SessionIntent",
-    "SessionStage",
-    "GuidancePermission",
-    "ExerciseStartBasis",
-    "TurnRoute",
-    "ActiveFlowAction",
-    "TurnDispatchDecision",
-    "DispatchDecision",
 ]
