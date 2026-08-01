@@ -8,8 +8,11 @@ from agent.memory.commit.service import (
     SessionMemoryCommitResult,
     commit_session_memory,
 )
-from agent.runtime.session.history import SessionConversation
-from agent.state import AgentState
+from agent.runtime.session.history import (
+    SessionConversation,
+    session_conversation_from_transcript,
+)
+from agent.state import AgentState, resolve_owner_id
 
 if TYPE_CHECKING:
     from agent.memory.policy.candidates import SessionMemoryBuffer
@@ -45,12 +48,16 @@ async def run_commit_session_memory(
         Commit result when work was attempted, otherwise ``None``.
     """
 
+    session_conversation = conversation or session_conversation_from_transcript(
+        state.get("transcript", [])
+    )
     return await commit_session_memory(
-        state,
+        owner_id=resolve_owner_id(state),
+        session_id=state.get("session_id"),
+        user_turn_texts=session_conversation.user_texts(),
         memory_store=memory_store,
         session_buffer=session_buffer,
         stored_arc=stored_arc,
         embedding_provider=embedding_provider,
         llm_client=llm_client,
-        user_turn_texts=conversation.user_texts() if conversation is not None else None,
     )

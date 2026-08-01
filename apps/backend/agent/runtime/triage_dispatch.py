@@ -9,7 +9,7 @@ from agent.flows.sdk_fallback import (
     can_fallback_to_control_response,
     openai_sdk_fallback_reason,
 )
-from agent.memory.types import TurnDispatchDecision
+from agent.runtime.dispatch_models import TurnDispatchDecision
 from agent.runtime.context import OpenAITextRunContext
 from agent.runtime.session.state import format_recent_history
 from agent.runtime.state_ops import apply_state_delta

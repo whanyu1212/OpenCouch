@@ -6,20 +6,9 @@ from typing import TYPE_CHECKING
 
 from agent.memory.store import MemoryStore
 from agent.memory.text_tokens import tokenize_meaningful
-from agent.state import AgentState
 
 if TYPE_CHECKING:
     from agent.memory.types import StoredSessionArc
-
-
-def _user_turn_texts(state: AgentState) -> list[str]:
-    """Return the user-turn transcript texts for session-end scoring."""
-    transcript = state.get("transcript", [])
-    return [
-        (turn.get("content") or "").strip()
-        for turn in transcript
-        if turn.get("role") == "user" and (turn.get("content") or "").strip()
-    ]
 
 
 def _count_supported_user_turns(

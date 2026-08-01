@@ -7,17 +7,16 @@ from typing import Any
 
 import pytest
 
-from agent.audit.crisis_log import InMemoryCrisisLogBackend
-from agent.memory.hashing import iso_now
-from agent.memory.modes import MemoryMode
-from agent.memory.types import EntityRef, SemanticFact
-from agent.memory.operations.procedural_profile import aget_procedural_profile
-from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.control.service import (
+    MemoryControlDependencies,
     MemoryControlRequest,
     execute_memory_control_request,
 )
-from agent.runtime.workflow_context import WorkflowContext
+from agent.memory.hashing import iso_now
+from agent.memory.modes import MemoryMode
+from agent.memory.operations.procedural_profile import aget_procedural_profile
+from agent.memory.store import OpenCouchMemoryStore
+from agent.memory.types import EntityRef, SemanticFact
 
 
 class _FakePreferenceRuleLLM:
@@ -65,16 +64,15 @@ class _FakePreferenceRuleLLM:
         )
 
 
-def _context(
+def _dependencies(
     *,
     store: OpenCouchMemoryStore | None = None,
     memory_mode: MemoryMode = MemoryMode.LOCAL,
     llm_client: Any | None = None,
-) -> WorkflowContext:
-    return WorkflowContext(
+) -> MemoryControlDependencies:
+    return MemoryControlDependencies(
         llm_client=llm_client,
         memory_store=store or OpenCouchMemoryStore(),
-        crisis_log_backend=InMemoryCrisisLogBackend(),
         memory_mode=memory_mode,
     )
 
@@ -127,7 +125,7 @@ async def test_service_lists_saved_memory() -> None:
 
     result = await execute_memory_control_request(
         _request("What do you remember about me?", {"type": "list"}),
-        _context(store=store),
+        _dependencies(store=store),
     )
 
     assert "Presentations make me anxious" in result.response_text
@@ -138,7 +136,7 @@ async def test_service_lists_saved_memory() -> None:
 async def test_service_noops_in_incognito_mode() -> None:
     result = await execute_memory_control_request(
         _request("What do you remember about me?", {"type": "list"}),
-        _context(memory_mode=MemoryMode.INCOGNITO),
+        _dependencies(memory_mode=MemoryMode.INCOGNITO),
     )
 
     assert "guest mode" in result.response_text
@@ -150,7 +148,7 @@ async def test_service_unknown_action_raises() -> None:
     with pytest.raises(ValueError, match="Invalid memory action payload"):
         await execute_memory_control_request(
             _request("memory help", {"type": "unknown"}),
-            _context(),
+            _dependencies(),
         )
 
 
@@ -167,7 +165,7 @@ async def test_service_set_recall_without_enabled_raises() -> None:
     with pytest.raises(ValueError, match="Invalid memory action payload"):
         await execute_memory_control_request(
             _request("turn proactive recall", {"type": "set_recall"}),
-            _context(store=store),
+            _dependencies(store=store),
         )
 
     profile = await aget_procedural_profile(store, user_id="user-1")
@@ -183,7 +181,7 @@ async def test_service_save_preference_without_text_raises() -> None:
     with pytest.raises(ValueError, match="Invalid memory action payload"):
         await execute_memory_control_request(
             _request("remember preference", {"type": "save_preference"}),
-            _context(store=store),
+            _dependencies(store=store),
         )
 
     profile = await aget_procedural_profile(store, user_id="user-1")
@@ -202,7 +200,7 @@ async def test_service_save_preference_writes_rule_with_llm() -> None:
                 "preference_text": "direct answers when I am spiraling",
             },
         ),
-        _context(
+        _dependencies(
             store=store,
             llm_client=_FakePreferenceRuleLLM(
                 rule_text="You prefer direct answers when you are spiraling.",
@@ -231,7 +229,7 @@ async def test_service_save_preference_requires_llm() -> None:
                     "preference_text": "direct answers when I am spiraling",
                 },
             ),
-            _context(store=store),
+            _dependencies(store=store),
         )
 
     profile = await aget_procedural_profile(store, user_id="user-1")
@@ -258,7 +256,7 @@ async def test_service_confirm_pending_deletes_target() -> None:
                 },
             },
         ),
-        _context(store=store),
+        _dependencies(store=store),
     )
 
     assert "Deleted that saved fact" in result.response_text
@@ -285,7 +283,7 @@ async def test_service_forget_by_query_keeps_multiple_matches_pending() -> None:
             "Forget the saved memory about presentations.",
             {"type": "forget_by_query", "query": "presentations"},
         ),
-        _context(store=store),
+        _dependencies(store=store),
     )
 
     pending_action = result.memory_control["pending_action"]
@@ -315,7 +313,7 @@ async def test_service_forget_by_query_selects_pending_match_by_number() -> None
             "Forget the saved memory about presentations.",
             {"type": "forget_by_query", "query": "presentations"},
         ),
-        _context(store=store),
+        _dependencies(store=store),
     )
 
     result = await execute_memory_control_request(
@@ -324,7 +322,7 @@ async def test_service_forget_by_query_selects_pending_match_by_number() -> None
             {"type": "forget_by_query", "query": "2"},
             pending_action=ambiguous_result.memory_control["pending_action"],
         ),
-        _context(store=store),
+        _dependencies(store=store),
     )
 
     pending_action = result.memory_control["pending_action"]
@@ -356,7 +354,7 @@ async def test_service_forget_by_query_keeps_options_on_invalid_pending_selectio
             "Forget the saved memory about presentations.",
             {"type": "forget_by_query", "query": "presentations"},
         ),
-        _context(store=store),
+        _dependencies(store=store),
     )
     pending_options = ambiguous_result.memory_control["pending_action"]
 
@@ -366,7 +364,7 @@ async def test_service_forget_by_query_keeps_options_on_invalid_pending_selectio
             {"type": "forget_by_query", "query": "9"},
             pending_action=pending_options,
         ),
-        _context(store=store),
+        _dependencies(store=store),
     )
 
     assert result.memory_control["pending_action"] == pending_options

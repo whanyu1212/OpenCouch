@@ -34,9 +34,6 @@ in the memory package rather than in ``knowledge/``.
 
 from __future__ import annotations
 
-from agent.state import AgentState
-
-
 # ─── Per-approach field hints for the summarizer user prompt ─────────────────
 #
 # Each entry lists the approach_context field names the LLM should look for
@@ -246,7 +243,6 @@ def build_summarization_system_prompt() -> str:
 
 
 def build_summarization_user_prompt(
-    state: AgentState | None = None,
     *,
     session_id: str,
     started_at: str,
@@ -254,13 +250,11 @@ def build_summarization_user_prompt(
     duration_seconds: int,
     turn_count: int,
     approach_hint: str | None = None,
-    transcript_entries: list[dict[str, str]] | None = None,
+    transcript_entries: list[dict[str, str]],
 ) -> str:
     """Build the session-summarizer user prompt.
 
     Args:
-        state (AgentState | None): Current runtime state with the full transcript.
-            Used only when ``transcript_entries`` is not supplied.
         session_id (str): Session identifier copied into the summary payload.
         started_at (str): ISO-8601 session start timestamp.
         ended_at (str): ISO-8601 session end timestamp.
@@ -274,11 +268,7 @@ def build_summarization_user_prompt(
         str: User prompt for a single session-summarization call.
     """
 
-    transcript = (
-        transcript_entries
-        if transcript_entries is not None
-        else (state.get("transcript", []) if state is not None else [])
-    )
+    transcript = transcript_entries
     if not transcript:
         transcript_block = "(empty transcript — the session had no turns)"
     else:

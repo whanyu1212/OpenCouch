@@ -160,7 +160,7 @@ class TestSummarizationUserPrompt:
         )
 
         prompt = build_summarization_user_prompt(
-            state,
+            transcript_entries=state["transcript"],
             session_id="session-abc",
             started_at="2026-04-10T12:00:00Z",
             ended_at="2026-04-10T12:15:00Z",
@@ -187,7 +187,7 @@ class TestSummarizationUserPrompt:
 
         state = _make_state(transcript=transcript)
         prompt = build_summarization_user_prompt(
-            state,
+            transcript_entries=state["transcript"],
             session_id="session-test",
             started_at="2026-04-10T12:00:00Z",
             ended_at="2026-04-10T12:30:00Z",
@@ -208,7 +208,7 @@ class TestSummarizationUserPrompt:
 
         state = _make_state(transcript=[])
         prompt = build_summarization_user_prompt(
-            state,
+            transcript_entries=state["transcript"],
             session_id="session-empty",
             started_at="2026-04-10T12:00:00Z",
             ended_at="2026-04-10T12:00:30Z",
@@ -234,7 +234,7 @@ class TestSummarizationUserPrompt:
         ]
         state = _make_state(transcript=transcript)
         prompt = build_summarization_user_prompt(
-            state,
+            transcript_entries=state["transcript"],
             session_id="session-mixed",
             started_at="2026-04-10T12:00:00Z",
             ended_at="2026-04-10T12:05:00Z",
@@ -263,7 +263,7 @@ class TestSummarizationUserPrompt:
             ]
         )
         prompt = build_summarization_user_prompt(
-            state,
+            transcript_entries=state["transcript"],
             session_id="session-style",
             started_at="2026-04-10T12:00:00Z",
             ended_at="2026-04-10T12:05:00Z",
@@ -303,7 +303,7 @@ class TestSummarizationApproachPrompts:
 
         state = _make_state(transcript=[{"role": "user", "content": "test"}])
         prompt = build_summarization_user_prompt(
-            state,
+            transcript_entries=state["transcript"],
             session_id="s1",
             started_at="2026-01-01T00:00:00Z",
             ended_at="2026-01-01T01:00:00Z",
@@ -325,7 +325,7 @@ class TestSummarizationApproachPrompts:
 
         state = _make_state(transcript=[{"role": "user", "content": "test"}])
         prompt = build_summarization_user_prompt(
-            state,
+            transcript_entries=state["transcript"],
             session_id="s2",
             started_at="2026-01-01T00:00:00Z",
             ended_at="2026-01-01T01:00:00Z",
@@ -345,7 +345,7 @@ class TestSummarizationApproachPrompts:
 
         state = _make_state(transcript=[{"role": "user", "content": "test"}])
         prompt = build_summarization_user_prompt(
-            state,
+            transcript_entries=state["transcript"],
             session_id="s3",
             started_at="2026-01-01T00:00:00Z",
             ended_at="2026-01-01T01:00:00Z",
@@ -360,7 +360,7 @@ class TestSummarizationApproachPrompts:
 
         state = _make_state(transcript=[{"role": "user", "content": "test"}])
         prompt = build_summarization_user_prompt(
-            state,
+            transcript_entries=state["transcript"],
             session_id="s4",
             started_at="2026-01-01T00:00:00Z",
             ended_at="2026-01-01T01:00:00Z",

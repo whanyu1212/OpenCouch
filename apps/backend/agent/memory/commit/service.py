@@ -14,10 +14,7 @@ from agent.memory.commit.clustering import (
     procedural_cluster_text,
     semantic_cluster_text,
 )
-from agent.memory.commit.scoring import (
-    _load_prior_session_support_texts,
-    _user_turn_texts,
-)
+from agent.memory.commit.scoring import _load_prior_session_support_texts
 from agent.memory.commit.selection import (
     _select_procedural_candidates_to_commit,
     _select_semantic_candidates_to_commit,
@@ -42,7 +39,7 @@ from agent.memory.operations.semantic_writes import (
     apply_semantic_writes_batch,
 )
 from agent.memory.store import MemoryStore
-from agent.state import AgentState, resolve_owner_id
+
 
 if TYPE_CHECKING:
     from agent.memory.providers.embeddings import EmbeddingProvider
@@ -67,7 +64,7 @@ class SessionMemoryCommitResult:
 
 
 def _current_session_ids_for_commit(
-    state: AgentState,
+    session_id: str | None,
     *,
     stored_arc: "StoredSessionArc | None",
     session_buffer: SessionMemoryBuffer,
@@ -76,7 +73,7 @@ def _current_session_ids_for_commit(
     return {
         session_id
         for session_id in (
-            state.get("session_id"),
+            session_id,
             stored_arc.session_id if stored_arc is not None else None,
             session_buffer.session_id,
         )
@@ -272,14 +269,15 @@ async def _embed_for_clustering(
 
 
 async def commit_session_memory(
-    state: AgentState,
     *,
+    owner_id: str,
+    session_id: str | None,
+    user_turn_texts: list[str],
     memory_store: MemoryStore,
     session_buffer: SessionMemoryBuffer | None,
     stored_arc: "StoredSessionArc | None",
     embedding_provider: "EmbeddingProvider | None" = None,
     llm_client: "BaseLLMClient | None" = None,
-    user_turn_texts: list[str] | None = None,
 ) -> SessionMemoryCommitResult | None:
     """Commit buffered semantic/procedural candidates that survived review."""
     if (
@@ -289,12 +287,7 @@ async def commit_session_memory(
     ):
         return None
 
-    owner_id = resolve_owner_id(state)
-    user_turn_texts = (
-        list(user_turn_texts)
-        if user_turn_texts is not None
-        else _user_turn_texts(state)
-    )
+    user_turn_texts = list(user_turn_texts)
     result = SessionMemoryCommitResult()
     if any(text_contains_memory_control_request(text) for text in user_turn_texts):
         result.semantic_skips = len(session_buffer.held_semantic_candidates)
@@ -308,7 +301,7 @@ async def commit_session_memory(
         return result
 
     current_session_ids = _current_session_ids_for_commit(
-        state,
+        session_id,
         stored_arc=stored_arc,
         session_buffer=session_buffer,
     )

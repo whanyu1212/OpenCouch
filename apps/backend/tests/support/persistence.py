@@ -158,7 +158,7 @@ class FakeCrossRestartLLM(BaseLLMClient):
 
         if schema_name == "DispatchDecision":
             self.dispatch_calls += 1
-            from agent.memory.types import DispatchDecision
+            from agent.runtime.dispatch_models import DispatchDecision
 
             return cast(
                 StructuredResponseT,

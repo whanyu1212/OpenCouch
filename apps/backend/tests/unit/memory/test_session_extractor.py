@@ -20,17 +20,11 @@ from agent.memory.types.procedural import (
     ProceduralRuleDraft,
 )
 from agent.memory.types.semantic import ExtractionResult, MemoryWrite
-from agent.models import Message, MessageRole
-from agent.runtime.session.history import SessionConversation
 from llm.base import BaseLLMClient, StructuredResponseT
 
 
-def _conversation(*user_texts: str) -> SessionConversation:
-    messages = []
-    for text in user_texts:
-        messages.append(Message(role=MessageRole.USER, content=text))
-        messages.append(Message(role=MessageRole.ASSISTANT, content="ok"))
-    return SessionConversation(messages=tuple(messages))
+def _user_turn_texts(*texts: str) -> list[str]:
+    return list(texts)
 
 
 def _semantic_write(quote: str, *, turn_index: int = 0) -> MemoryWrite:
@@ -96,7 +90,7 @@ class _FakeExtractLLM(BaseLLMClient):
 async def test_skips_incognito() -> None:
     buffer = SessionMemoryBuffer(session_id="t")
     await extract_session_candidates(
-        conversation=_conversation("I always spiral before talks"),
+        user_turn_texts=_user_turn_texts("I always spiral before talks"),
         session_id="t",
         session_buffer=buffer,
         llm_client=_FakeExtractLLM(facts=[_semantic_write("x")]),
@@ -109,7 +103,7 @@ async def test_skips_incognito() -> None:
 async def test_skips_without_llm() -> None:
     buffer = SessionMemoryBuffer(session_id="t")
     await extract_session_candidates(
-        conversation=_conversation("I always spiral"),
+        user_turn_texts=_user_turn_texts("I always spiral"),
         session_id="t",
         session_buffer=buffer,
         llm_client=None,
@@ -122,7 +116,7 @@ async def test_skips_without_llm() -> None:
 async def test_skips_empty_session() -> None:
     buffer = SessionMemoryBuffer(session_id="t")
     await extract_session_candidates(
-        conversation=SessionConversation(messages=()),
+        user_turn_texts=[],
         session_id="t",
         session_buffer=buffer,
         llm_client=_FakeExtractLLM(facts=[_semantic_write("x")]),
@@ -138,7 +132,7 @@ async def test_holds_semantic_and_corrects_provenance() -> None:
     # real session id.
     buffer = SessionMemoryBuffer(session_id="thread-1")
     await extract_session_candidates(
-        conversation=_conversation(
+        user_turn_texts=_user_turn_texts(
             "hello there",
             "I always want my answers kept short",
         ),
@@ -162,7 +156,7 @@ async def test_holds_semantic_and_corrects_provenance() -> None:
 async def test_holds_procedural_rule() -> None:
     buffer = SessionMemoryBuffer(session_id="thread-1")
     await extract_session_candidates(
-        conversation=_conversation(
+        user_turn_texts=_user_turn_texts(
             "Please just give me the steps, skip the validation"
         ),
         session_id="thread-1",
@@ -188,7 +182,7 @@ async def test_one_extractor_failure_does_not_block_the_other() -> None:
     # path and must degrade, never propagate.
     buffer = SessionMemoryBuffer(session_id="thread-1")
     await extract_session_candidates(
-        conversation=_conversation("give me steps only"),
+        user_turn_texts=_user_turn_texts("give me steps only"),
         session_id="thread-1",
         session_buffer=buffer,
         llm_client=_FakeExtractLLM(

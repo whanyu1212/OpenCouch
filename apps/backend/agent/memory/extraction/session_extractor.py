@@ -19,8 +19,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING
-
 from agent.memory.modes import MemoryMode
 from agent.memory.policy.candidates import (
     PolicyDecision,
@@ -41,13 +39,6 @@ from agent.memory.types.procedural import (
 from agent.memory.types.semantic import ExtractionResult, MemoryWrite
 from llm.base import BaseLLMClient
 
-if TYPE_CHECKING:
-    # Type-only: importing this at runtime pulls in the agent.runtime.session
-    # package __init__ (which eagerly imports finalization -> back into this
-    # module), creating a cycle. The extractor only uses conversation.user_texts()
-    # at runtime, so a structural type hint is all it needs.
-    from agent.runtime.session.history import SessionConversation
-
 logger = logging.getLogger(__name__)
 
 # All session-end candidates are held with this decision: by definition we are
@@ -64,7 +55,7 @@ _SESSION_END_DECISION = PolicyDecision(
 
 async def extract_session_candidates(
     *,
-    conversation: SessionConversation,
+    user_turn_texts: list[str],
     session_id: str,
     session_buffer: SessionMemoryBuffer,
     llm_client: BaseLLMClient | None,
@@ -73,7 +64,7 @@ async def extract_session_candidates(
     """Extract durable memory candidates from a whole session into the buffer.
 
     Args:
-        conversation: The canonical session conversation projection.
+        user_turn_texts: Canonical user messages from the completed session.
         session_id: Session identifier used for candidate provenance.
         session_buffer: The per-thread buffer to populate; mutated in place.
         llm_client: Structured-output client; extraction is skipped when ``None``.
@@ -87,7 +78,7 @@ async def extract_session_candidates(
         return
     if llm_client is None:
         return
-    user_texts = conversation.user_texts()
+    user_texts = list(user_turn_texts)
     if not user_texts:
         return
 
