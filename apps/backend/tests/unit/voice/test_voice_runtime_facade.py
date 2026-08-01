@@ -1,6 +1,6 @@
 """Guard tests for the VoiceRuntimeFacade wiring.
 
-These tests protect two invariants that are easy to break during
+These tests protect three invariants that are easy to break during
 future refactoring:
 
 1. **Lock identity** — the facade and the runtime must share the same
@@ -9,6 +9,9 @@ future refactoring:
 
 2. **Facade existence** — ``PersistentAgentRuntime.voice`` must be a
    ``VoiceRuntimeFacade`` so callers can rely on attribute access.
+
+3. **Narrow collaboration** — the facade must not retain a full runtime
+   back-pointer; it receives only the operations needed to coordinate voice turns.
 """
 
 from __future__ import annotations
@@ -19,8 +22,12 @@ from typing import Any
 import pytest
 
 from agent.memory.modes import MemoryMode
+from agent.models import AgentInput, Channel
 from agent.runtime import PersistentAgentRuntime
+from agent.runtime.turn import build_initial_state
+from agent.runtime.workflow_context import WorkflowContext
 from agent.voice.concurrent_safety import VoiceConcurrentSafetyResult
+from agent.voice.runtime_collaboration import VoiceRuntimeCollaboration
 from llm.base import BaseLLMClient
 from tests.support.persistence import (
     in_memory_runtime_storage_paths,
@@ -35,6 +42,91 @@ def test_runtime_exposes_voice_facade() -> None:
         persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
     )
     assert isinstance(runtime.voice, VoiceRuntimeFacade)
+    assert not hasattr(runtime.voice, "_runtime")
+
+
+@pytest.mark.asyncio
+async def test_voice_facade_builds_tool_context_through_collaboration() -> None:
+    runtime = PersistentAgentRuntime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.INCOGNITO),
+    )
+    calls: list[str] = []
+
+    async def get_state(thread_id: str) -> None:
+        assert thread_id == "voice-thread"
+        calls.append("get_state")
+        return None
+
+    def build_turn_initial_state(**kwargs: object) -> object:
+        calls.append("build_turn_initial_state")
+        return build_initial_state(
+            AgentInput(
+                message=str(kwargs["message"]),
+                channel=Channel.VOICE,
+                user_id=kwargs["user_id"]
+                if isinstance(kwargs["user_id"], str)
+                else None,
+                session_id=str(kwargs["thread_id"]),
+            ),
+            prior_turn_count=int(kwargs["prior_turn_count"]),
+        )
+
+    def build_workflow_context(**kwargs: object) -> WorkflowContext:
+        calls.append("build_workflow_context")
+        return WorkflowContext(
+            llm_client=kwargs["llm_client"]
+            if isinstance(kwargs["llm_client"], BaseLLMClient)
+            else None,
+            response_llm=kwargs["response_llm_client"]
+            if isinstance(kwargs["response_llm_client"], BaseLLMClient)
+            else None,
+            memory_store=runtime._memory_store,  # noqa: SLF001
+            crisis_log_backend=runtime._crisis_log_backend,  # noqa: SLF001
+            memory_mode=runtime.memory_mode,
+        )
+
+    async def prepare_session_for_turn(**kwargs: object) -> None:
+        raise AssertionError(f"Unexpected session preparation: {kwargs!r}")
+
+    def remember_llm_client(thread_id: str, llm_client: BaseLLMClient | None) -> None:
+        del thread_id, llm_client
+        raise AssertionError("Unexpected LLM client tracking")
+
+    async def ensure_sdk_turn_recorded(**kwargs: object) -> None:
+        raise AssertionError(f"Unexpected SDK turn recording: {kwargs!r}")
+
+    async with runtime:
+        facade = VoiceRuntimeFacade(
+            collaboration=VoiceRuntimeCollaboration(
+                get_state=get_state,
+                build_turn_initial_state=build_turn_initial_state,
+                build_workflow_context=build_workflow_context,
+                prepare_session_for_turn=prepare_session_for_turn,
+                remember_llm_client=remember_llm_client,
+                ensure_sdk_turn_recorded=ensure_sdk_turn_recorded,
+            ),
+            state_store=runtime._state_store,  # noqa: SLF001
+            memory_store=runtime._memory_store,  # noqa: SLF001
+            active_session_manager=runtime._active_session_manager,  # noqa: SLF001
+            session_lifecycle=runtime._session_lifecycle,  # noqa: SLF001
+            lock_for=runtime._thread_lock,  # noqa: SLF001
+            memory_mode=runtime.memory_mode,
+        )
+        context = await facade.build_voice_tool_context(
+            thread_id="voice-thread",
+            user_id="user-1",
+            current_user_message="Please show my saved memory.",
+            transcript=[],
+        )
+
+    assert context.current_user_message == "Please show my saved memory."
+    assert calls == [
+        "get_state",
+        "build_turn_initial_state",
+        "build_workflow_context",
+    ]
+    assert not hasattr(facade, "_runtime")
 
 
 @pytest.mark.asyncio

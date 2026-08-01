@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import asyncio
 import hashlib
 from datetime import datetime, timezone
@@ -757,9 +759,12 @@ async def test_voice_crisis_capture_runs_before_sdk_history_failure(
             raise RuntimeError("simulated voice SDK history failure")
 
         monkeypatch.setattr(
-            runtime,
-            "_ensure_openai_sdk_turn_recorded",
-            fail_sdk_history,
+            runtime.voice,
+            "_collaboration",
+            replace(
+                runtime.voice._collaboration,
+                ensure_sdk_turn_recorded=fail_sdk_history,
+            ),
         )
 
         with pytest.raises(RuntimeError, match="simulated voice SDK history failure"):
@@ -800,9 +805,12 @@ async def test_voice_turn_retry_resumes_failed_lifecycle_without_duplicate_trans
             raise RuntimeError("simulated retryable SDK history failure")
 
     monkeypatch.setattr(
-        runtime,
-        "_ensure_openai_sdk_turn_recorded",
-        fail_sdk_history_once,
+        runtime.voice,
+        "_collaboration",
+        replace(
+            runtime.voice._collaboration,
+            ensure_sdk_turn_recorded=fail_sdk_history_once,
+        ),
     )
     correlation_hash = "retryable-voice-turn"
     request_hash = "stable-request"
@@ -884,9 +892,12 @@ async def test_legacy_pending_turn_retries_reuse_post_turn_safety_identity(
             raise RuntimeError("simulated pre-receipt lifecycle failure")
 
     monkeypatch.setattr(
-        runtime,
-        "_ensure_openai_sdk_turn_recorded",
-        fail_sdk_history_once,
+        runtime.voice,
+        "_collaboration",
+        replace(
+            runtime.voice._collaboration,
+            ensure_sdk_turn_recorded=fail_sdk_history_once,
+        ),
     )
     correlation_hash = "legacy-pending-correlation"
     request_hash = "legacy-pending-request"

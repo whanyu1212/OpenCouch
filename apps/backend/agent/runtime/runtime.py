@@ -221,10 +221,18 @@ class PersistentAgentRuntime:
             auto_finalize_excluded=self._auto_finalize_excluded,
         )
 
+        from agent.voice.runtime_collaboration import VoiceRuntimeCollaboration
         from agent.voice.runtime_facade import VoiceRuntimeFacade
 
         self.voice = VoiceRuntimeFacade(
-            runtime=self,
+            collaboration=VoiceRuntimeCollaboration(
+                get_state=self.get_state,
+                build_turn_initial_state=self._build_turn_initial_state,
+                build_workflow_context=self._context_for_turn,
+                prepare_session_for_turn=self._prepare_session_for_turn,
+                remember_llm_client=self._remember_llm_client,
+                ensure_sdk_turn_recorded=self._ensure_openai_sdk_turn_recorded,
+            ),
             state_store=self._state_store,
             memory_store=self._memory_store,
             active_session_manager=self._active_session_manager,
