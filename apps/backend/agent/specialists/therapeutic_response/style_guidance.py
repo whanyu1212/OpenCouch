@@ -38,6 +38,7 @@ def render_therapeutic_response_style_guidance(
     *,
     response_style: str,
     therapeutic_approach: str | None,
+    prompt_appendix: str | None = None,
 ) -> str:
     """Render direct response-style guidance for text response generation."""
 
@@ -45,6 +46,7 @@ def render_therapeutic_response_style_guidance(
         state,
         response_style=response_style,
         therapeutic_approach=therapeutic_approach,
+        prompt_appendix=prompt_appendix,
     )
     return "\n".join(
         [
@@ -70,6 +72,7 @@ def render_therapeutic_response_skill_context(
     *,
     response_style: str,
     therapeutic_approach: str | None,
+    prompt_appendix: str | None = None,
 ) -> str:
     """Render response-style guidance as a bounded prompt-local skill block."""
 
@@ -77,6 +80,7 @@ def render_therapeutic_response_skill_context(
         state,
         response_style=response_style,
         therapeutic_approach=therapeutic_approach,
+        prompt_appendix=prompt_appendix,
     )
     return "\n".join(
         [
@@ -106,6 +110,7 @@ def _style_guidance_parts(
     *,
     response_style: str,
     therapeutic_approach: str | None,
+    prompt_appendix: str | None,
 ) -> tuple[str, str, str]:
     style = _normalize_response_style(response_style)
     prompt_state = dict(state)
@@ -116,6 +121,9 @@ def _style_guidance_parts(
     )
     prompt_state["therapeutic_approach"] = approach
     system_prompt = _SYSTEM_PROMPT_BUILDERS[style](cast(AgentState, prompt_state))
+    appendix = (prompt_appendix or "").strip()
+    if appendix:
+        system_prompt = f"{system_prompt}\n\n{appendix}"
     return style, approach, system_prompt
 
 

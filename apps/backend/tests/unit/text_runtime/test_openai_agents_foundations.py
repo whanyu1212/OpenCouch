@@ -271,9 +271,9 @@ async def test_therapeutic_flow_uses_explicit_runtime_services_boundary() -> Non
             agent_state=state,
         ),
         build_agent=lambda state: roster.therapeutic_agent,
-        input_text_for_state=lambda state, include_recent_history=True: (
-            f"services prompt: {state['message']}"
-        ),
+        input_text_for_state=lambda state,
+        include_recent_history=True,
+        prompt_appendix=None: (f"services prompt: {state['message']}"),
         crisis_input_text_for_state=lambda *args, **kwargs: "crisis prompt",
         run_openai_agent_with=run_agent_with,
         finalize_turn=finalize_turn,

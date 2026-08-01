@@ -503,6 +503,7 @@ class PersistentAgentRuntime:
         user_id: str | None,
         llm_client: BaseLLMClient | None,
         response_llm_client: BaseLLMClient | None = None,
+        prompt_appendix: str | None = None,
         track_session: bool = True,
     ) -> WorkflowContext:
         """Build the agent workflow runtime context for one turn.
@@ -549,6 +550,7 @@ class PersistentAgentRuntime:
                 if track_session
                 else None
             ),
+            prompt_appendix=prompt_appendix,
         )
 
     def _schedule_memory_prefetch(
@@ -783,6 +785,7 @@ class PersistentAgentRuntime:
         llm_client: BaseLLMClient | None,
         response_llm_client: BaseLLMClient | None,
         prior_state: AgentState | None,
+        prompt_appendix: str | None,
         streaming: bool,
     ) -> TextTurnExecutionContext:
         """Build context/config once active-session mutation setup succeeds."""
@@ -795,6 +798,7 @@ class PersistentAgentRuntime:
                 user_id=user_id,
                 llm_client=llm_client,
                 response_llm_client=response_llm_client,
+                prompt_appendix=prompt_appendix,
             ),
             config=self._config_for_thread(
                 thread_id,
@@ -814,6 +818,7 @@ class PersistentAgentRuntime:
         installed_skills: list[str] | None = None,
         llm_client: BaseLLMClient | None = None,
         response_llm_client: BaseLLMClient | None = None,
+        prompt_appendix: str | None = None,
         expected_liveness: ExpectedSessionLiveness | None = None,
         session_transcript_soft_limit: int | None = None,
     ) -> PersistentTurnResult:
@@ -859,6 +864,7 @@ class PersistentAgentRuntime:
                     llm_client=llm_client,
                     response_llm_client=response_llm_client,
                     prior_state=prepared.prior_state,
+                    prompt_appendix=prompt_appendix,
                     streaming=False,
                 )
                 turn_output = await prepared.text_runtime.run_turn(
@@ -1119,6 +1125,7 @@ class PersistentAgentRuntime:
         installed_skills: list[str] | None = None,
         llm_client: BaseLLMClient | None = None,
         response_llm_client: BaseLLMClient | None = None,
+        prompt_appendix: str | None = None,
         expected_liveness: ExpectedSessionLiveness | None = None,
         session_transcript_soft_limit: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
@@ -1168,6 +1175,7 @@ class PersistentAgentRuntime:
                     llm_client=llm_client,
                     response_llm_client=response_llm_client,
                     prior_state=prepared.prior_state,
+                    prompt_appendix=prompt_appendix,
                     streaming=True,
                 )
                 async for event in prepared.text_runtime.run_turn_stream(

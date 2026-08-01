@@ -450,10 +450,12 @@ class OpenAITextRuntime:
         state: AgentState,
         *,
         include_recent_history: bool = True,
+        prompt_appendix: str | None = None,
     ) -> str:
         return build_therapeutic_agent_input(
             state,
             include_recent_history=include_recent_history,
+            prompt_appendix=prompt_appendix,
         )
 
     def _crisis_input_text_for_state(

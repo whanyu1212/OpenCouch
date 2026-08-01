@@ -61,6 +61,18 @@ def test_response_style_guidance_renders_without_tool_metadata(style: str) -> No
     assert "retry_safe" not in rendered
 
 
+def test_response_style_guidance_includes_optional_appendix_once() -> None:
+    appendix = "TUI-only command guidance"
+    rendered = render_therapeutic_response_style_guidance(
+        _state(),
+        response_style="supportive",
+        therapeutic_approach="cbt",
+        prompt_appendix=appendix,
+    )
+
+    assert rendered.count(appendix) == 1
+
+
 def test_unknown_response_style_falls_back_to_supportive() -> None:
     rendered = render_therapeutic_response_skill_context(
         _state(),

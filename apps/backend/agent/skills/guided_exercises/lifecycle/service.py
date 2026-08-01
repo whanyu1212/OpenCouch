@@ -50,6 +50,7 @@ class GuidedExerciseSkillService:
     response_llm: BaseLLMClient | None
     memory_store: MemoryStore | None
     memory_mode: MemoryMode
+    prompt_appendix: str | None = None
     stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory
 
     async def run_turn(self, state: AgentState) -> dict[str, Any]:
@@ -99,6 +100,7 @@ class GuidedExerciseSkillService:
             state,
             llm_client=self.response_llm,
             exercise_type=selected,
+            prompt_appendix=self.prompt_appendix,
             stream_writer_factory=self.stream_writer_factory,
         )
 
@@ -120,6 +122,7 @@ class GuidedExerciseSkillService:
             return await _build_resume_delta(
                 state,
                 llm_client=self.response_llm,
+                prompt_appendix=self.prompt_appendix,
                 stream_writer_factory=self.stream_writer_factory,
             )
 
@@ -142,6 +145,7 @@ class GuidedExerciseSkillService:
             return await _build_exit_delta(
                 state,
                 llm_client=self.response_llm,
+                prompt_appendix=self.prompt_appendix,
                 stream_writer_factory=self.stream_writer_factory,
             )
 
@@ -149,6 +153,7 @@ class GuidedExerciseSkillService:
             return await _build_stuck_delta(
                 state,
                 llm_client=self.response_llm,
+                prompt_appendix=self.prompt_appendix,
                 stream_writer_factory=self.stream_writer_factory,
             )
 
@@ -156,6 +161,7 @@ class GuidedExerciseSkillService:
             return await _build_hold_delta(
                 state,
                 llm_client=self.response_llm,
+                prompt_appendix=self.prompt_appendix,
                 stream_writer_factory=self.stream_writer_factory,
             )
 
@@ -165,6 +171,7 @@ class GuidedExerciseSkillService:
                 llm_client=self.response_llm,
                 memory_store=self.memory_store,
                 memory_mode=self.memory_mode,
+                prompt_appendix=self.prompt_appendix,
                 stream_writer_factory=self.stream_writer_factory,
             )
 
@@ -173,6 +180,7 @@ class GuidedExerciseSkillService:
             llm_client=self.response_llm,
             exercise_type=exercise_type,
             next_step_index=step_index + 1,
+            prompt_appendix=self.prompt_appendix,
             stream_writer_factory=self.stream_writer_factory,
         )
 

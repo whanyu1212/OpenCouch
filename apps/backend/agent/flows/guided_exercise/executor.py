@@ -42,6 +42,7 @@ def guided_exercise_skill_service(
         response_llm=response_llm,
         memory_store=context.memory_store,
         memory_mode=context.memory_mode,
+        prompt_appendix=context.prompt_appendix,
         **kwargs,
     )
 

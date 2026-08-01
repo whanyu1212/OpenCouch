@@ -80,6 +80,7 @@ async def run_therapeutic_response_llm_turn(
     llm_client: BaseLLMClient,
     session: Any | None,
     fallback_reason: str | None = None,
+    prompt_appendix: str | None = None,
 ) -> TherapeuticAgentResult:
     from agent.runtime.state_ops import apply_state_delta
 
@@ -87,6 +88,7 @@ async def run_therapeutic_response_llm_turn(
     request = build_therapeutic_response_llm_request(
         state,
         include_recent_history=include_prompt_history(session),
+        prompt_appendix=prompt_appendix,
     )
     structured_output = await llm_client.generate_structured(
         prompt=request.prompt,
@@ -119,6 +121,7 @@ async def run_therapeutic_response_llm_stream(
     llm_client: BaseLLMClient,
     session: Any | None,
     fallback_reason: str | None = None,
+    prompt_appendix: str | None = None,
 ) -> AsyncIterator[TextRuntimeStreamEvent]:
     from agent.runtime.state_ops import apply_state_delta
 
@@ -126,6 +129,7 @@ async def run_therapeutic_response_llm_stream(
     request = build_therapeutic_response_llm_request(
         state,
         include_recent_history=include_prompt_history(session),
+        prompt_appendix=prompt_appendix,
     )
     chunks: list[str] = []
     async for chunk in llm_client.generate_text_stream(
@@ -173,6 +177,7 @@ async def run_therapeutic_turn(
             state,
             llm_client=context.response_llm,
             session=session,
+            prompt_appendix=context.prompt_appendix,
         )
 
     run_context = services.build_run_context(state, config, context)
@@ -180,6 +185,7 @@ async def run_therapeutic_turn(
     input_text = services.input_text_for_state(
         state,
         include_recent_history=include_prompt_history(session),
+        prompt_appendix=context.prompt_appendix,
     )
     try:
         response_text, sdk_duration_ms = await services.run_openai_agent_with(
@@ -198,6 +204,7 @@ async def run_therapeutic_turn(
             llm_client=cast(BaseLLMClient, context.llm_client),
             session=session,
             fallback_reason=cast(str, openai_sdk_fallback_reason(exc)),
+            prompt_appendix=context.prompt_appendix,
         )
     return resolve_therapeutic_result(
         state,
@@ -223,6 +230,7 @@ async def run_therapeutic_turn_stream(
             config=config,
             llm_client=context.response_llm,
             session=session,
+            prompt_appendix=context.prompt_appendix,
         ):
             yield event
         return
@@ -232,6 +240,7 @@ async def run_therapeutic_turn_stream(
     input_text = services.input_text_for_state(
         state,
         include_recent_history=include_prompt_history(session),
+        prompt_appendix=context.prompt_appendix,
     )
 
     yield TextRuntimeStatusEvent(stage="therapeutic")
@@ -267,6 +276,7 @@ async def run_therapeutic_turn_stream(
             llm_client=cast(BaseLLMClient, context.llm_client),
             session=session,
             fallback_reason=cast(str, openai_sdk_fallback_reason(exc)),
+            prompt_appendix=context.prompt_appendix,
         ):
             yield event
         return

@@ -59,7 +59,8 @@ async def generate_guided_exercise_response_text(
     state: AgentState,
     llm_client: Any,
     directive: GuidedExerciseDirective,
-    system_prompt_builder: Callable[[AgentState], str],
+    system_prompt_builder: Callable[..., str],
+    prompt_appendix: str | None = None,
     stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> str:
     """Generate guided-exercise response text from a structured directive."""
@@ -69,7 +70,10 @@ async def generate_guided_exercise_response_text(
             "No LLM client available for guided_exercise response generation."
         )
 
-    system_instruction = system_prompt_builder(state)
+    system_instruction = system_prompt_builder(
+        state,
+        prompt_appendix=prompt_appendix,
+    )
     guided_stream = getattr(llm_client, "generate_guided_exercise_text_stream", None)
     if callable(guided_stream):
         stream = guided_stream(
@@ -100,6 +104,7 @@ async def _build_start_delta(
     *,
     llm_client: BaseLLMClient | None,
     exercise_type: str,
+    prompt_appendix: str | None = None,
     stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for starting a guided exercise.
@@ -137,6 +142,7 @@ async def _build_start_delta(
         llm_client=llm_client,
         directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
+        prompt_appendix=prompt_appendix,
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -153,6 +159,7 @@ async def _build_exit_delta(
     state: AgentState,
     *,
     llm_client: BaseLLMClient | None,
+    prompt_appendix: str | None = None,
     stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for an exit.
@@ -184,6 +191,7 @@ async def _build_exit_delta(
         llm_client=llm_client,
         directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
+        prompt_appendix=prompt_appendix,
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -201,6 +209,7 @@ async def _build_resume_delta(
     state: AgentState,
     *,
     llm_client: BaseLLMClient | None,
+    prompt_appendix: str | None = None,
     stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for resuming an active exercise after a side turn.
@@ -239,6 +248,7 @@ async def _build_resume_delta(
         llm_client=llm_client,
         directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
+        prompt_appendix=prompt_appendix,
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -252,6 +262,7 @@ async def _build_stuck_delta(
     state: AgentState,
     *,
     llm_client: BaseLLMClient | None,
+    prompt_appendix: str | None = None,
     stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for a stuck classification.
@@ -289,6 +300,7 @@ async def _build_stuck_delta(
         llm_client=llm_client,
         directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
+        prompt_appendix=prompt_appendix,
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -302,6 +314,7 @@ async def _build_hold_delta(
     state: AgentState,
     *,
     llm_client: BaseLLMClient | None,
+    prompt_appendix: str | None = None,
     stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for a hold classification.
@@ -340,6 +353,7 @@ async def _build_hold_delta(
         llm_client=llm_client,
         directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
+        prompt_appendix=prompt_appendix,
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -355,6 +369,7 @@ async def _build_advance_delta(
     llm_client: BaseLLMClient | None,
     exercise_type: str,
     next_step_index: int,
+    prompt_appendix: str | None = None,
     stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for advancing to the next step.
@@ -397,6 +412,7 @@ async def _build_advance_delta(
         llm_client=llm_client,
         directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
+        prompt_appendix=prompt_appendix,
         stream_writer_factory=stream_writer_factory,
     )
 
@@ -416,6 +432,7 @@ async def _build_complete_delta(
     llm_client: BaseLLMClient | None,
     memory_store: MemoryStore | None = None,
     memory_mode: MemoryMode | None = None,
+    prompt_appendix: str | None = None,
     stream_writer_factory: StreamWriterFactory = _noop_stream_writer_factory,
 ) -> dict[str, Any]:
     """Build the delta for natural completion of the exercise.
@@ -461,6 +478,7 @@ async def _build_complete_delta(
         llm_client=llm_client,
         directive=directive,
         system_prompt_builder=build_guided_exercise_system_prompt,
+        prompt_appendix=prompt_appendix,
         stream_writer_factory=stream_writer_factory,
     )
 

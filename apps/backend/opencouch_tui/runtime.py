@@ -23,6 +23,7 @@ from agent.runtime import (
     ThreadSummary,
 )
 from agent.state import AgentState
+from opencouch_tui.commands import format_command_guidance_for_llm
 from config import (
     ResponseModelTier,
     Settings,
@@ -219,6 +220,7 @@ class ConsoleRuntime:
                 message=message,
                 llm_client=session.llm_client,
                 response_llm_client=session.response_llm_client,
+                prompt_appendix=format_command_guidance_for_llm(),
             ):
                 yield event
         except Exception as exc:

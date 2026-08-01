@@ -84,8 +84,6 @@ def _dynamic_state() -> AgentState:
 
 
 def _digest(text: str) -> str:
-    # Prompt rendering is deterministic UTF-8 text; CLI commands come from
-    # static SLASH_COMMANDS metadata rather than environment-specific values.
     return sha256(text.encode()).hexdigest()
 
 
@@ -93,10 +91,10 @@ def test_sdk_agent_input_contract_with_history() -> None:
     runtime = OpenAITextRuntime(model="gpt-test")
     prompt = runtime._input_text_for_state(_prompt_state(), include_recent_history=True)  # noqa: SLF001
 
-    assert len(prompt) == 44421
+    assert len(prompt) == 41993
     assert (
         _digest(prompt)
-        == "8e1d3b48fb7aef97f292d510025a27480ca3312e76610b77268fac1ab371a977"
+        == "8c3d0aa17f1b4faa5003e035b7cb1af99367c4a5e9b73fe3cfe85cead42ab4fd"
     )
     sections = [
         "Therapeutic response guidance:",
@@ -109,16 +107,33 @@ def test_sdk_agent_input_contract_with_history() -> None:
     assert positions == sorted(positions)
 
 
+def test_sdk_agent_input_includes_optional_prompt_appendix() -> None:
+    appendix = "TUI-only command guidance"
+    prompt = build_therapeutic_agent_input(
+        _prompt_state(),
+        include_recent_history=True,
+        prompt_appendix=appendix,
+    )
+    request = build_therapeutic_response_llm_request(
+        _prompt_state(),
+        include_recent_history=True,
+        prompt_appendix=appendix,
+    )
+
+    assert prompt.count(appendix) == 1
+    assert request.system_instruction.count(appendix) == 1
+
+
 def test_sdk_agent_input_contract_without_history() -> None:
     runtime = OpenAITextRuntime(model="gpt-test")
     prompt = runtime._input_text_for_state(
         _prompt_state(), include_recent_history=False
     )  # noqa: SLF001
 
-    assert len(prompt) == 44361
+    assert len(prompt) == 41933
     assert (
         _digest(prompt)
-        == "bb8f58b13cc33752bcf193819c74dc5559605911ffa7dcf87773121846c8ca2a"
+        == "64cbdfa92fb60e3f8db9cb9346213ff999f784b9fdd38ce2b4eb32dd4db64f59"
     )
     assert "Presentations make me anxious." not in prompt
     assert "Recent conversation:\n(no prior history)" in prompt
@@ -196,10 +211,10 @@ def test_response_llm_system_instruction_contract() -> None:
         _prompt_state(), include_recent_history=True
     )
 
-    assert len(request.system_instruction) == 43475
+    assert len(request.system_instruction) == 41047
     assert (
         _digest(request.system_instruction)
-        == "eacbd0eb8573ef09b3d559631fc9af4017758f14ed25af678b7a8eac4235410e"
+        == "8590b5a2fa94d07c0e0c33600ca1aa76c1c0a2236f04ea5f59ccad8590a3742d"
     )
     assert "- response_style: supportive" in request.system_instruction
     assert (
@@ -213,10 +228,10 @@ def test_response_llm_safety_clarification_contract() -> None:
         _dynamic_state(), include_recent_history=True
     )
 
-    assert len(request.system_instruction) == 26501
+    assert len(request.system_instruction) == 24073
     assert (
         _digest(request.system_instruction)
-        == "413b6cf65f5248479ed7115fa774efad372dedc9ce772abaea731b53176149b4"
+        == "92a405d270236706ee24d2977a5b695cc75f298c9e8eae5a2433d1100edebf82"
     )
     assert "Safety-check override:" in request.system_instruction
     assert "Include exactly one direct safety question" in request.system_instruction
