@@ -22,10 +22,6 @@ _RECENT_USER_TURN_LIMIT = 3
 _MIN_USER_QUOTE_LENGTH = 8
 
 
-def _registered_voice_tool_names() -> set[str]:
-    return set(VOICE_TOOL_SPECS_BY_NAME)
-
-
 def _normalize_voice_tool_result(result: object) -> dict[str, object]:
     if isinstance(result, BaseModel):
         return dict(result.model_dump(mode="json"))

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from agent.voice.tools import _execute_recall_saved_memory
+from agent.voice.tools.handlers import _execute_recall_saved_memory
 
 
 @dataclass
