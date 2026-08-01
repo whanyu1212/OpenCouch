@@ -53,48 +53,53 @@ def _plan(kind: str = "therapeutic") -> TextRoutePlan:
     )
 
 
-def test_route_registry_resolves_aliases_and_default_without_mutating_input() -> None:
+def test_route_registry_resolves_explicit_handlers_without_mutating_input() -> None:
     crisis = _handler()
     guided = _handler()
-    default = _handler()
+    therapeutic = _handler()
     handlers = {
         "crisis_response": crisis,
         "crisis_clarification": crisis,
         "guided_exercise": guided,
+        "therapeutic": therapeutic,
     }
 
-    registry = TextRouteRegistry(handlers, default_handler=default)
+    registry = TextRouteRegistry(handlers)
     handlers["crisis_response"] = guided
 
     assert registry.handler_for("crisis_response") is crisis
     assert registry.handler_for("crisis_clarification") is crisis
     assert registry.handler_for("guided_exercise") is guided
-    assert registry.handler_for("therapeutic") is default
-    assert registry.handler_for("memory_control") is default
-    assert registry.handler_for("unknown") is default
+    assert registry.handler_for("therapeutic") is therapeutic
+    with pytest.raises(KeyError, match="unknown"):
+        registry.handler_for("unknown")
 
 
 def test_route_registry_handlers_mapping_is_immutable() -> None:
-    registry = TextRouteRegistry({}, default_handler=_handler())
+    registry = TextRouteRegistry({})
 
     with pytest.raises(TypeError):
         registry.handlers["therapeutic"] = _handler()  # type: ignore[index]
 
 
-def test_default_route_registry_preserves_aliases_and_therapeutic_fallback() -> None:
+def test_default_registry_is_complete_for_known_text_route_kinds() -> None:
     registry = build_default_text_route_registry(SimpleNamespace())  # type: ignore[arg-type]
 
     assert registry.handler_for("crisis_response") is registry.handler_for(
         "crisis_clarification"
     )
-    assert registry.handler_for("therapeutic") is registry.default_handler
-    assert registry.handler_for("memory_control") is registry.default_handler
-    assert registry.handler_for("unknown") is registry.default_handler
+    assert registry.handler_for("therapeutic") is registry.handler_for("memory_control")
+    with pytest.raises(KeyError, match="unknown"):
+        registry.handler_for("unknown")
+
+    # Intentional change gate: add any new route kind here when wiring its handler.
     assert set(registry.handlers) == {
         "crisis_response",
         "crisis_clarification",
         "grounded_lookup",
         "guided_exercise",
+        "memory_control",
+        "therapeutic",
     }
 
 
@@ -130,8 +135,7 @@ async def test_openai_text_runtime_uses_injected_registry_for_execute_and_stream
         yield TextRuntimeStateEvent(state=final_state)
 
     registry = TextRouteRegistry(
-        {},
-        default_handler=RouteHandler(execute=execute, stream=stream),
+        {"therapeutic": RouteHandler(execute=execute, stream=stream)}
     )
     runtime = OpenAITextRuntime(
         model="gpt-test",
