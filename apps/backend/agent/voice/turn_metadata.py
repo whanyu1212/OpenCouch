@@ -6,6 +6,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from agent.voice.tools.specs import VOICE_TOOL_SPECS
+
 
 @dataclass(frozen=True)
 class VoiceTurnMetadata:
@@ -13,40 +15,26 @@ class VoiceTurnMetadata:
     response_style: str
 
 
-_MEMORY_TOOL_NAMES = {
-    "show_memory_status",
-    "show_saved_memory",
-    "recall_saved_memory",
-    "set_proactive_memory_recall",
-    "save_response_preference",
-    "prepare_memory_deletion_by_index",
-    "prepare_memory_deletion_by_query",
-    "confirm_memory_deletion",
-    "cancel_memory_deletion",
-}
-
-_GUIDED_EXERCISE_TOOL_NAMES = {
-    "list_guided_exercise_skills",
-    "load_guided_exercise_skill",
-    "record_guided_exercise_progress",
-}
-
-_TOOL_ROUTE_PRIORITY: tuple[tuple[str, VoiceTurnMetadata], ...] = (
-    # Either crisis tool forces the crisis route so the turn is audit-logged.
-    # The model is instructed to call get_crisis_support_template independently of
-    # lookup_crisis_resources, so a template-only crisis turn must still route to
-    # crisis (otherwise it falls through to "therapeutic" and is never recorded).
-    ("lookup_crisis_resources", VoiceTurnMetadata("crisis", "crisis_response")),
-    ("get_crisis_support_template", VoiceTurnMetadata("crisis", "crisis_response")),
-    ("answer_grounded_lookup", VoiceTurnMetadata("grounded_lookup", "grounded_lookup")),
-    *(
-        (name, VoiceTurnMetadata("memory_control", "memory_control"))
-        for name in sorted(_MEMORY_TOOL_NAMES)
-    ),
-    *(
-        (name, VoiceTurnMetadata("guided_exercise", "guided_exercise"))
-        for name in sorted(_GUIDED_EXERCISE_TOOL_NAMES)
-    ),
+# Either crisis tool forces the crisis route so the turn is audit-logged.
+# The model is instructed to call get_crisis_support_template independently of
+# lookup_crisis_resources, so a template-only crisis turn must still route to
+# crisis (otherwise it falls through to "therapeutic" and is never recorded).
+_TOOL_ROUTE_PRIORITY: tuple[tuple[str, VoiceTurnMetadata], ...] = tuple(
+    (
+        spec.name,
+        VoiceTurnMetadata(
+            route=spec.route,
+            response_style=spec.response_style,
+        ),
+    )
+    for spec in sorted(
+        (
+            spec
+            for spec in VOICE_TOOL_SPECS
+            if spec.route is not None and spec.response_style is not None
+        ),
+        key=lambda spec: spec.route_priority if spec.route_priority is not None else 0,
+    )
 )
 
 

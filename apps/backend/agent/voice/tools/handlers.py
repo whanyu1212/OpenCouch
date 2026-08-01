@@ -310,7 +310,7 @@ async def _execute_recall_saved_memory(
        recall-off setting always takes precedence.
     3. Otherwise call ``load_memory_for_turn`` and project results.
 
-    Incognito refusal is handled upstream by ``_PERSISTENT_ONLY_TOOL_NAMES``.
+    Incognito refusal is handled upstream by the canonical voice-tool spec.
     """
 
     raw_query = arguments.get("query")
