@@ -267,7 +267,10 @@ async def test_concurrent_cross_thread_voice_completions_share_owner_lock(
 ) -> None:
     runtime = _runtime()
     user_id = "voice-owner-cross-thread-completion"
-    thread_ids = ("voice-exercise-owner-lock-a", "voice-exercise-owner-lock-b")
+    thread_ids = (
+        f"guided-exercise-completion-owner:{user_id}",
+        "voice-exercise-owner-lock-b",
+    )
     definition = get_exercise_definition(EXERCISE_BOX_BREATHING)
     assert definition is not None
     terminal_result = {
