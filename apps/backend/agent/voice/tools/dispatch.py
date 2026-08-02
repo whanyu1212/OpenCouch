@@ -142,8 +142,8 @@ async def execute_voice_tool_call(
             ),
         )
 
-    if tool_name == "record_guided_exercise_progress":
-        await runtime.voice.prepare_voice_guided_exercise_progress(
+    if tool_name in {"start_guided_exercise", "record_guided_exercise_progress"}:
+        await runtime.voice.prepare_voice_guided_exercise_tool(
             thread_id=thread_id,
             llm_client=llm_client,
         )
@@ -179,13 +179,16 @@ async def execute_voice_tool_call(
                 transcript=transcript,
                 result=normalized_result,
             )
-        if tool_name == "record_guided_exercise_progress":
-            await runtime.voice.persist_voice_guided_exercise_progress(
-                thread_id=thread_id,
-                user_id=user_id,
-                current_user_message=current_user_message,
-                transcript=transcript,
-                result=normalized_result,
+        if tool_name in {"start_guided_exercise", "record_guided_exercise_progress"}:
+            normalized_result = (
+                await runtime.voice.persist_voice_guided_exercise_result(
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    current_user_message=current_user_message,
+                    transcript=transcript,
+                    result=normalized_result,
+                    memory_mode=effective_memory_mode,
+                )
             )
     except Exception as exc:
         trace_event(

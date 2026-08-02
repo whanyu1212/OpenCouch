@@ -26,6 +26,7 @@ from agent.tools import guided_exercise as guided_exercise_tools
 from agent.tools.guided_exercise import (
     execute_guided_exercise_discovery_tool,
     execute_guided_exercise_progress_tool,
+    execute_guided_exercise_start_tool,
 )
 
 
@@ -78,6 +79,50 @@ def _guided_exercise_context(
         }
     }
     return context
+
+
+@pytest.mark.asyncio
+async def test_start_tool_returns_first_step_state_and_skill_context() -> None:
+    result = await execute_guided_exercise_start_tool(
+        _run_context(),
+        exercise_type=EXERCISE_BOX_BREATHING,
+        therapeutic_approach="dbt_skills",
+    )
+
+    assert result.status == "active"
+    assert result.runtime_action == "start"
+    assert result.current_step_index == 0
+    assert result.current_step_id == "inhale"
+    assert result.exercise_state_delta["exercise_state"] == {
+        "exercise_type": EXERCISE_BOX_BREATHING,
+        "exercise_step": 0,
+        "exercise_step_id": "inhale",
+        "exercise_version": 1,
+        "exercise_therapeutic_approach": "dbt_skills",
+    }
+    assert f"- skill_id: {EXERCISE_BOX_BREATHING}" in result.skill_context
+
+
+@pytest.mark.asyncio
+async def test_start_tool_rejects_unknown_exercise() -> None:
+    with pytest.raises(ValueError, match="Unknown guided exercise"):
+        await execute_guided_exercise_start_tool(
+            _run_context(),
+            exercise_type="not_registered",
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_tool_rejects_replacing_an_active_exercise() -> None:
+    result = await execute_guided_exercise_start_tool(
+        _guided_exercise_context(),
+        exercise_type=EXERCISE_5_4_3_2_1,
+    )
+
+    assert result.status == "conflict"
+    assert result.runtime_action == "conflict"
+    assert result.skill_id == EXERCISE_BOX_BREATHING
+    assert result.exercise_state_delta == {}
 
 
 def _definition(

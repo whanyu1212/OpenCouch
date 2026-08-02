@@ -24,6 +24,7 @@ from agent.voice.tools.handlers import (
     _handle_save_response_preference,
     _handle_set_proactive_memory_recall,
     _handle_show_memory_status,
+    _handle_start_guided_exercise,
     _handle_show_saved_memory,
     _handle_wait_for_user,
 )
@@ -408,6 +409,31 @@ VOICE_TOOL_SPECS: tuple[VoiceToolSpec, ...] = (
         route_priority=12,
     ),
     VoiceToolSpec(
+        name="start_guided_exercise",
+        description=(
+            "Start one registered guided exercise and return the initial skill "
+            "context. Use only after selecting an exercise for the user. Side "
+            "effects: active exercise state update."
+        ),
+        properties={
+            "exercise_type": {
+                "type": "string",
+                "description": "Registered guided exercise skill identifier.",
+            },
+            "therapeutic_approach": {
+                "type": ["string", "null"],
+                "description": (
+                    "Optional therapeutic approach captured for this exercise."
+                ),
+            },
+        },
+        required=("exercise_type",),
+        handler=_handle_start_guided_exercise,
+        route="guided_exercise",
+        response_style="guided_exercise",
+        route_priority=13,
+    ),
+    VoiceToolSpec(
         name="load_guided_exercise_skill",
         description=(
             "Load the runtime-selected guided-exercise skill block for "
@@ -431,7 +457,7 @@ VOICE_TOOL_SPECS: tuple[VoiceToolSpec, ...] = (
         handler=_handle_load_guided_exercise_skill,
         route="guided_exercise",
         response_style="guided_exercise",
-        route_priority=13,
+        route_priority=14,
     ),
     VoiceToolSpec(
         name="record_guided_exercise_progress",
@@ -469,7 +495,7 @@ VOICE_TOOL_SPECS: tuple[VoiceToolSpec, ...] = (
         handler=_handle_record_guided_exercise_progress,
         route="guided_exercise",
         response_style="guided_exercise",
-        route_priority=14,
+        route_priority=15,
     ),
 )
 
