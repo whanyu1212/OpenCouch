@@ -14,8 +14,12 @@ from typing import Any, cast
 import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
+import agent.skills.guided_exercises.lifecycle.memory as guided_exercise_memory
 from agent.memory.modes import MemoryMode
-from agent.memory.operations.semantic_writes import fetch_existing_semantic_records
+from agent.memory.operations.semantic_writes import (
+    BatchSemanticWriteOutcome,
+    fetch_existing_semantic_records,
+)
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
@@ -687,7 +691,7 @@ class TestExerciseCompletionMemory:
     async def test_completion_write_accepts_neutral_request(self) -> None:
         store = OpenCouchMemoryStore()
 
-        await write_exercise_completion_fact(
+        persisted = await write_exercise_completion_fact(
             request=ExerciseCompletionMemoryRequest(
                 owner_id="test-user",
                 session_id="test-session",
@@ -699,12 +703,41 @@ class TestExerciseCompletionMemory:
             memory_mode=MemoryMode.LOCAL,
         )
 
+        assert persisted is True
         records = await fetch_existing_semantic_records(store, owner_id="test-user")
         assert len(records) == 1
         fact = records[0].value
         assert fact["subject"]["identifier"] == "test-user"
         assert fact["source_session_id"] == "test-session"
         assert fact["source_turn_index"] == 3
+
+    @pytest.mark.asyncio
+    async def test_completion_write_reports_batch_failure(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        async def failed_batch(**_: object) -> BatchSemanticWriteOutcome:
+            return BatchSemanticWriteOutcome(skipped=1)
+
+        monkeypatch.setattr(
+            guided_exercise_memory,
+            "apply_semantic_writes_batch",
+            failed_batch,
+        )
+
+        persisted = await write_exercise_completion_fact(
+            request=ExerciseCompletionMemoryRequest(
+                owner_id="test-user",
+                session_id="test-session",
+                turn_count=3,
+                exercise_type=EXERCISE_BOX_BREATHING,
+                display_name="box breathing",
+            ),
+            memory_store=OpenCouchMemoryStore(),
+            memory_mode=MemoryMode.LOCAL,
+        )
+
+        assert persisted is False
 
     @pytest.mark.asyncio
     async def test_repeated_completion_bumps_existing_fact(self) -> None:

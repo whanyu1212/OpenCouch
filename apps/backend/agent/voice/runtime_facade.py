@@ -161,6 +161,36 @@ def _guided_exercise_progress_conflict_result(
     }
 
 
+def _guided_exercise_completion_retry_result(
+    result: Mapping[str, Any],
+    *,
+    exercise_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Keep a terminal exercise step active when its memory write failed."""
+
+    active_skill_id = exercise_state.get("exercise_type")
+    active_step_id = exercise_state.get("exercise_step_id")
+    previous_step_id = result.get("previous_step_id")
+    return {
+        **result,
+        "status": "active",
+        "runtime_action": "hold",
+        "skill_id": active_skill_id if isinstance(active_skill_id, str) else None,
+        "previous_step_id": (
+            previous_step_id if isinstance(previous_step_id, str) else None
+        ),
+        "current_step_id": active_step_id if isinstance(active_step_id, str) else None,
+        "next_step_id": None,
+        "exercise_state_delta": {},
+        "response_instruction": (
+            "Do not report the exercise complete yet. Keep the final step active "
+            "and invite the user to confirm completion again."
+        ),
+        "side_effect": "none",
+        "retry_safe": True,
+    }
+
+
 def _compact_voice_memory_context(delta: Mapping[str, Any]) -> str:
     blocks: list[str] = []
     procedural_profile = delta.get("procedural_profile") or {}
@@ -720,9 +750,9 @@ class VoiceRuntimeFacade:
                 and isinstance(skill_id, str)
                 and skill_id
             ):
-                # Do not clear the final active step until its durable effect
-                # completes: request cancellation must leave a retryable state.
-                await write_exercise_completion_fact(
+                # Do not clear the final active step until its required memory
+                # effect succeeds: a cancellation or write failure must remain retryable.
+                completion_persisted = await write_exercise_completion_fact(
                     request=ExerciseCompletionMemoryRequest(
                         owner_id=resolve_owner_id(
                             {"user_id": user_id, "session_id": thread_id}
@@ -738,6 +768,11 @@ class VoiceRuntimeFacade:
                     memory_store=self._memory_store,
                     memory_mode=completion_memory_mode,
                 )
+                if not completion_persisted:
+                    return _guided_exercise_completion_retry_result(
+                        result,
+                        exercise_state=active_state,
+                    )
 
             apply_state_delta(state, dict(delta))
             await self._state_store.save_state(thread_id, state)

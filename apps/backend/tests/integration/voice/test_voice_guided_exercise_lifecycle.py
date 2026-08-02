@@ -10,6 +10,7 @@ import agent.voice.runtime_facade as voice_runtime_facade
 from agent.memory.modes import MemoryMode
 from agent.memory.operations.semantic_writes import fetch_existing_semantic_records
 from agent.memory.retrieval.service import load_memory_for_turn
+from agent.models import Channel
 from agent.runtime import PersistentAgentRuntime, RuntimeBehaviorConfig
 from agent.skills.guided_exercises.catalog.registry import (
     EXERCISE_BOX_BREATHING,
@@ -379,6 +380,110 @@ async def test_cancelled_voice_completion_keeps_active_state_for_retry(
         )
         assert retried_completion["status"] == "completed"
 
+        state = await runtime.get_state(thread_id)
+        assert state is not None
+        assert state["exercise_state"]["exercise_type"] is None
+        records = await fetch_existing_semantic_records(
+            runtime.memory_store,
+            owner_id=user_id,
+        )
+
+    assert len(records) == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_voice_completion_keeps_active_state_for_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime()
+    thread_id = "voice-exercise-failed-completion"
+    user_id = "voice-owner-failed-completion"
+    definition = get_exercise_definition(EXERCISE_BOX_BREATHING)
+    assert definition is not None
+    final_step_index = len(definition.steps) - 1
+    terminal_result = {
+        "status": "completed",
+        "runtime_action": "complete",
+        "skill_id": EXERCISE_BOX_BREATHING,
+        "previous_step_id": definition.steps[-1].id,
+        "exercise_state_delta": {
+            "exercise_state": {
+                "exercise_type": None,
+                "exercise_step": None,
+                "exercise_step_id": None,
+                "exercise_version": None,
+                "exercise_therapeutic_approach": None,
+            }
+        },
+        "side_effect": "active_skill_state_update",
+        "retry_safe": False,
+    }
+
+    async with runtime:
+        await runtime._state_store.save_state(  # noqa: SLF001
+            thread_id,
+            {
+                "thread_id": thread_id,
+                "channel": Channel.VOICE,
+                "user_id": user_id,
+                "session_id": thread_id,
+                "transcript": [],
+                "session_progress": {"turn_count": 1},
+                "exercise_state": {
+                    "exercise_type": EXERCISE_BOX_BREATHING,
+                    "exercise_step": final_step_index,
+                    "exercise_step_id": definition.steps[-1].id,
+                    "exercise_version": definition.version,
+                    "exercise_therapeutic_approach": "dbt_skills",
+                },
+            },
+        )
+        original_write = voice_runtime_facade.write_exercise_completion_fact
+
+        async def failed_completion_write(**_: object) -> bool:
+            return False
+
+        monkeypatch.setattr(
+            voice_runtime_facade,
+            "write_exercise_completion_fact",
+            failed_completion_write,
+        )
+        failed_completion = await runtime.voice.persist_voice_guided_exercise_result(
+            thread_id=thread_id,
+            user_id=user_id,
+            current_user_message="The user completed the exercise.",
+            transcript=[],
+            result=terminal_result,
+            memory_mode="persistent",
+        )
+
+        assert failed_completion["status"] == "active"
+        assert failed_completion["runtime_action"] == "hold"
+        assert failed_completion["side_effect"] == "none"
+        state_after_failure = await runtime.get_state(thread_id)
+        assert state_after_failure is not None
+        assert state_after_failure["exercise_state"]["exercise_type"] == (
+            EXERCISE_BOX_BREATHING
+        )
+        assert state_after_failure["exercise_state"]["exercise_step_id"] == (
+            definition.steps[-1].id
+        )
+
+        monkeypatch.setattr(
+            voice_runtime_facade,
+            "write_exercise_completion_fact",
+            original_write,
+        )
+        retried_completion = await runtime.voice.persist_voice_guided_exercise_result(
+            thread_id=thread_id,
+            user_id=user_id,
+            current_user_message="The user completed the exercise.",
+            transcript=[],
+            result=terminal_result,
+            memory_mode="persistent",
+        )
+
+        assert retried_completion["status"] == "completed"
         state = await runtime.get_state(thread_id)
         assert state is not None
         assert state["exercise_state"]["exercise_type"] is None
