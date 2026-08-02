@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any, Literal, cast
 
 from agents import RunContextWrapper, function_tool
 from pydantic import BaseModel, Field
 
 from agent.runtime.context import OpenAITextRunContext
+from agent.state import ExerciseState
 from agent.skills.guided_exercises.catalog.registry import (
     available_exercise_definitions,
     get_exercise_definition,
+)
+from agent.skills.guided_exercises.lifecycle.transitions import (
+    GuidedExerciseOutcome,
+    GuidedExerciseTransition,
+    InvalidGuidedExerciseState,
+    progress_guided_exercise_transition,
 )
 from agent.skills.guided_exercises.rendering.skill_context import (
     render_exercise_skill_context,
@@ -265,27 +271,27 @@ async def execute_guided_exercise_progress_tool(
         or active_step_id != step_id
         or not isinstance(active_step_index, int)
     ):
-        return GuidedExerciseProgressToolResult(
-            status="conflict",
-            runtime_action="conflict",
-            skill_id=active_skill_id if isinstance(active_skill_id, str) else None,
-            previous_step_id=step_id,
-            current_step_id=active_step_id if isinstance(active_step_id, str) else None,
-            response_instruction=(
-                "Do not advance the exercise. Re-orient to the runtime-provided "
-                "active step or ask the user whether they want to continue."
-            ),
-            side_effect="none",
-            retry_safe=True,
+        return _guided_exercise_progress_conflict(
+            active_skill_id=active_skill_id,
+            active_step_id=active_step_id,
+            expected_step_id=step_id,
         )
 
-    return _progress_result_for_outcome(
-        definition_steps=tuple(definition.steps),
+    try:
+        transition = progress_guided_exercise_transition(
+            definition,
+            exercise_state=cast(ExerciseState, exercise_state),
+            outcome=_normalize_progress_outcome(progress_outcome),
+        )
+    except InvalidGuidedExerciseState:
+        return _guided_exercise_progress_conflict(
+            active_skill_id=active_skill_id,
+            active_step_id=active_step_id,
+            expected_step_id=step_id,
+        )
+    return _progress_result_from_transition(
         skill_id=skill_id,
-        step_id=step_id,
-        step_index=active_step_index,
-        outcome=progress_outcome,
-        exercise_state=exercise_state,
+        transition=transition,
     )
 
 
@@ -395,22 +401,53 @@ def build_guided_exercise_tools() -> list[Any]:
     return [load_guided_exercise_skill]
 
 
-def _progress_result_for_outcome(
+def _guided_exercise_progress_conflict(
     *,
-    definition_steps: tuple[Any, ...],
-    skill_id: str,
-    step_id: str,
-    step_index: int,
-    outcome: GuidedExerciseProgressOutcome,
-    exercise_state: Mapping[str, Any],
+    active_skill_id: object,
+    active_step_id: object,
+    expected_step_id: str,
 ) -> GuidedExerciseProgressToolResult:
-    if outcome == "unsafe":
+    """Return the stable conflict result for stale voice progress."""
+
+    return GuidedExerciseProgressToolResult(
+        status="conflict",
+        runtime_action="conflict",
+        skill_id=active_skill_id if isinstance(active_skill_id, str) else None,
+        previous_step_id=expected_step_id,
+        current_step_id=active_step_id if isinstance(active_step_id, str) else None,
+        response_instruction=(
+            "Do not advance the exercise. Re-orient to the runtime-provided "
+            "active step or ask the user whether they want to continue."
+        ),
+        side_effect="none",
+        retry_safe=True,
+    )
+
+
+def _normalize_progress_outcome(
+    outcome: GuidedExerciseProgressOutcome,
+) -> GuidedExerciseOutcome:
+    """Map voice-only partial progress onto the shared hold transition."""
+
+    if outcome == "partial":
+        return "hold"
+    return cast(GuidedExerciseOutcome, outcome)
+
+
+def _progress_result_from_transition(
+    *,
+    skill_id: str,
+    transition: GuidedExerciseTransition,
+) -> GuidedExerciseProgressToolResult:
+    """Adapt one transport-neutral transition to the voice tool contract."""
+
+    if transition.action == "crisis":
         return GuidedExerciseProgressToolResult(
             status="unsafe",
             runtime_action="crisis",
             skill_id=skill_id,
-            previous_step_id=step_id,
-            current_step_id=step_id,
+            previous_step_id=transition.previous_step_id,
+            current_step_id=transition.current_step_id,
             response_instruction=(
                 "Stop exercise guidance and follow crisis/safety routing. Do not "
                 "continue the exercise in this response."
@@ -418,26 +455,26 @@ def _progress_result_for_outcome(
             side_effect="none",
             retry_safe=True,
         )
-    if outcome == "exit":
+    if transition.action == "cancel":
         return GuidedExerciseProgressToolResult(
             status="cancelled",
             runtime_action="cancel",
             skill_id=skill_id,
-            previous_step_id=step_id,
-            exercise_state_delta={"exercise_state": _cleared_exercise_state()},
+            previous_step_id=transition.previous_step_id,
+            exercise_state_delta={"exercise_state": transition.exercise_state},
             response_instruction=(
                 "Acknowledge the user's choice to stop, do not continue the "
                 "exercise, and hand conversational ownership back to therapeutic support."
             ),
             side_effect="active_skill_state_update",
         )
-    if outcome in {"partial", "hold"}:
+    if transition.action == "hold":
         return GuidedExerciseProgressToolResult(
             status="active",
             runtime_action="hold",
             skill_id=skill_id,
-            previous_step_id=step_id,
-            current_step_id=step_id,
+            previous_step_id=transition.previous_step_id,
+            current_step_id=transition.current_step_id,
             exercise_state_delta={"exercise_state": {}},
             response_instruction=(
                 "Stay on the current step. Validate the user's effort and gently "
@@ -446,13 +483,13 @@ def _progress_result_for_outcome(
             side_effect="none",
             retry_safe=True,
         )
-    if outcome == "stuck":
+    if transition.action == "simplify":
         return GuidedExerciseProgressToolResult(
             status="active",
             runtime_action="simplify",
             skill_id=skill_id,
-            previous_step_id=step_id,
-            current_step_id=step_id,
+            previous_step_id=transition.previous_step_id,
+            current_step_id=transition.current_step_id,
             exercise_state_delta={"exercise_state": {}},
             response_instruction=(
                 "Stay on the current step and offer a smaller, simpler version "
@@ -461,58 +498,37 @@ def _progress_result_for_outcome(
             side_effect="none",
             retry_safe=True,
         )
-
-    next_index = step_index + 1
-    if next_index >= len(definition_steps):
+    if transition.action == "complete":
         return GuidedExerciseProgressToolResult(
             status="completed",
             runtime_action="complete",
             skill_id=skill_id,
-            previous_step_id=step_id,
-            exercise_state_delta={"exercise_state": _cleared_exercise_state()},
+            previous_step_id=transition.previous_step_id,
+            exercise_state_delta={"exercise_state": transition.exercise_state},
             response_instruction=(
                 "The exercise is complete. Briefly reflect completion, invite the "
                 "user to notice how they feel now, and return to therapeutic support."
             ),
             side_effect="active_skill_state_update",
         )
-
-    next_step = definition_steps[next_index]
-    delta = {
-        "exercise_state": {
-            "exercise_type": skill_id,
-            "exercise_step": next_index,
-            "exercise_step_id": next_step.id,
-            "exercise_version": exercise_state.get("exercise_version"),
-            "exercise_therapeutic_approach": exercise_state.get(
-                "exercise_therapeutic_approach"
+    if transition.action == "advance":
+        return GuidedExerciseProgressToolResult(
+            status="active",
+            runtime_action="advance",
+            skill_id=skill_id,
+            previous_step_id=transition.previous_step_id,
+            current_step_id=transition.current_step_id,
+            next_step_id=transition.next_step_id,
+            exercise_state_delta={"exercise_state": transition.exercise_state},
+            response_instruction=(
+                "Advance to the next registered step. Use load_guided_exercise_skill "
+                "for the new current step before giving step wording."
             ),
-        }
-    }
-    return GuidedExerciseProgressToolResult(
-        status="active",
-        runtime_action="advance",
-        skill_id=skill_id,
-        previous_step_id=step_id,
-        current_step_id=next_step.id,
-        next_step_id=next_step.id,
-        exercise_state_delta=delta,
-        response_instruction=(
-            "Advance to the next registered step. Use load_guided_exercise_skill "
-            "for the new current step before giving step wording."
-        ),
-        side_effect="active_skill_state_update",
+            side_effect="active_skill_state_update",
+        )
+    raise AssertionError(
+        f"Unexpected voice guided-exercise transition: {transition.action!r}."
     )
-
-
-def _cleared_exercise_state() -> dict[str, None]:
-    return {
-        "exercise_type": None,
-        "exercise_step": None,
-        "exercise_step_id": None,
-        "exercise_version": None,
-        "exercise_therapeutic_approach": None,
-    }
 
 
 __all__ = [
