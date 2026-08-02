@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from uuid import uuid4
 
 from agent.memory.modes import MemoryMode
-from agent.memory.types import EntityRef, SemanticFact
+from agent.memory.operations.semantic_writes import (
+    BatchWriteItem,
+    apply_semantic_writes_batch,
+)
+from agent.memory.policy.candidates import build_semantic_candidate
 from agent.memory.store import MemoryStore
+from agent.memory.types import EntityRef, MemoryWrite
 from agent.state import AgentState, resolve_owner_id
 
 logger = logging.getLogger(__name__)
@@ -94,9 +97,7 @@ async def write_exercise_completion_fact(
     if memory_store is None or memory_mode == MemoryMode.INCOGNITO:
         return
 
-    now = datetime.now(timezone.utc).isoformat()
-    fact = SemanticFact(
-        id=str(uuid4()),
+    write = MemoryWrite(
         category="coping_strategy",
         subject=EntityRef(type="User", identifier=request.owner_id),
         predicate="USES",
@@ -105,25 +106,32 @@ async def write_exercise_completion_fact(
         confidence="high",
         source_session_id=request.session_id,
         source_turn_index=request.turn_count,
-        created_at=now,
-        last_referenced_at=now,
-        dormant_at=None,
-        superseded_by=None,
-        user_visible=True,
     )
 
     try:
-        namespace = (request.owner_id, "semantic")
-        await memory_store.aput(
-            namespace,
-            key=fact.id,
-            value=fact.model_dump(mode="json"),
+        outcome = await apply_semantic_writes_batch(
+            memory_store,
+            owner_id=request.owner_id,
+            items=[
+                BatchWriteItem(
+                    candidate=build_semantic_candidate(
+                        write,
+                        message=write.evidence_quote,
+                    ),
+                    write_timing="immediate",
+                    write_reason="guided_exercise_completion",
+                    policy_version="guided_exercise_v1",
+                )
+            ],
+            llm_client=None,
+            log_context="guided_exercise_completion",
         )
-        logger.info(
-            "Wrote exercise completion fact: exercise_type=%s owner=%s",
-            request.exercise_type,
-            request.owner_id,
-        )
+        if outcome.written:
+            logger.info(
+                "Wrote exercise completion fact: exercise_type=%s owner=%s",
+                request.exercise_type,
+                request.owner_id,
+            )
     except Exception:
         logger.warning(
             "Failed to write exercise completion fact; skipping.",
