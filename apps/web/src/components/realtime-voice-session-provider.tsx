@@ -100,6 +100,10 @@ const TOOL_ACTIVITY_BY_NAME: Record<string, ToolActivityDefinition> = {
     activity: "exercise",
     label: "Exercise options",
   },
+  start_guided_exercise: {
+    activity: "exercise",
+    label: "Exercise started",
+  },
   load_guided_exercise_skill: {
     activity: "exercise",
     label: "Exercise skill",
