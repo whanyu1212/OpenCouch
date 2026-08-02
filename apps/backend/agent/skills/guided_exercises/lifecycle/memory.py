@@ -125,6 +125,7 @@ async def write_exercise_completion_fact(
             ],
             llm_client=None,
             log_context="guided_exercise_completion",
+            reconciliation_failure_policy="coexist",
         )
         if outcome.written:
             logger.info(

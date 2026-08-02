@@ -738,6 +738,42 @@ class TestExerciseCompletionMemory:
         assert records[0].value["last_referenced_at"] >= first_referenced_at
 
     @pytest.mark.asyncio
+    async def test_distinct_completions_coexist_without_a_reconciliation_llm(
+        self,
+    ) -> None:
+        """Different completed exercises are both retained without an LLM."""
+        store = OpenCouchMemoryStore()
+
+        await write_exercise_completion_fact(
+            request=ExerciseCompletionMemoryRequest(
+                owner_id="test-user",
+                session_id="test-session",
+                turn_count=3,
+                exercise_type=EXERCISE_BOX_BREATHING,
+                display_name="box breathing",
+            ),
+            memory_store=store,
+            memory_mode=MemoryMode.LOCAL,
+        )
+        await write_exercise_completion_fact(
+            request=ExerciseCompletionMemoryRequest(
+                owner_id="test-user",
+                session_id="test-session",
+                turn_count=4,
+                exercise_type=EXERCISE_5_4_3_2_1,
+                display_name="5-4-3-2-1 grounding",
+            ),
+            memory_store=store,
+            memory_mode=MemoryMode.LOCAL,
+        )
+
+        records = await fetch_existing_semantic_records(store, owner_id="test-user")
+        assert {record.value["object"]["identifier"] for record in records} == {
+            EXERCISE_BOX_BREATHING,
+            EXERCISE_5_4_3_2_1,
+        }
+
+    @pytest.mark.asyncio
     async def test_exit_does_not_write_fact(self) -> None:
         """Exiting an exercise does NOT write a memory fact."""
         store = _RecordingMemoryStore()

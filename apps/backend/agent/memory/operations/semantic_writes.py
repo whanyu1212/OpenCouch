@@ -10,6 +10,7 @@ from uuid import uuid4
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.operations.dedup import find_near_duplicate
 from agent.memory.operations.reconciliation import (
+    SemanticReconciliationFailurePolicy,
     filter_semantic_collision_candidates,
     plan_semantic_write_llm_primary,
 )
@@ -293,6 +294,7 @@ async def apply_semantic_write(
     embedding: list[float] | None = None,
     embedding_model: str | None = None,
     log_context: str = "semantic_writes",
+    reconciliation_failure_policy: SemanticReconciliationFailurePolicy = "raise",
 ) -> SemanticWriteOutcome:
     """Apply dedup, reconciliation, write, bump, and supersede for one fact.
 
@@ -309,6 +311,8 @@ async def apply_semantic_write(
         embedding (list[float] | None): Optional document embedding.
         embedding_model (str | None): Optional embedding model identifier.
         log_context (str): Prefix used in warning log messages.
+        reconciliation_failure_policy: Fallback applied when reconciliation
+            cannot use the LLM.
 
     Returns:
         SemanticWriteOutcome: Counters plus the written fact when a new record
@@ -355,6 +359,7 @@ async def apply_semantic_write(
             fact,
             collision_records,
             llm_client=llm_client,
+            failure_policy=reconciliation_failure_policy,
         )
         if reconciliation.bump_record is not None:
             await bump_semantic_last_referenced_at(
@@ -467,6 +472,7 @@ async def apply_semantic_writes_batch(
     llm_client: Any,
     embedding_provider: "EmbeddingProvider | None" = None,
     log_context: str,
+    reconciliation_failure_policy: SemanticReconciliationFailurePolicy = "raise",
 ) -> BatchSemanticWriteOutcome:
     """Apply a batch of semantic candidates with shared dedup and embeddings.
 
@@ -480,6 +486,8 @@ async def apply_semantic_writes_batch(
         llm_client: Optional control LLM used by reconciliation.
         embedding_provider: Optional document embedding provider.
         log_context: Prefix used in warning log messages.
+        reconciliation_failure_policy: Fallback applied when reconciliation
+            cannot use the LLM.
 
     Returns:
         Aggregate batch outcome with counters and written facts. When the
@@ -526,6 +534,7 @@ async def apply_semantic_writes_batch(
             embedding=embedding,
             embedding_model=embedding_model,
             log_context=log_context,
+            reconciliation_failure_policy=reconciliation_failure_policy,
         )
         outcome.written += item_outcome.written
         outcome.bumped += item_outcome.bumped
