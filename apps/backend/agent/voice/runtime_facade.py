@@ -44,7 +44,7 @@ from agent.observability.events import (
 )
 from agent.observability.timing import elapsed_ms
 from agent.runtime.context import OpenAITextRunContext
-from agent.runtime.session import ThreadLockManager, turn_count_from_state
+from agent.runtime.session import turn_count_from_state
 from agent.runtime.session.active_session import ActiveSessionManager
 from agent.runtime.session.service import SessionLifecycleService
 from agent.runtime.state_ops import apply_state_delta
@@ -282,7 +282,6 @@ class VoiceRuntimeFacade:
         self._active_session_manager = active_session_manager
         self._session_lifecycle = session_lifecycle
         self._lock_for = lock_for
-        self._completion_owner_locks = ThreadLockManager()
         self._memory_mode = memory_mode
         self._concurrent_safety_service = VoiceConcurrentSafetyService()
         self._safety_overlay_service = VoiceSafetyOverlayService()
@@ -754,27 +753,20 @@ class VoiceRuntimeFacade:
                 # Do not clear the final active step until its required memory
                 # effect succeeds: a cancellation or write failure must remain retryable.
                 owner_id = resolve_owner_id(state)
-                owner_lock = self._completion_owner_locks.get_lock(owner_id)
-                try:
-                    async with owner_lock:
-                        completion_persisted = await write_exercise_completion_fact(
-                            request=ExerciseCompletionMemoryRequest(
-                                owner_id=owner_id,
-                                session_id=thread_id,
-                                turn_count=turn_count_from_state(state) + 1,
-                                exercise_type=skill_id,
-                                display_name=get_exercise_display_name(
-                                    skill_id,
-                                    default=skill_id,
-                                ),
-                            ),
-                            memory_store=self._memory_store,
-                            memory_mode=completion_memory_mode,
-                        )
-                finally:
-                    self._completion_owner_locks.prune_idle_locks(
-                        is_tracked=lambda _: False
-                    )
+                completion_persisted = await write_exercise_completion_fact(
+                    request=ExerciseCompletionMemoryRequest(
+                        owner_id=owner_id,
+                        session_id=thread_id,
+                        turn_count=turn_count_from_state(state) + 1,
+                        exercise_type=skill_id,
+                        display_name=get_exercise_display_name(
+                            skill_id,
+                            default=skill_id,
+                        ),
+                    ),
+                    memory_store=self._memory_store,
+                    memory_mode=completion_memory_mode,
+                )
                 if not completion_persisted:
                     return _guided_exercise_completion_retry_result(
                         result,

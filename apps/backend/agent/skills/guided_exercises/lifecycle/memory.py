@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import weakref
 from dataclasses import dataclass
 
 from agent.memory.modes import MemoryMode
@@ -16,6 +18,20 @@ from agent.memory.types import EntityRef, MemoryWrite
 from agent.state import AgentState, resolve_owner_id
 
 logger = logging.getLogger(__name__)
+
+_EXERCISE_COMPLETION_LOCKS: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
+
+
+def _exercise_completion_lock(owner_id: str) -> asyncio.Lock:
+    """Return the process-local mutex for one completion-memory owner."""
+
+    lock = _EXERCISE_COMPLETION_LOCKS.get(owner_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _EXERCISE_COMPLETION_LOCKS[owner_id] = lock
+    return lock
 
 
 @dataclass(frozen=True)
@@ -104,31 +120,33 @@ async def write_exercise_completion_fact(
         source_turn_index=request.turn_count,
     )
 
-    try:
-        outcome = await apply_semantic_writes_batch(
-            memory_store,
-            owner_id=request.owner_id,
-            items=[
-                BatchWriteItem(
-                    candidate=build_semantic_candidate(
-                        write,
-                        message=write.evidence_quote,
-                    ),
-                    write_timing="immediate",
-                    write_reason="guided_exercise_completion",
-                    policy_version="guided_exercise_v1",
-                )
-            ],
-            llm_client=None,
-            log_context="guided_exercise_completion",
-            reconciliation_failure_policy="coexist",
-        )
-    except Exception:
-        logger.warning(
-            "Failed to write exercise completion fact.",
-            exc_info=True,
-        )
-        return False
+    completion_lock = _exercise_completion_lock(request.owner_id)
+    async with completion_lock:
+        try:
+            outcome = await apply_semantic_writes_batch(
+                memory_store,
+                owner_id=request.owner_id,
+                items=[
+                    BatchWriteItem(
+                        candidate=build_semantic_candidate(
+                            write,
+                            message=write.evidence_quote,
+                        ),
+                        write_timing="immediate",
+                        write_reason="guided_exercise_completion",
+                        policy_version="guided_exercise_v1",
+                    )
+                ],
+                llm_client=None,
+                log_context="guided_exercise_completion",
+                reconciliation_failure_policy="coexist",
+            )
+        except Exception:
+            logger.warning(
+                "Failed to write exercise completion fact.",
+                exc_info=True,
+            )
+            return False
 
     if outcome.written or outcome.bumped:
         logger.info(

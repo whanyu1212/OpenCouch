@@ -6,6 +6,7 @@ import asyncio
 
 import pytest
 
+import agent.skills.guided_exercises.lifecycle.memory as guided_exercise_memory
 import agent.voice.runtime_facade as voice_runtime_facade
 from agent.memory.modes import MemoryMode
 from agent.memory.operations.semantic_writes import fetch_existing_semantic_records
@@ -262,7 +263,7 @@ async def test_concurrent_stale_voice_completion_persists_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_cross_thread_voice_completions_share_owner_lock(
+async def test_concurrent_cross_transport_completions_share_owner_lock(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = _runtime()
@@ -312,23 +313,26 @@ async def test_concurrent_cross_thread_voice_completions_share_owner_lock(
                 },
             )
 
-        original_write = voice_runtime_facade.write_exercise_completion_fact
+        original_apply = guided_exercise_memory.apply_semantic_writes_batch
         first_write_started = asyncio.Event()
         release_first_write = asyncio.Event()
-        write_calls = 0
+        batch_calls = 0
 
-        async def serialized_completion_write(**kwargs: object) -> bool:
-            nonlocal write_calls
-            write_calls += 1
-            if write_calls == 1:
+        async def serialized_batch(
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            nonlocal batch_calls
+            batch_calls += 1
+            if batch_calls == 1:
                 first_write_started.set()
                 await release_first_write.wait()
-            return await original_write(**kwargs)
+            return await original_apply(*args, **kwargs)
 
         monkeypatch.setattr(
-            voice_runtime_facade,
-            "write_exercise_completion_fact",
-            serialized_completion_write,
+            guided_exercise_memory,
+            "apply_semantic_writes_batch",
+            serialized_batch,
         )
 
         async def persist_completion(thread_id: str) -> dict[str, object]:
@@ -344,13 +348,34 @@ async def test_concurrent_cross_thread_voice_completions_share_owner_lock(
         first_completion = asyncio.create_task(persist_completion(thread_ids[0]))
         await first_write_started.wait()
         second_completion = asyncio.create_task(persist_completion(thread_ids[1]))
+        text_completion = asyncio.create_task(
+            guided_exercise_memory._write_exercise_completion_fact(
+                state={
+                    "user_id": user_id,
+                    "session_id": "text-exercise-owner-lock",
+                    "session_progress": {"turn_count": 1},
+                },
+                exercise_type=EXERCISE_BOX_BREATHING,
+                display_name=definition.display_name,
+                memory_store=runtime.memory_store,
+                memory_mode=MemoryMode.LOCAL,
+            )
+        )
         await asyncio.sleep(0)
-        assert write_calls == 1
+        assert batch_calls == 1
 
         release_first_write.set()
-        results = await asyncio.gather(first_completion, second_completion)
+        first_result, second_result, text_result = await asyncio.gather(
+            first_completion,
+            second_completion,
+            text_completion,
+        )
 
-        assert [result["status"] for result in results] == ["completed", "completed"]
+        assert [first_result["status"], second_result["status"]] == [
+            "completed",
+            "completed",
+        ]
+        assert text_result is True
         records = await fetch_existing_semantic_records(
             runtime.memory_store,
             owner_id=user_id,
