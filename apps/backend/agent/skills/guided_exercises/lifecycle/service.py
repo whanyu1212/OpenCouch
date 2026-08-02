@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
 from agent.runtime.session.state import current_turn_lifecycle
 from agent.memory.modes import MemoryMode
 from agent.memory.store import MemoryStore
-from agent.state import AgentState
+from agent.state import AgentState, ExerciseState
 from agent.skills.guided_exercises.lifecycle.responses import (
     StreamWriterFactory,
     _build_advance_delta,
@@ -26,11 +26,14 @@ from agent.skills.guided_exercises.lifecycle.selection import (
 )
 from agent.skills.guided_exercises.lifecycle.state import (
     _get_current_step,
-    _is_last_step,
     clear_exercise_delta,
 )
 from agent.skills.guided_exercises.lifecycle.step_classifier import classify_step_state
+from agent.skills.guided_exercises.catalog.registry import get_exercise_definition
 from agent.skills.guided_exercises.catalog.types import ExerciseStep
+from agent.skills.guided_exercises.lifecycle.transitions import (
+    progress_guided_exercise_transition,
+)
 from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
@@ -141,15 +144,27 @@ class GuidedExerciseSkillService:
             step_state,
         )
 
-        if step_state == "exit":
+        definition = get_exercise_definition(exercise_type)
+        if definition is None:
+            raise RuntimeError(
+                f"Guided exercise {exercise_type!r} is no longer registered."
+            )
+        transition = progress_guided_exercise_transition(
+            definition,
+            exercise_state=cast(ExerciseState, state.get("exercise_state", {})),
+            outcome=step_state,
+        )
+
+        if transition.action == "cancel":
             return await _build_exit_delta(
                 state,
+                transition=transition,
                 llm_client=self.response_llm,
                 prompt_appendix=self.prompt_appendix,
                 stream_writer_factory=self.stream_writer_factory,
             )
 
-        if step_state == "stuck":
+        if transition.action == "simplify":
             return await _build_stuck_delta(
                 state,
                 llm_client=self.response_llm,
@@ -157,7 +172,7 @@ class GuidedExerciseSkillService:
                 stream_writer_factory=self.stream_writer_factory,
             )
 
-        if step_state == "hold":
+        if transition.action == "hold":
             return await _build_hold_delta(
                 state,
                 llm_client=self.response_llm,
@@ -165,9 +180,10 @@ class GuidedExerciseSkillService:
                 stream_writer_factory=self.stream_writer_factory,
             )
 
-        if _is_last_step(exercise_type, step_index):
+        if transition.action == "complete":
             return await _build_complete_delta(
                 state,
+                transition=transition,
                 llm_client=self.response_llm,
                 memory_store=self.memory_store,
                 memory_mode=self.memory_mode,
@@ -175,13 +191,18 @@ class GuidedExerciseSkillService:
                 stream_writer_factory=self.stream_writer_factory,
             )
 
-        return await _build_advance_delta(
-            state=state,
-            llm_client=self.response_llm,
-            exercise_type=exercise_type,
-            next_step_index=step_index + 1,
-            prompt_appendix=self.prompt_appendix,
-            stream_writer_factory=self.stream_writer_factory,
+        if transition.action == "advance":
+            return await _build_advance_delta(
+                state=state,
+                llm_client=self.response_llm,
+                exercise_type=exercise_type,
+                transition=transition,
+                prompt_appendix=self.prompt_appendix,
+                stream_writer_factory=self.stream_writer_factory,
+            )
+
+        raise AssertionError(
+            f"Unexpected text guided-exercise transition: {transition.action!r}."
         )
 
 

@@ -13,8 +13,12 @@ from agent.skills.guided_exercises.lifecycle.responses import (
 )
 from agent.skills.guided_exercises.catalog.registry import (
     EXERCISE_BOX_BREATHING,
+    get_exercise_definition,
     get_exercise_display_name,
     get_exercise_steps,
+)
+from agent.skills.guided_exercises.lifecycle.transitions import (
+    progress_guided_exercise_transition,
 )
 from agent.skills.guided_exercises.rendering.directives import (
     GuidedExerciseDirective,
@@ -105,6 +109,8 @@ def test_tool_forced_guided_exercise_directive_renders_required_tool_call() -> N
 async def test_response_builders_preserve_start_advance_and_exit_runtime_tasks() -> (
     None
 ):
+    definition = get_exercise_definition(EXERCISE_BOX_BREATHING)
+    assert definition is not None
     steps = get_exercise_steps(EXERCISE_BOX_BREATHING)
     assert steps is not None
     display_name = get_exercise_display_name(EXERCISE_BOX_BREATHING)
@@ -133,7 +139,14 @@ async def test_response_builders_preserve_start_advance_and_exit_runtime_tasks()
         state=_state("done", EXERCISE_BOX_BREATHING, 0),
         llm_client=llm,  # type: ignore[arg-type]
         exercise_type=EXERCISE_BOX_BREATHING,
-        next_step_index=1,
+        transition=progress_guided_exercise_transition(
+            definition,
+            exercise_state={
+                "exercise_type": EXERCISE_BOX_BREATHING,
+                "exercise_step": 0,
+            },
+            outcome="complete",
+        ),
     )
     advance_prompt = llm.prompts[-1]
     assert f"- skill_id: {EXERCISE_BOX_BREATHING}" in advance_prompt
@@ -150,6 +163,14 @@ async def test_response_builders_preserve_start_advance_and_exit_runtime_tasks()
 
     await _build_exit_delta(
         _state("I want to stop", EXERCISE_BOX_BREATHING, 1),
+        transition=progress_guided_exercise_transition(
+            definition,
+            exercise_state={
+                "exercise_type": EXERCISE_BOX_BREATHING,
+                "exercise_step": 1,
+            },
+            outcome="exit",
+        ),
         llm_client=llm,  # type: ignore[arg-type]
     )
     exit_prompt = llm.prompts[-1]
