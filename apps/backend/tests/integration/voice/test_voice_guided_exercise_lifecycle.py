@@ -477,7 +477,7 @@ async def test_failed_voice_completion_keeps_active_state_for_retry(
         )
         retried_completion = await runtime.voice.persist_voice_guided_exercise_result(
             thread_id=thread_id,
-            user_id=user_id,
+            user_id=None,
             current_user_message="The user completed the exercise.",
             transcript=[],
             result=terminal_result,
@@ -492,9 +492,14 @@ async def test_failed_voice_completion_keeps_active_state_for_retry(
             runtime.memory_store,
             owner_id=user_id,
         )
+        thread_records = await fetch_existing_semantic_records(
+            runtime.memory_store,
+            owner_id=thread_id,
+        )
 
     assert len(records) == 1
     assert records[0].value["source_turn_index"] == 2
+    assert thread_records == []
 
 
 @pytest.mark.asyncio

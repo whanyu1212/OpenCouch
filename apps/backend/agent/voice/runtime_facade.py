@@ -754,9 +754,7 @@ class VoiceRuntimeFacade:
                 # effect succeeds: a cancellation or write failure must remain retryable.
                 completion_persisted = await write_exercise_completion_fact(
                     request=ExerciseCompletionMemoryRequest(
-                        owner_id=resolve_owner_id(
-                            {"user_id": user_id, "session_id": thread_id}
-                        ),
+                        owner_id=resolve_owner_id(state),
                         session_id=thread_id,
                         turn_count=turn_count_from_state(state) + 1,
                         exercise_type=skill_id,
