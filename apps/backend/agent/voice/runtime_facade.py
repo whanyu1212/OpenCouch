@@ -76,6 +76,7 @@ logger = logging.getLogger(__name__)
 
 _MAX_RECORDED_VOICE_TURN_HASHES = 256
 _MAX_PENDING_VOICE_RESOURCE_LOOKUPS = 32
+_GUIDED_EXERCISE_COMPLETION_OWNER_LOCK_PREFIX = "guided-exercise-completion-owner:"
 
 
 @dataclass(frozen=True, slots=True)
@@ -752,20 +753,24 @@ class VoiceRuntimeFacade:
             ):
                 # Do not clear the final active step until its required memory
                 # effect succeeds: a cancellation or write failure must remain retryable.
-                completion_persisted = await write_exercise_completion_fact(
-                    request=ExerciseCompletionMemoryRequest(
-                        owner_id=resolve_owner_id(state),
-                        session_id=thread_id,
-                        turn_count=turn_count_from_state(state) + 1,
-                        exercise_type=skill_id,
-                        display_name=get_exercise_display_name(
-                            skill_id,
-                            default=skill_id,
+                owner_id = resolve_owner_id(state)
+                async with self._lock_for(
+                    f"{_GUIDED_EXERCISE_COMPLETION_OWNER_LOCK_PREFIX}{owner_id}"
+                ):
+                    completion_persisted = await write_exercise_completion_fact(
+                        request=ExerciseCompletionMemoryRequest(
+                            owner_id=owner_id,
+                            session_id=thread_id,
+                            turn_count=turn_count_from_state(state) + 1,
+                            exercise_type=skill_id,
+                            display_name=get_exercise_display_name(
+                                skill_id,
+                                default=skill_id,
+                            ),
                         ),
-                    ),
-                    memory_store=self._memory_store,
-                    memory_mode=completion_memory_mode,
-                )
+                        memory_store=self._memory_store,
+                        memory_mode=completion_memory_mode,
+                    )
                 if not completion_persisted:
                     return _guided_exercise_completion_retry_result(
                         result,

@@ -262,6 +262,101 @@ async def test_concurrent_stale_voice_completion_persists_once() -> None:
 
 
 @pytest.mark.asyncio
+async def test_concurrent_cross_thread_voice_completions_share_owner_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime()
+    user_id = "voice-owner-cross-thread-completion"
+    thread_ids = ("voice-exercise-owner-lock-a", "voice-exercise-owner-lock-b")
+    definition = get_exercise_definition(EXERCISE_BOX_BREATHING)
+    assert definition is not None
+    terminal_result = {
+        "status": "completed",
+        "runtime_action": "complete",
+        "skill_id": EXERCISE_BOX_BREATHING,
+        "previous_step_id": definition.steps[-1].id,
+        "exercise_state_delta": {
+            "exercise_state": {
+                "exercise_type": None,
+                "exercise_step": None,
+                "exercise_step_id": None,
+                "exercise_version": None,
+                "exercise_therapeutic_approach": None,
+            }
+        },
+        "side_effect": "active_skill_state_update",
+        "retry_safe": False,
+    }
+
+    async with runtime:
+        for thread_id in thread_ids:
+            await runtime._state_store.save_state(  # noqa: SLF001
+                thread_id,
+                {
+                    "thread_id": thread_id,
+                    "channel": Channel.VOICE,
+                    "user_id": user_id,
+                    "session_id": thread_id,
+                    "transcript": [],
+                    "session_progress": {"turn_count": 0},
+                    "exercise_state": {
+                        "exercise_type": EXERCISE_BOX_BREATHING,
+                        "exercise_step": len(definition.steps) - 1,
+                        "exercise_step_id": definition.steps[-1].id,
+                        "exercise_version": definition.version,
+                        "exercise_therapeutic_approach": "dbt_skills",
+                    },
+                },
+            )
+
+        original_write = voice_runtime_facade.write_exercise_completion_fact
+        first_write_started = asyncio.Event()
+        release_first_write = asyncio.Event()
+        write_calls = 0
+
+        async def serialized_completion_write(**kwargs: object) -> bool:
+            nonlocal write_calls
+            write_calls += 1
+            if write_calls == 1:
+                first_write_started.set()
+                await release_first_write.wait()
+            return await original_write(**kwargs)
+
+        monkeypatch.setattr(
+            voice_runtime_facade,
+            "write_exercise_completion_fact",
+            serialized_completion_write,
+        )
+
+        async def persist_completion(thread_id: str) -> dict[str, object]:
+            return await runtime.voice.persist_voice_guided_exercise_result(
+                thread_id=thread_id,
+                user_id=user_id,
+                current_user_message="The user completed the exercise.",
+                transcript=[],
+                result=terminal_result,
+                memory_mode="persistent",
+            )
+
+        first_completion = asyncio.create_task(persist_completion(thread_ids[0]))
+        await first_write_started.wait()
+        second_completion = asyncio.create_task(persist_completion(thread_ids[1]))
+        await asyncio.sleep(0)
+        assert write_calls == 1
+
+        release_first_write.set()
+        results = await asyncio.gather(first_completion, second_completion)
+
+        assert [result["status"] for result in results] == ["completed", "completed"]
+        records = await fetch_existing_semantic_records(
+            runtime.memory_store,
+            owner_id=user_id,
+        )
+
+    assert len(records) == 1
+
+
+@pytest.mark.asyncio
 async def test_cancelled_voice_completion_keeps_active_state_for_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
