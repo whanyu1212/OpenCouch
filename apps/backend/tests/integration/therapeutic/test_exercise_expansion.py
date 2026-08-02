@@ -15,6 +15,7 @@ import pytest
 
 from agent.audit.crisis_log import InMemoryCrisisLogBackend
 from agent.memory.modes import MemoryMode
+from agent.memory.operations.semantic_writes import fetch_existing_semantic_records
 from agent.memory.store import OpenCouchMemoryStore
 from agent.runtime.workflow_context import WorkflowContext
 from agent.state import AgentState
@@ -655,7 +656,7 @@ class TestExerciseCompletionMemory:
     @pytest.mark.asyncio
     async def test_completion_writes_coping_strategy_fact(self) -> None:
         """Completing an exercise in persistent mode writes a semantic fact."""
-        store = _RecordingMemoryStore()
+        store = OpenCouchMemoryStore()
         runtime = _MockRuntime(
             llm_client=_StepClassifierLLM(
                 step_state="complete",
@@ -674,8 +675,9 @@ class TestExerciseCompletionMemory:
             runtime,  # type: ignore[arg-type]
         )
 
-        assert len(store.writes) == 1
-        fact = store.writes[0]["value"]
+        records = await fetch_existing_semantic_records(store, owner_id="test-user")
+        assert len(records) == 1
+        fact = records[0].value
         assert fact["category"] == "coping_strategy"
         assert fact["predicate"] == "USES"
         assert "box_breathing" in fact["object"]["identifier"]
@@ -683,7 +685,7 @@ class TestExerciseCompletionMemory:
 
     @pytest.mark.asyncio
     async def test_completion_write_accepts_neutral_request(self) -> None:
-        store = _RecordingMemoryStore()
+        store = OpenCouchMemoryStore()
 
         await write_exercise_completion_fact(
             request=ExerciseCompletionMemoryRequest(
@@ -697,11 +699,79 @@ class TestExerciseCompletionMemory:
             memory_mode=MemoryMode.LOCAL,
         )
 
-        assert len(store.writes) == 1
-        fact = store.writes[0]["value"]
+        records = await fetch_existing_semantic_records(store, owner_id="test-user")
+        assert len(records) == 1
+        fact = records[0].value
         assert fact["subject"]["identifier"] == "test-user"
         assert fact["source_session_id"] == "test-session"
         assert fact["source_turn_index"] == 3
+
+    @pytest.mark.asyncio
+    async def test_repeated_completion_bumps_existing_fact(self) -> None:
+        """Repeated completion of the same exercise does not create a duplicate."""
+        store = OpenCouchMemoryStore()
+        request = ExerciseCompletionMemoryRequest(
+            owner_id="test-user",
+            session_id="test-session",
+            turn_count=3,
+            exercise_type=EXERCISE_BOX_BREATHING,
+            display_name="box breathing",
+        )
+
+        await write_exercise_completion_fact(
+            request=request,
+            memory_store=store,
+            memory_mode=MemoryMode.LOCAL,
+        )
+        records = await fetch_existing_semantic_records(store, owner_id="test-user")
+        assert len(records) == 1
+        first_referenced_at = records[0].value["last_referenced_at"]
+
+        await write_exercise_completion_fact(
+            request=request,
+            memory_store=store,
+            memory_mode=MemoryMode.LOCAL,
+        )
+
+        records = await fetch_existing_semantic_records(store, owner_id="test-user")
+        assert len(records) == 1
+        assert records[0].value["last_referenced_at"] >= first_referenced_at
+
+    @pytest.mark.asyncio
+    async def test_distinct_completions_coexist_without_a_reconciliation_llm(
+        self,
+    ) -> None:
+        """Different completed exercises are both retained without an LLM."""
+        store = OpenCouchMemoryStore()
+
+        await write_exercise_completion_fact(
+            request=ExerciseCompletionMemoryRequest(
+                owner_id="test-user",
+                session_id="test-session",
+                turn_count=3,
+                exercise_type=EXERCISE_BOX_BREATHING,
+                display_name="box breathing",
+            ),
+            memory_store=store,
+            memory_mode=MemoryMode.LOCAL,
+        )
+        await write_exercise_completion_fact(
+            request=ExerciseCompletionMemoryRequest(
+                owner_id="test-user",
+                session_id="test-session",
+                turn_count=4,
+                exercise_type=EXERCISE_5_4_3_2_1,
+                display_name="5-4-3-2-1 grounding",
+            ),
+            memory_store=store,
+            memory_mode=MemoryMode.LOCAL,
+        )
+
+        records = await fetch_existing_semantic_records(store, owner_id="test-user")
+        assert {record.value["object"]["identifier"] for record in records} == {
+            EXERCISE_BOX_BREATHING,
+            EXERCISE_5_4_3_2_1,
+        }
 
     @pytest.mark.asyncio
     async def test_exit_does_not_write_fact(self) -> None:
