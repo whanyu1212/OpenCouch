@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import weakref
 from dataclasses import dataclass
 
 from agent.memory.modes import MemoryMode
@@ -16,6 +18,20 @@ from agent.memory.types import EntityRef, MemoryWrite
 from agent.state import AgentState, resolve_owner_id
 
 logger = logging.getLogger(__name__)
+
+_EXERCISE_COMPLETION_LOCKS: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+    weakref.WeakValueDictionary()
+)
+
+
+def _exercise_completion_lock(owner_id: str) -> asyncio.Lock:
+    """Return the process-local mutex for one completion-memory owner."""
+
+    lock = _EXERCISE_COMPLETION_LOCKS.get(owner_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _EXERCISE_COMPLETION_LOCKS[owner_id] = lock
+    return lock
 
 
 @dataclass(frozen=True)
@@ -36,18 +52,13 @@ async def _write_exercise_completion_fact(
     display_name: str,
     memory_store: MemoryStore | None,
     memory_mode: MemoryMode | None,
-) -> None:
+) -> bool:
     """Write a semantic fact recording that the user completed an exercise.
 
     This is a deterministic write — no LLM involved. The fact is
     written as a coping_strategy with predicate USES, which the
     retrieval system will surface on future turns when the user's
     context overlaps with coping strategies.
-
-    Skips silently when:
-    - memory_store is None (no store configured)
-    - memory_mode is INCOGNITO (no persistent writes allowed)
-    - any error occurs (logged, never raised)
 
     Args:
         state: Current runtime state.
@@ -57,11 +68,12 @@ async def _write_exercise_completion_fact(
         memory_mode: Current memory mode.
 
     Returns:
-        None.
+        ``True`` when a durable write succeeded or persistence is intentionally
+        disabled; otherwise ``False``.
     """
 
     if memory_store is None or memory_mode == MemoryMode.INCOGNITO:
-        return
+        return True
 
     owner_id = resolve_owner_id(state)
     session_id = str(state.get("session_id") or owner_id)
@@ -73,7 +85,7 @@ async def _write_exercise_completion_fact(
     )
     turn_count = raw_turn_count if isinstance(raw_turn_count, int) else 0
 
-    await write_exercise_completion_fact(
+    return await write_exercise_completion_fact(
         request=ExerciseCompletionMemoryRequest(
             owner_id=owner_id,
             session_id=session_id,
@@ -91,11 +103,11 @@ async def write_exercise_completion_fact(
     request: ExerciseCompletionMemoryRequest,
     memory_store: MemoryStore | None,
     memory_mode: MemoryMode | None,
-) -> None:
+) -> bool:
     """Write a semantic fact for an exercise completion from neutral input."""
 
     if memory_store is None or memory_mode == MemoryMode.INCOGNITO:
-        return
+        return True
 
     write = MemoryWrite(
         category="coping_strategy",
@@ -108,33 +120,49 @@ async def write_exercise_completion_fact(
         source_turn_index=request.turn_count,
     )
 
-    try:
-        outcome = await apply_semantic_writes_batch(
-            memory_store,
-            owner_id=request.owner_id,
-            items=[
-                BatchWriteItem(
-                    candidate=build_semantic_candidate(
-                        write,
-                        message=write.evidence_quote,
-                    ),
-                    write_timing="immediate",
-                    write_reason="guided_exercise_completion",
-                    policy_version="guided_exercise_v1",
-                )
-            ],
-            llm_client=None,
-            log_context="guided_exercise_completion",
-            reconciliation_failure_policy="coexist",
-        )
-        if outcome.written:
-            logger.info(
-                "Wrote exercise completion fact: exercise_type=%s owner=%s",
-                request.exercise_type,
-                request.owner_id,
+    completion_lock = _exercise_completion_lock(request.owner_id)
+    async with completion_lock:
+        try:
+            outcome = await apply_semantic_writes_batch(
+                memory_store,
+                owner_id=request.owner_id,
+                items=[
+                    BatchWriteItem(
+                        candidate=build_semantic_candidate(
+                            write,
+                            message=write.evidence_quote,
+                        ),
+                        write_timing="immediate",
+                        write_reason="guided_exercise_completion",
+                        policy_version="guided_exercise_v1",
+                    )
+                ],
+                llm_client=None,
+                log_context="guided_exercise_completion",
+                reconciliation_failure_policy="coexist",
             )
-    except Exception:
-        logger.warning(
-            "Failed to write exercise completion fact; skipping.",
-            exc_info=True,
+        except Exception:
+            logger.warning(
+                "Failed to write exercise completion fact.",
+                exc_info=True,
+            )
+            return False
+
+    if outcome.written or outcome.bumped:
+        logger.info(
+            "Recorded exercise completion fact: exercise_type=%s owner=%s",
+            request.exercise_type,
+            request.owner_id,
         )
+        return True
+
+    logger.warning(
+        "Failed to persist exercise completion fact: "
+        "exercise_type=%s owner=%s skipped=%s failures=%s fetch_failed=%s",
+        request.exercise_type,
+        request.owner_id,
+        outcome.skipped,
+        outcome.failures,
+        outcome.fetch_failed,
+    )
+    return False

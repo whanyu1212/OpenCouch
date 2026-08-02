@@ -28,6 +28,11 @@ from agent.audit.models import CrisisResourceLookupStatus
 from agent.memory.modes import MemoryMode
 from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.memory.store import MemoryStore
+from agent.skills.guided_exercises.catalog.registry import get_exercise_display_name
+from agent.skills.guided_exercises.lifecycle.memory import (
+    ExerciseCompletionMemoryRequest,
+    write_exercise_completion_fact,
+)
 from agent.models import Channel, CrisisAssessment
 from agent.observability.decorators import trace_event, trace_span
 from agent.observability.events import (
@@ -94,6 +99,96 @@ def _latest_user_text(transcript: list[dict[str, object]]) -> str:
         if turn.get("role") == "user":
             return str(turn.get("content") or "").strip()
     return ""
+
+
+def _guided_exercise_start_conflict_result(
+    result: Mapping[str, Any],
+    *,
+    exercise_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return a stable conflict response when a concurrent start won the lock."""
+
+    active_skill_id = exercise_state.get("exercise_type")
+    active_step_index = exercise_state.get("exercise_step")
+    active_step_id = exercise_state.get("exercise_step_id")
+    return {
+        **result,
+        "status": "conflict",
+        "runtime_action": "conflict",
+        "skill_id": active_skill_id if isinstance(active_skill_id, str) else None,
+        "current_step_index": (
+            active_step_index if isinstance(active_step_index, int) else None
+        ),
+        "current_step_id": active_step_id if isinstance(active_step_id, str) else None,
+        "exercise_state_delta": {},
+        "skill_context": "",
+        "response_instruction": (
+            "Do not start another exercise. Re-orient to the runtime-provided "
+            "active exercise or ask the user whether they want to continue it."
+        ),
+        "side_effect": "none",
+        "retry_safe": True,
+    }
+
+
+def _guided_exercise_progress_conflict_result(
+    result: Mapping[str, Any],
+    *,
+    exercise_state: Mapping[str, Any],
+    expected_step_id: object,
+) -> dict[str, Any]:
+    """Return a stable conflict response for stale voice exercise progress."""
+
+    active_skill_id = exercise_state.get("exercise_type")
+    active_step_id = exercise_state.get("exercise_step_id")
+    return {
+        **result,
+        "status": "conflict",
+        "runtime_action": "conflict",
+        "skill_id": active_skill_id if isinstance(active_skill_id, str) else None,
+        "previous_step_id": (
+            expected_step_id if isinstance(expected_step_id, str) else None
+        ),
+        "current_step_id": active_step_id if isinstance(active_step_id, str) else None,
+        "next_step_id": None,
+        "exercise_state_delta": {},
+        "response_instruction": (
+            "Do not advance the exercise. Re-orient to the runtime-provided "
+            "active step or ask the user whether they want to continue."
+        ),
+        "side_effect": "none",
+        "retry_safe": True,
+    }
+
+
+def _guided_exercise_completion_retry_result(
+    result: Mapping[str, Any],
+    *,
+    exercise_state: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Keep a terminal exercise step active when its memory write failed."""
+
+    active_skill_id = exercise_state.get("exercise_type")
+    active_step_id = exercise_state.get("exercise_step_id")
+    previous_step_id = result.get("previous_step_id")
+    return {
+        **result,
+        "status": "active",
+        "runtime_action": "hold",
+        "skill_id": active_skill_id if isinstance(active_skill_id, str) else None,
+        "previous_step_id": (
+            previous_step_id if isinstance(previous_step_id, str) else None
+        ),
+        "current_step_id": active_step_id if isinstance(active_step_id, str) else None,
+        "next_step_id": None,
+        "exercise_state_delta": {},
+        "response_instruction": (
+            "Do not report the exercise complete yet. Keep the final step active "
+            "and invite the user to confirm completion again."
+        ),
+        "side_effect": "none",
+        "retry_safe": True,
+    }
 
 
 def _compact_voice_memory_context(delta: Mapping[str, Any]) -> str:
@@ -548,19 +643,19 @@ class VoiceRuntimeFacade:
             apply_state_delta(state, delta)
             await self._state_store.save_state(thread_id, state)
 
-    # ── prepare_voice_guided_exercise_progress ────────────────────
+    # ── prepare_voice_guided_exercise_tool ────────────────────────
 
-    async def prepare_voice_guided_exercise_progress(
+    async def prepare_voice_guided_exercise_tool(
         self,
         *,
         thread_id: str,
         llm_client: BaseLLMClient | None,
     ) -> None:
-        """Ensure voice progress validation sees current session continuity.
+        """Ensure voice guided-exercise tools see current session continuity.
 
         Realtime tool calls arrive before final turn persistence. Preparing the
-        session before progress validation lets expired or absent sessions clear
-        stale exercise state before the model-reported outcome is validated.
+        session before start or progress validation lets expired or absent
+        sessions clear stale exercise state before the tool result is computed.
         """
 
         async with self._lock_for(thread_id):
@@ -571,9 +666,9 @@ class VoiceRuntimeFacade:
                 llm_client=llm_client,
             )
 
-    # ── persist_voice_guided_exercise_progress ────────────────────
+    # ── persist_voice_guided_exercise_result ──────────────────────
 
-    async def persist_voice_guided_exercise_progress(
+    async def persist_voice_guided_exercise_result(
         self,
         *,
         thread_id: str,
@@ -581,19 +676,24 @@ class VoiceRuntimeFacade:
         current_user_message: str,
         transcript: list[dict[str, object]],
         result: Mapping[str, Any],
-    ) -> None:
-        """Persist voice guided-exercise progress between Realtime tool calls."""
+        memory_mode: str,
+    ) -> dict[str, Any]:
+        """Persist voice exercise state and record terminal completion memory."""
 
         delta = result.get("exercise_state_delta")
         if not isinstance(delta, Mapping) or not delta:
-            return
+            return dict(result)
 
         effective_user_message = current_user_message.strip() or _latest_user_text(
             transcript
         )
         if not effective_user_message:
-            effective_user_message = "voice guided exercise progress tool call"
+            effective_user_message = "voice guided exercise tool call"
 
+        persisted_result = dict(result)
+        completion_memory_mode = (
+            MemoryMode.INCOGNITO if memory_mode == "incognito" else self._memory_mode
+        )
         async with self._lock_for(thread_id):
             prior_state = await self._state_store.load_state(thread_id)
             if prior_state is None:
@@ -613,8 +713,69 @@ class VoiceRuntimeFacade:
                 state["transcript"] = []
             else:
                 state = cast(AgentState, dict(prior_state))
+
+            if result.get("runtime_action") == "start":
+                active_state = state.get("exercise_state", {}) or {}
+                active_skill_id = active_state.get("exercise_type")
+                if isinstance(active_skill_id, str) and active_skill_id:
+                    return _guided_exercise_start_conflict_result(
+                        result,
+                        exercise_state=active_state,
+                    )
+            else:
+                expected_skill_id = result.get("skill_id")
+                expected_step_id = result.get("previous_step_id")
+                active_state_value = state.get("exercise_state", {}) or {}
+                active_state = (
+                    active_state_value
+                    if isinstance(active_state_value, Mapping)
+                    else {}
+                )
+                if (
+                    not isinstance(expected_skill_id, str)
+                    or not isinstance(expected_step_id, str)
+                    or active_state.get("exercise_type") != expected_skill_id
+                    or active_state.get("exercise_step_id") != expected_step_id
+                ):
+                    return _guided_exercise_progress_conflict_result(
+                        result,
+                        exercise_state=active_state,
+                        expected_step_id=expected_step_id,
+                    )
+
+            skill_id = result.get("skill_id")
+            if (
+                result.get("status") == "completed"
+                and result.get("runtime_action") == "complete"
+                and isinstance(skill_id, str)
+                and skill_id
+            ):
+                # Do not clear the final active step until its required memory
+                # effect succeeds: a cancellation or write failure must remain retryable.
+                owner_id = resolve_owner_id(state)
+                completion_persisted = await write_exercise_completion_fact(
+                    request=ExerciseCompletionMemoryRequest(
+                        owner_id=owner_id,
+                        session_id=thread_id,
+                        turn_count=turn_count_from_state(state) + 1,
+                        exercise_type=skill_id,
+                        display_name=get_exercise_display_name(
+                            skill_id,
+                            default=skill_id,
+                        ),
+                    ),
+                    memory_store=self._memory_store,
+                    memory_mode=completion_memory_mode,
+                )
+                if not completion_persisted:
+                    return _guided_exercise_completion_retry_result(
+                        result,
+                        exercise_state=active_state,
+                    )
+
             apply_state_delta(state, dict(delta))
             await self._state_store.save_state(thread_id, state)
+        return persisted_result
 
     # ── persist_voice_crisis_resource_lookup ──────────────────────
 

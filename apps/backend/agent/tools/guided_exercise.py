@@ -18,6 +18,7 @@ from agent.skills.guided_exercises.lifecycle.transitions import (
     GuidedExerciseTransition,
     InvalidGuidedExerciseState,
     progress_guided_exercise_transition,
+    start_guided_exercise_transition,
 )
 from agent.skills.guided_exercises.rendering.skill_context import (
     render_exercise_skill_context,
@@ -48,6 +49,8 @@ GuidedExerciseRuntimeAction = Literal[
     "crisis",
     "conflict",
 ]
+GuidedExerciseStartStatus = Literal["active", "conflict"]
+GuidedExerciseStartRuntimeAction = Literal["start", "conflict"]
 
 _VALID_GUIDED_EXERCISE_PROGRESS_OUTCOMES = {
     "complete",
@@ -103,6 +106,48 @@ class GuidedExerciseSkillDiscoveryToolResult(BaseModel):
     retry_safe: bool = Field(
         default=True,
         description="Whether retrying skill discovery can duplicate side effects.",
+    )
+
+
+class GuidedExerciseStartToolResult(BaseModel):
+    """Structured result returned when voice starts a guided exercise."""
+
+    status: GuidedExerciseStartStatus = Field(
+        description="Validated status after attempting to start an exercise."
+    )
+    runtime_action: GuidedExerciseStartRuntimeAction = Field(
+        description="Runtime-approved action after attempting to start."
+    )
+    skill_id: str | None = Field(
+        default=None,
+        description="Started or already active guided-exercise skill id.",
+    )
+    current_step_index: int | None = Field(
+        default=None,
+        description="Current exercise step index after the start attempt.",
+    )
+    current_step_id: str | None = Field(
+        default=None,
+        description="Current exercise step id after the start attempt.",
+    )
+    exercise_state_delta: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Runtime state delta for the start attempt.",
+    )
+    skill_context: str = Field(
+        default="",
+        description="Prompt-ready context for the initial guided-exercise step.",
+    )
+    response_instruction: str = Field(
+        description="Instruction for the model's next user-facing response."
+    )
+    side_effect: Literal["active_skill_state_update", "none"] = Field(
+        default="none",
+        description="Whether the start attempt updated active exercise state.",
+    )
+    retry_safe: bool = Field(
+        default=False,
+        description="Whether retrying the start attempt can duplicate side effects.",
     )
 
 
@@ -224,6 +269,94 @@ async def execute_guided_exercise_discovery_tool(
         skills=summaries,
         therapeutic_approach=approach,
         channel=delivery_channel,
+    )
+
+
+async def execute_guided_exercise_start_tool(
+    context: OpenAITextRunContext,
+    *,
+    exercise_type: str,
+    therapeutic_approach: str | None = None,
+) -> GuidedExerciseStartToolResult:
+    """Validate and prepare the first state and skill context for voice."""
+
+    exercise_id = exercise_type.strip()
+    if not exercise_id:
+        raise ValueError("start_guided_exercise requires exercise_type.")
+    definition = get_exercise_definition(exercise_id)
+    if definition is None:
+        raise ValueError(f"Unknown guided exercise: {exercise_id!r}.")
+
+    state = context.agent_state or {}
+    raw_approach = (
+        therapeutic_approach
+        if therapeutic_approach is not None
+        else state.get("therapeutic_approach")
+    )
+    approach = str(raw_approach).strip() if raw_approach is not None else None
+    if not any(
+        available_definition.id == exercise_id
+        for available_definition in available_exercise_definitions(
+            installed_skills=tuple(context.installed_skills),
+            channel="voice",
+            therapeutic_approach=approach or None,
+        )
+    ):
+        raise ValueError(f"Guided exercise unavailable for voice: {exercise_id!r}.")
+
+    exercise_state = state.get("exercise_state", {}) or {}
+    active_skill_id = exercise_state.get("exercise_type")
+    if isinstance(active_skill_id, str) and active_skill_id:
+        active_step_index = exercise_state.get("exercise_step")
+        active_step_id = exercise_state.get("exercise_step_id")
+        return GuidedExerciseStartToolResult(
+            status="conflict",
+            runtime_action="conflict",
+            skill_id=active_skill_id,
+            current_step_index=(
+                active_step_index if isinstance(active_step_index, int) else None
+            ),
+            current_step_id=active_step_id if isinstance(active_step_id, str) else None,
+            response_instruction=(
+                "Do not start another exercise. Re-orient to the runtime-provided "
+                "active exercise or ask the user whether they want to continue it."
+            ),
+            side_effect="none",
+            retry_safe=True,
+        )
+    transition = start_guided_exercise_transition(
+        definition,
+        therapeutic_approach=approach or None,
+    )
+    active_state = transition.exercise_state
+    if active_state is None:
+        raise AssertionError("Guided exercise start transition must create state.")
+
+    current_step_index = active_state.get("exercise_step")
+    current_step_id = active_state.get("exercise_step_id")
+    if not isinstance(current_step_index, int) or not isinstance(current_step_id, str):
+        raise AssertionError(
+            "Guided exercise start transition has an invalid first step."
+        )
+
+    return GuidedExerciseStartToolResult(
+        status="active",
+        runtime_action="start",
+        skill_id=definition.id,
+        current_step_index=current_step_index,
+        current_step_id=current_step_id,
+        exercise_state_delta={"exercise_state": active_state},
+        skill_context=render_exercise_skill_context(
+            definition.id,
+            current_step_index=current_step_index,
+            runtime_action="start",
+        ),
+        response_instruction=(
+            "Begin this registered exercise. Briefly introduce it, then guide the "
+            "current first step naturally using the returned skill context."
+        ),
+        side_effect="active_skill_state_update",
+        retry_safe=False,
     )
 
 
@@ -536,6 +669,7 @@ __all__ = [
     "GuidedExerciseProgressStatus",
     "GuidedExerciseProgressToolResult",
     "GuidedExerciseRuntimeAction",
+    "GuidedExerciseStartToolResult",
     "GuidedExerciseSkillDiscoveryToolResult",
     "GuidedExerciseSkillSummary",
     "GuidedExerciseSkillToolResult",
@@ -544,6 +678,7 @@ __all__ = [
     "execute_guided_exercise_discovery_tool",
     "execute_guided_exercise_progress_tool",
     "execute_guided_exercise_skill_tool",
+    "execute_guided_exercise_start_tool",
     "list_guided_exercise_skills",
     "load_guided_exercise_skill",
 ]

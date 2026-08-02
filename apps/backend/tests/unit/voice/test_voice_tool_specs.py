@@ -29,6 +29,7 @@ def test_voice_tool_specs_preserve_realtime_order() -> None:
         "lookup_crisis_resources",
         "get_crisis_support_template",
         "list_guided_exercise_skills",
+        "start_guided_exercise",
         "load_guided_exercise_skill",
         "record_guided_exercise_progress",
     )
@@ -49,6 +50,8 @@ def test_voice_tool_specs_drive_supported_surface_and_policies() -> None:
         "confirm_memory_deletion",
         "cancel_memory_deletion",
     }
+
+    assert "start_guided_exercise" not in persistent_names
 
     memory_mutator_names = {
         spec.name for spec in VOICE_TOOL_SPECS if spec.memory_mutator
