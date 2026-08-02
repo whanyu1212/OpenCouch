@@ -661,7 +661,9 @@ class VoiceRuntimeFacade:
             effective_user_message = "voice guided exercise tool call"
 
         persisted_result = dict(result)
-        completion_request: ExerciseCompletionMemoryRequest | None = None
+        completion_memory_mode = (
+            MemoryMode.INCOGNITO if memory_mode == "incognito" else self._memory_mode
+        )
         async with self._lock_for(thread_id):
             prior_state = await self._state_store.load_state(thread_id)
             if prior_state is None:
@@ -711,9 +713,6 @@ class VoiceRuntimeFacade:
                         expected_step_id=expected_step_id,
                     )
 
-            apply_state_delta(state, dict(delta))
-            await self._state_store.save_state(thread_id, state)
-
             skill_id = result.get("skill_id")
             if (
                 result.get("status") == "completed"
@@ -721,30 +720,27 @@ class VoiceRuntimeFacade:
                 and isinstance(skill_id, str)
                 and skill_id
             ):
-                completion_request = ExerciseCompletionMemoryRequest(
-                    owner_id=resolve_owner_id(
-                        {"user_id": user_id, "session_id": thread_id}
+                # Do not clear the final active step until its durable effect
+                # completes: request cancellation must leave a retryable state.
+                await write_exercise_completion_fact(
+                    request=ExerciseCompletionMemoryRequest(
+                        owner_id=resolve_owner_id(
+                            {"user_id": user_id, "session_id": thread_id}
+                        ),
+                        session_id=thread_id,
+                        turn_count=turn_count_from_state(state),
+                        exercise_type=skill_id,
+                        display_name=get_exercise_display_name(
+                            skill_id,
+                            default=skill_id,
+                        ),
                     ),
-                    session_id=thread_id,
-                    turn_count=turn_count_from_state(state),
-                    exercise_type=skill_id,
-                    display_name=get_exercise_display_name(
-                        skill_id,
-                        default=skill_id,
-                    ),
+                    memory_store=self._memory_store,
+                    memory_mode=completion_memory_mode,
                 )
 
-        if completion_request is not None:
-            completion_memory_mode = (
-                MemoryMode.INCOGNITO
-                if memory_mode == "incognito"
-                else self._memory_mode
-            )
-            await write_exercise_completion_fact(
-                request=completion_request,
-                memory_store=self._memory_store,
-                memory_mode=completion_memory_mode,
-            )
+            apply_state_delta(state, dict(delta))
+            await self._state_store.save_state(thread_id, state)
         return persisted_result
 
     # ── persist_voice_crisis_resource_lookup ──────────────────────
