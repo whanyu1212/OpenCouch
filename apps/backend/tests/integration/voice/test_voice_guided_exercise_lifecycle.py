@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 
 from agent.memory.modes import MemoryMode
@@ -168,6 +170,92 @@ async def test_voice_start_to_completion_persists_shared_lifecycle_effects(
             )
         else:
             assert records == []
+
+
+@pytest.mark.asyncio
+async def test_concurrent_stale_voice_completion_persists_once() -> None:
+    runtime = _runtime()
+    thread_id = "voice-exercise-concurrent-completion"
+    user_id = "voice-owner-concurrent-completion"
+    definition = get_exercise_definition(EXERCISE_BOX_BREATHING)
+    assert definition is not None
+
+    async with runtime:
+        await _dispatch(
+            runtime,
+            thread_id=thread_id,
+            user_id=user_id,
+            tool_name="start_guided_exercise",
+            arguments={"exercise_type": EXERCISE_BOX_BREATHING},
+            memory_mode="persistent",
+        )
+        for step in definition.steps[:-1]:
+            progress = await _dispatch(
+                runtime,
+                thread_id=thread_id,
+                user_id=user_id,
+                tool_name="record_guided_exercise_progress",
+                arguments={
+                    "expected_skill_id": EXERCISE_BOX_BREATHING,
+                    "expected_step_id": step.id,
+                    "outcome": "complete",
+                    "user_response_summary": "The user completed this step.",
+                },
+                memory_mode="persistent",
+            )
+            assert progress["runtime_action"] == "advance"
+
+        terminal_result = {
+            "status": "completed",
+            "runtime_action": "complete",
+            "skill_id": EXERCISE_BOX_BREATHING,
+            "previous_step_id": definition.steps[-1].id,
+            "exercise_state_delta": {
+                "exercise_state": {
+                    "exercise_type": None,
+                    "exercise_step": None,
+                    "exercise_step_id": None,
+                    "exercise_version": None,
+                    "exercise_therapeutic_approach": None,
+                }
+            },
+            "side_effect": "active_skill_state_update",
+            "retry_safe": False,
+        }
+
+        async def persist_terminal_result() -> dict[str, object]:
+            return await runtime.voice.persist_voice_guided_exercise_result(
+                thread_id=thread_id,
+                user_id=user_id,
+                current_user_message="The user completed the exercise.",
+                transcript=[
+                    {
+                        "role": "user",
+                        "content": "The user completed the exercise.",
+                    }
+                ],
+                result=terminal_result,
+                memory_mode="persistent",
+            )
+
+        results = await asyncio.gather(
+            persist_terminal_result(),
+            persist_terminal_result(),
+        )
+        assert sorted(result["status"] for result in results) == [
+            "completed",
+            "conflict",
+        ]
+
+        state = await runtime.get_state(thread_id)
+        assert state is not None
+        assert state["exercise_state"]["exercise_type"] is None
+        records = await fetch_existing_semantic_records(
+            runtime.memory_store,
+            owner_id=user_id,
+        )
+
+    assert len(records) == 1
 
 
 @pytest.mark.asyncio

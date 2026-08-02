@@ -288,6 +288,22 @@ async def execute_guided_exercise_start_tool(
         raise ValueError(f"Unknown guided exercise: {exercise_id!r}.")
 
     state = context.agent_state or {}
+    raw_approach = (
+        therapeutic_approach
+        if therapeutic_approach is not None
+        else state.get("therapeutic_approach")
+    )
+    approach = str(raw_approach).strip() if raw_approach is not None else None
+    if not any(
+        available_definition.id == exercise_id
+        for available_definition in available_exercise_definitions(
+            installed_skills=tuple(context.installed_skills),
+            channel="voice",
+            therapeutic_approach=approach or None,
+        )
+    ):
+        raise ValueError(f"Guided exercise unavailable for voice: {exercise_id!r}.")
+
     exercise_state = state.get("exercise_state", {}) or {}
     active_skill_id = exercise_state.get("exercise_type")
     if isinstance(active_skill_id, str) and active_skill_id:
@@ -308,13 +324,6 @@ async def execute_guided_exercise_start_tool(
             side_effect="none",
             retry_safe=True,
         )
-
-    raw_approach = (
-        therapeutic_approach
-        if therapeutic_approach is not None
-        else state.get("therapeutic_approach")
-    )
-    approach = str(raw_approach).strip() if raw_approach is not None else None
     transition = start_guided_exercise_transition(
         definition,
         therapeutic_approach=approach or None,

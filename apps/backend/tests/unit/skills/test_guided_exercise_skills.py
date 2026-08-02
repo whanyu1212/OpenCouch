@@ -113,6 +113,15 @@ async def test_start_tool_rejects_unknown_exercise() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_tool_rejects_exercise_unavailable_for_voice() -> None:
+    with pytest.raises(ValueError, match="unavailable for voice"):
+        await execute_guided_exercise_start_tool(
+            _run_context(),
+            exercise_type="thought_work_simple_record",
+        )
+
+
+@pytest.mark.asyncio
 async def test_start_tool_rejects_replacing_an_active_exercise() -> None:
     result = await execute_guided_exercise_start_tool(
         _guided_exercise_context(),

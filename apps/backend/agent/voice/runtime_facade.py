@@ -131,6 +131,36 @@ def _guided_exercise_start_conflict_result(
     }
 
 
+def _guided_exercise_progress_conflict_result(
+    result: Mapping[str, Any],
+    *,
+    exercise_state: Mapping[str, Any],
+    expected_step_id: object,
+) -> dict[str, Any]:
+    """Return a stable conflict response for stale voice exercise progress."""
+
+    active_skill_id = exercise_state.get("exercise_type")
+    active_step_id = exercise_state.get("exercise_step_id")
+    return {
+        **result,
+        "status": "conflict",
+        "runtime_action": "conflict",
+        "skill_id": active_skill_id if isinstance(active_skill_id, str) else None,
+        "previous_step_id": (
+            expected_step_id if isinstance(expected_step_id, str) else None
+        ),
+        "current_step_id": active_step_id if isinstance(active_step_id, str) else None,
+        "next_step_id": None,
+        "exercise_state_delta": {},
+        "response_instruction": (
+            "Do not advance the exercise. Re-orient to the runtime-provided "
+            "active step or ask the user whether they want to continue."
+        ),
+        "side_effect": "none",
+        "retry_safe": True,
+    }
+
+
 def _compact_voice_memory_context(delta: Mapping[str, Any]) -> str:
     blocks: list[str] = []
     procedural_profile = delta.get("procedural_profile") or {}
@@ -659,6 +689,26 @@ class VoiceRuntimeFacade:
                     return _guided_exercise_start_conflict_result(
                         result,
                         exercise_state=active_state,
+                    )
+            else:
+                expected_skill_id = result.get("skill_id")
+                expected_step_id = result.get("previous_step_id")
+                active_state_value = state.get("exercise_state", {}) or {}
+                active_state = (
+                    active_state_value
+                    if isinstance(active_state_value, Mapping)
+                    else {}
+                )
+                if (
+                    not isinstance(expected_skill_id, str)
+                    or not isinstance(expected_step_id, str)
+                    or active_state.get("exercise_type") != expected_skill_id
+                    or active_state.get("exercise_step_id") != expected_step_id
+                ):
+                    return _guided_exercise_progress_conflict_result(
+                        result,
+                        exercise_state=active_state,
+                        expected_step_id=expected_step_id,
                     )
 
             apply_state_delta(state, dict(delta))
