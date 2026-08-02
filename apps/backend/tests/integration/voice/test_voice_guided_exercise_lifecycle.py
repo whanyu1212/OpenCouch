@@ -158,6 +158,7 @@ async def test_voice_start_to_completion_persists_shared_lifecycle_effects(
             assert fact["object"]["identifier"] == EXERCISE_BOX_BREATHING
             assert fact["subject"]["identifier"] == user_id
             assert fact["source_session_id"] == thread_id
+            assert fact["source_turn_index"] == 1
 
             text_memory = await load_memory_for_turn(
                 memory_store=runtime.memory_store,
@@ -493,6 +494,7 @@ async def test_failed_voice_completion_keeps_active_state_for_retry(
         )
 
     assert len(records) == 1
+    assert records[0].value["source_turn_index"] == 2
 
 
 @pytest.mark.asyncio

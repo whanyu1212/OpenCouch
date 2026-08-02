@@ -758,7 +758,7 @@ class VoiceRuntimeFacade:
                             {"user_id": user_id, "session_id": thread_id}
                         ),
                         session_id=thread_id,
-                        turn_count=turn_count_from_state(state),
+                        turn_count=turn_count_from_state(state) + 1,
                         exercise_type=skill_id,
                         display_name=get_exercise_display_name(
                             skill_id,
