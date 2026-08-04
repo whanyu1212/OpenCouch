@@ -1312,7 +1312,6 @@ async def test_retry_handle_heartbeat_protects_pending_voice_turn(
             "live-correlation"
         ]
         pending_turn["last_attempted_at"] = stale_timestamp
-        pending_turn["retry_handle_seen_at"] = stale_timestamp
         await runtime._state_store.save_state("voice-retry-handle", pending_state)
         await runtime.voice.touch_pending_voice_retry_handle(
             thread_id="voice-retry-handle",
@@ -1342,11 +1341,28 @@ async def test_retry_handle_heartbeat_protects_pending_voice_turn(
                 retry_handle_id="new-handle",
                 llm_client=None,
             )
+        pending_state = await runtime.get_state("voice-retry-handle")
+        assert pending_state is not None
+        expired_turn = pending_state["diagnostics"]["voice_pending_turns"][
+            "new-correlation"
+        ]
+        expired_turn["last_attempted_at"] = stale_timestamp
+        expired_turn["retry_handle_seen_at"] = stale_timestamp
+        await runtime._state_store.save_state("voice-retry-handle", pending_state)
+        await runtime.voice.touch_pending_voice_retry_handle(
+            thread_id="voice-retry-handle",
+            retry_handle_id="new-handle",
+        )
         state = await runtime.get_state("voice-retry-handle")
 
     assert state is not None
     diagnostics = state["diagnostics"]
-    assert len(diagnostics["voice_pending_turns"]) == 2
+    assert len(diagnostics["voice_pending_turns"]) == 1
+    assert "new-correlation" not in diagnostics["voice_pending_turns"]
+    assert (
+        diagnostics["voice_retired_pending_turns"]["new-correlation"]["request_hash"]
+        == "new-request"
+    )
     assert "live-correlation" not in diagnostics.get("voice_retired_pending_turns", {})
 
 

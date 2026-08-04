@@ -1014,10 +1014,13 @@ class VoiceRuntimeFacade:
             diagnostics = state.get("diagnostics", {})
             if not isinstance(diagnostics, Mapping):
                 return
-            pending_turns = diagnostics.get("voice_pending_turns", {})
-            if not isinstance(pending_turns, Mapping):
-                return
 
+            updated_diagnostics = dict(diagnostics)
+            retirement = _retire_expired_pending_voice_turns(
+                updated_diagnostics,
+                now=_pending_voice_turn_now(),
+            )
+            pending_turns = _pending_voice_turns(updated_diagnostics)
             updated_turns = dict(pending_turns)
             touched = False
             timestamp = iso_now()
@@ -1030,14 +1033,28 @@ class VoiceRuntimeFacade:
                 updated_turn["retry_handle_seen_at"] = timestamp
                 updated_turns[str(correlation_hash)] = updated_turn
                 touched = True
-            if not touched:
+            if not touched and not retirement.count:
                 return
 
-            updated_diagnostics = dict(diagnostics)
-            updated_diagnostics["voice_pending_turns"] = updated_turns
+            if touched:
+                updated_diagnostics["voice_pending_turns"] = updated_turns
             updated_state = cast(AgentState, dict(state))
             updated_state["diagnostics"] = updated_diagnostics
             await self._state_store.save_state(thread_id, updated_state)
+            if retirement.count:
+                trace_event(
+                    VOICE_PENDING_TURNS_RETIRED,
+                    {
+                        "voice_runtime": "openai_realtime",
+                        "reason": "retry_window_expired",
+                        "retired_count": retirement.count,
+                        "retired_safety_count": retirement.safety_count,
+                        "retired_non_safety_count": (
+                            retirement.count - retirement.safety_count
+                        ),
+                        "max_age_seconds": retirement.max_age_seconds,
+                    },
+                )
 
     # ── record_voice_turn ────────────────────────────────────────
 
