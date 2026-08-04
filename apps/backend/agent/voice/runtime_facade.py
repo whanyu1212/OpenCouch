@@ -1108,8 +1108,7 @@ class VoiceRuntimeFacade:
                 else None
             )
             if (
-                pending_turn is None
-                and prior_state is not None
+                prior_state is not None
                 and correlation_hash is not None
                 and request_hash is not None
             ):
@@ -1141,24 +1140,31 @@ class VoiceRuntimeFacade:
                             "max_age_seconds": retirement.max_age_seconds,
                         },
                     )
-                if (
-                    len(_pending_voice_turns(retention_diagnostics))
-                    >= _MAX_PENDING_VOICE_TURNS
-                ):
-                    raise VoicePendingTurnCapacityError(
-                        "The thread has too many unresolved voice turns. "
-                        "Retry an existing turn before recording another."
-                    )
-                if retry_handle_id is not None and any(
-                    pending_turn.get("retry_handle_id") == retry_handle_id
-                    for pending_turn in _pending_voice_turns(
-                        retention_diagnostics
-                    ).values()
-                ):
-                    raise VoicePendingTurnHandleBusyError(
-                        "This voice connection has an unresolved turn. "
-                        "Retry it before recording another."
-                    )
+                _validate_voice_turn_request_hash(
+                    prior_state,
+                    correlation_hash,
+                    request_hash,
+                )
+                pending_turn = _pending_voice_turn(prior_state, correlation_hash)
+                if pending_turn is None:
+                    if (
+                        len(_pending_voice_turns(retention_diagnostics))
+                        >= _MAX_PENDING_VOICE_TURNS
+                    ):
+                        raise VoicePendingTurnCapacityError(
+                            "The thread has too many unresolved voice turns. "
+                            "Retry an existing turn before recording another."
+                        )
+                    if retry_handle_id is not None and any(
+                        pending_turn.get("retry_handle_id") == retry_handle_id
+                        for pending_turn in _pending_voice_turns(
+                            retention_diagnostics
+                        ).values()
+                    ):
+                        raise VoicePendingTurnHandleBusyError(
+                            "This voice connection has an unresolved turn. "
+                            "Retry it before recording another."
+                        )
             if pending_turn is not None:
                 pending_turn_instance_id = pending_turn.get("turn_instance_id")
                 legacy_request_hash = pending_turn.get("request_hash")

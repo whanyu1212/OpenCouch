@@ -1156,27 +1156,27 @@ async def test_expired_pending_voice_turn_is_retired_without_replay(
         await runtime._state_store.save_state("voice-pending-retirement", pending_state)
 
         with use_trace_context(trace_context, recorder):
-            await runtime.voice.record_voice_turn(
-                thread_id="voice-pending-retirement",
-                user_id="user-1",
-                user_text="current user turn",
-                assistant_text="current assistant turn",
-                correlation_hash="current-correlation",
-                request_hash="current-request",
-                llm_client=None,
-            )
-        state = await runtime.get_state("voice-pending-retirement")
+            with pytest.raises(VoicePendingTurnRetiredError):
+                await runtime.voice.record_voice_turn(
+                    thread_id="voice-pending-retirement",
+                    user_id="user-1",
+                    user_text="expired user turn",
+                    assistant_text="expired assistant turn",
+                    correlation_hash="expired-correlation",
+                    request_hash="expired-request",
+                    llm_client=None,
+                )
 
-        with pytest.raises(VoicePendingTurnRetiredError):
-            await runtime.voice.record_voice_turn(
-                thread_id="voice-pending-retirement",
-                user_id="user-1",
-                user_text="expired user turn",
-                assistant_text="expired assistant turn",
-                correlation_hash="expired-correlation",
-                request_hash="expired-request",
-                llm_client=None,
-            )
+        await runtime.voice.record_voice_turn(
+            thread_id="voice-pending-retirement",
+            user_id="user-1",
+            user_text="current user turn",
+            assistant_text="current assistant turn",
+            correlation_hash="current-correlation",
+            request_hash="current-request",
+            llm_client=None,
+        )
+        state = await runtime.get_state("voice-pending-retirement")
 
     assert state is not None
     diagnostics = state["diagnostics"]
