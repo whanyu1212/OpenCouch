@@ -26,9 +26,12 @@ import {
 } from "@/lib/session";
 import type {
   RealtimeVoiceSessionResponse,
+  RealtimeVoiceSafetyResourcesResponse,
 } from "@/lib/api";
+import { getRealtimeVoiceSafetyResources } from "@/lib/api";
 
 const REALTIME_SERVER_URL = "https://api.openai.com/v1/realtime/calls";
+const SAFETY_RESOURCE_TIMEOUT_MS = 10_000;
 
 type RealtimeVoiceDisconnectOptions = {
   finalize?: boolean;
@@ -96,6 +99,10 @@ const TOOL_ACTIVITY_BY_NAME: Record<string, ToolActivityDefinition> = {
   list_guided_exercise_skills: {
     activity: "exercise",
     label: "Exercise options",
+  },
+  start_guided_exercise: {
+    activity: "exercise",
+    label: "Exercise started",
   },
   load_guided_exercise_skill: {
     activity: "exercise",
@@ -200,6 +207,9 @@ export function RealtimeVoiceSessionProvider({
   const sessionMode = useSessionStore((s) => s.sessionMode);
   const assistantVoiceSelected = useSessionStore((s) => s.assistantVoiceSelected);
   const setVoiceConnected = useSessionStore((s) => s.setVoiceConnected);
+  const setVoiceConnectionPending = useSessionStore(
+    (s) => s.setVoiceConnectionPending
+  );
   const setVoiceAgentSpeaking = useSessionStore((s) => s.setVoiceAgentSpeaking);
   const setVoiceReadyToSpeak = useSessionStore((s) => s.setVoiceReadyToSpeak);
   const addVoiceTranscript = useSessionStore((s) => s.addVoiceTranscript);
@@ -213,9 +223,20 @@ export function RealtimeVoiceSessionProvider({
   const setLastEndedSession = useSessionStore((s) => s.setLastEndedSession);
   const voiceSetRefs = useSessionStore((s) => s.voiceSetRefs);
   const bumpMemoryRefreshVersion = useSessionStore((s) => s.bumpMemoryRefreshVersion);
+  const setVoiceSafetyOverlay = useSessionStore((s) => s.setVoiceSafetyOverlay);
+  const updateVoiceSafetyResources = useSessionStore(
+    (s) => s.updateVoiceSafetyResources
+  );
+  const setVoiceSafetyResourceWorkActive = useSessionStore(
+    (s) => s.setVoiceSafetyResourceWorkActive
+  );
+  const suppressVoiceAssistantTranscripts = useSessionStore(
+    (s) => s.suppressVoiceAssistantTranscripts
+  );
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const handleRef = useRef<RealtimeVoiceSessionHandle | null>(null);
+  const safetyResourceControllerRef = useRef<AbortController | null>(null);
   const [status, setStatus] =
     useState<RealtimeVoiceConnectionStatus>("disconnected");
   const [session, setSession] = useState<RealtimeVoiceSessionResponse | null>(null);
@@ -226,6 +247,8 @@ export function RealtimeVoiceSessionProvider({
       setVoiceFinalization({
         threadId,
         status: "failed",
+        blocksTextTurns:
+          useSessionStore.getState().voiceFinalization.blocksTextTurns,
         detail,
         updatedAt: new Date().toISOString(),
       });
@@ -238,6 +261,7 @@ export function RealtimeVoiceSessionProvider({
       setVoiceFinalization({
         threadId: response.threadId,
         status: "completed",
+        blocksTextTurns: false,
         detail: response.detail || "Voice session ended.",
         updatedAt: new Date().toISOString(),
       });
@@ -255,15 +279,19 @@ export function RealtimeVoiceSessionProvider({
       if (!handle) {
         setStatus("disconnected");
         setVoiceConnected(false);
+        setVoiceConnectionPending(false);
         setVoiceAgentSpeaking(false);
         setVoiceReadyToSpeak(false);
         return;
       }
 
       if (finalize) {
+        const blocksTextTurns =
+          useSessionStore.getState().voiceFinalization.blocksTextTurns;
         setVoiceFinalization({
           threadId,
           status: "in_progress",
+          blocksTextTurns,
           detail:
             sessionMode === "incognito"
               ? "Ending incognito voice session..."
@@ -292,6 +320,7 @@ export function RealtimeVoiceSessionProvider({
         }
       } finally {
         setVoiceConnected(false);
+        setVoiceConnectionPending(false);
         setVoiceAgentSpeaking(false);
         setVoiceReadyToSpeak(false);
         setStatus("disconnected");
@@ -302,6 +331,7 @@ export function RealtimeVoiceSessionProvider({
       sessionMode,
       setVoiceAgentSpeaking,
       setVoiceConnected,
+      setVoiceConnectionPending,
       setVoiceError,
       setVoiceFinalization,
       setVoiceReadyToSpeak,
@@ -324,6 +354,7 @@ export function RealtimeVoiceSessionProvider({
     setLastEndedSession(null);
     setSession(null);
     setVoiceConnected(false);
+    setVoiceConnectionPending(true);
     setVoiceAgentSpeaking(false);
     setVoiceReadyToSpeak(false);
 
@@ -337,6 +368,9 @@ export function RealtimeVoiceSessionProvider({
         onStatus: (nextStatus) => {
           setStatus(nextStatus);
           setVoiceConnected(nextStatus === "connected");
+          if (nextStatus === "connected" || nextStatus === "disconnected") {
+            setVoiceConnectionPending(false);
+          }
         },
         onSession: (nextSession) => {
           setSession(nextSession);
@@ -357,7 +391,60 @@ export function RealtimeVoiceSessionProvider({
             role: update.role,
             text: update.text,
             itemId: update.itemId,
+            responseId: update.responseId,
           });
+        },
+        onSafetyInterruption: ({ response, request, cleanup }) => {
+          suppressVoiceAssistantTranscripts(cleanup);
+          setVoiceSafetyOverlay({
+            clientTurnId: response.client_turn_id,
+            riskLevel: response.risk_level,
+            support: response.support,
+          });
+          setVoiceFinalization({
+            threadId,
+            status: "in_progress",
+            blocksTextTurns: true,
+            detail:
+              sessionMode === "incognito"
+                ? "Ending interrupted incognito voice session..."
+                : "Saving the interrupted voice session...",
+            updatedAt: new Date().toISOString(),
+          });
+
+          safetyResourceControllerRef.current?.abort();
+          const controller = new AbortController();
+          safetyResourceControllerRef.current = controller;
+          setVoiceSafetyResourceWorkActive(true);
+          const timeout = window.setTimeout(
+            () => controller.abort(),
+            SAFETY_RESOURCE_TIMEOUT_MS
+          );
+          void getRealtimeVoiceSafetyResources({
+            ...request,
+            signal: controller.signal,
+          })
+            .then((resources) => {
+              updateVoiceSafetyResources(response.client_turn_id, resources);
+            })
+            .catch(() => {
+              const fallback: RealtimeVoiceSafetyResourcesResponse = {
+                client_turn_id: response.client_turn_id,
+                status: "lookup_error",
+                inferred_location: "",
+                resources: [],
+                message:
+                  "Verified local resources could not be loaded. Contact emergency services in your area now if you may be in immediate danger.",
+              };
+              updateVoiceSafetyResources(response.client_turn_id, fallback);
+            })
+            .finally(() => {
+              window.clearTimeout(timeout);
+              if (safetyResourceControllerRef.current === controller) {
+                safetyResourceControllerRef.current = null;
+                setVoiceSafetyResourceWorkActive(false);
+              }
+            });
         },
         onToolEvent: (event) => {
           addVoiceActivity(voiceActivityFromToolEvent(event));
@@ -371,6 +458,10 @@ export function RealtimeVoiceSessionProvider({
           }
         },
         onEnded: (response) => {
+          handleRef.current = null;
+          setVoiceConnectionPending(false);
+          setHasRetryHandle(false);
+          voiceSetRefs({ connection: null });
           handleEnded(
             buildEndedSessionResult({
               threadId,
@@ -382,9 +473,11 @@ export function RealtimeVoiceSessionProvider({
         onAgentSpeaking: setVoiceAgentSpeaking,
         onReadyToSpeak: setVoiceReadyToSpeak,
         onError: (error) => setVoiceError(error.message),
+        onFinalizationFailed: (error) => markFinalizationFailed(error.message),
       });
 
       handleRef.current = handle;
+      setVoiceConnectionPending(false);
       setHasRetryHandle(true);
       voiceSetRefs({ connection: handle });
     } catch (error) {
@@ -394,6 +487,7 @@ export function RealtimeVoiceSessionProvider({
           : "Unable to start Realtime voice session.";
       setVoiceError(message);
       setVoiceConnected(false);
+      setVoiceConnectionPending(false);
       setVoiceAgentSpeaking(false);
       setVoiceReadyToSpeak(false);
       setStatus("disconnected");
@@ -408,14 +502,21 @@ export function RealtimeVoiceSessionProvider({
     clearVoiceFinalization,
     clearVoiceTranscripts,
     handleEnded,
+    markFinalizationFailed,
     sessionMode,
     setLastEndedSession,
     setVoiceAgentSpeaking,
     setVoiceConnected,
+    setVoiceConnectionPending,
     setVoiceError,
+    setVoiceFinalization,
     setVoiceReadyToSpeak,
     setVoiceSessionInfo,
+    setVoiceSafetyOverlay,
+    setVoiceSafetyResourceWorkActive,
+    suppressVoiceAssistantTranscripts,
     threadId,
+    updateVoiceSafetyResources,
     userId,
     voiceSetRefs,
   ]);
@@ -423,13 +524,17 @@ export function RealtimeVoiceSessionProvider({
   useEffect(() => {
     return () => {
       const handle = handleRef.current;
+      safetyResourceControllerRef.current?.abort();
+      safetyResourceControllerRef.current = null;
+      setVoiceSafetyResourceWorkActive(false);
+      setVoiceConnectionPending(false);
       if (!handle) return;
       handleRef.current = null;
       setHasRetryHandle(false);
       voiceSetRefs({ connection: null });
       void handle.disconnect({ finalize: false });
     };
-  }, [voiceSetRefs]);
+  }, [setVoiceConnectionPending, setVoiceSafetyResourceWorkActive, voiceSetRefs]);
 
   const value = useMemo<RealtimeVoiceSessionContextValue>(
     () => ({

@@ -24,6 +24,7 @@ def test_voice_tool_surface_is_narrow_for_incognito() -> None:
     }
 
     assert "wait_for_user" in names
+    assert "start_guided_exercise" in names
     assert "show_memory_status" in names
     assert "show_saved_memory" not in names
     assert "save_response_preference" not in names
@@ -74,8 +75,22 @@ def test_voice_tool_surface_includes_guided_exercise_progress_tool() -> None:
         tool["name"] for tool in build_voice_realtime_tools(memory_mode="persistent")
     }
 
+    assert "start_guided_exercise" in names
     assert "record_guided_exercise_progress" in names
     assert "load_guided_exercise_skill" in names
+
+
+def test_guided_exercise_start_tool_requires_only_exercise_type() -> None:
+    tool = _tool_by_name("start_guided_exercise")
+    parameters = tool["parameters"]
+    assert isinstance(parameters, dict)
+    properties = parameters["properties"]
+    assert isinstance(properties, dict)
+    required = parameters["required"]
+    assert isinstance(required, list)
+
+    assert required == ["exercise_type"]
+    assert properties["therapeutic_approach"]["type"] == ["string", "null"]
 
 
 def test_guided_exercise_progress_tool_requires_voice_progress_schema() -> None:

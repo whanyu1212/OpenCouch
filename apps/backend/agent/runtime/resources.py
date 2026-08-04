@@ -6,7 +6,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Protocol
 
 from agent.audit.crisis_log import CrisisLogBackend
 from agent.feedback.session_feedback import SessionFeedbackBackend
@@ -42,6 +42,41 @@ from agent.runtime.state_store import RuntimeStateStore, create_runtime_state_st
 logger = logging.getLogger(__name__)
 
 
+class _Closable(Protocol):
+    """Minimal shape shared by every runtime-owned closable resource."""
+
+    async def aclose(self) -> None: ...
+
+
+async def _prepare_if_supported(name: str, backend: object) -> bool:
+    """Prepare one backend's schema when it implements the hook.
+
+    ``ensure_schema`` was added to the storage protocols after the public
+    dependency-injection hooks shipped, so a caller-supplied backend may not
+    implement it. Skipping those keeps startup working for implementations
+    that satisfied the earlier protocols; they fall back to connecting lazily
+    on first use, exactly as before.
+
+    Args:
+        name (str): Backend name used in log messages.
+        backend (object): Runtime-owned or caller-injected backend.
+
+    Returns:
+        bool: ``True`` when the backend was prepared.
+    """
+
+    ensure_schema = getattr(backend, "ensure_schema", None)
+    if ensure_schema is None:
+        logger.info(
+            "RuntimeResources.ensure_schema: %s does not implement "
+            "ensure_schema; falling back to lazy preparation on first use.",
+            name,
+        )
+        return False
+    await ensure_schema()
+    return True
+
+
 @dataclass(slots=True)
 class RuntimeResources:
     """Runtime-owned storage backends and warmup/close helpers."""
@@ -58,9 +93,73 @@ class RuntimeResources:
     active_session_manager: ActiveSessionManager
 
     async def ensure_schema(self) -> None:
-        """Create runtime-owned tables."""
-        await self.state_store.ensure_schema()
-        await self.active_session_manager.ensure_schema()
+        """Create runtime-owned tables before serving traffic.
+
+        Every durable backend the runtime owns is prepared here so that
+        request-time operations perform data work rather than connecting and
+        migrating. This matters most for the crisis log, whose appends run
+        inside a bounded safety-capture timeout, and for the memory store,
+        whose preparation includes a vector-column backfill.
+
+        Preparation is not atomic across backends: if one fails, the ones
+        already prepared hold open connections. Close them before propagating
+        so a failed startup does not leak resources.
+
+        Backends injected through the public dependency hooks may predate
+        ``ensure_schema``; those are skipped rather than failing startup with
+        an ``AttributeError``. They keep the previous lazy connect-on-first-use
+        behavior.
+
+        Returns:
+            None: Prepares every runtime-owned durable backend.
+
+        Raises:
+            Exception: Re-raises the first preparation failure after unwinding.
+        """
+
+        prepared: list[str] = []
+        try:
+            await self.state_store.ensure_schema()
+            prepared.append("state_store")
+            await self.active_session_manager.ensure_schema()
+            prepared.append("active_session_manager")
+            for name, backend in (
+                ("memory_store", self.memory_store),
+                ("crisis_log_backend", self.crisis_log_backend),
+                ("session_feedback_backend", self.session_feedback_backend),
+            ):
+                if await _prepare_if_supported(name, backend):
+                    prepared.append(name)
+        except BaseException:
+            logger.warning(
+                "RuntimeResources.ensure_schema: preparation failed after "
+                "preparing %s; closing opened resources.",
+                ", ".join(prepared) or "no backends",
+                exc_info=True,
+            )
+            await self.aclose_quietly()
+            raise
+
+    async def aclose_quietly(self) -> None:
+        """Close runtime-owned resources, logging rather than raising.
+
+        Used when unwinding a failed startup: the original failure must
+        propagate, so cleanup errors are logged and swallowed instead of
+        masking it. ``aclose`` already releases each resource independently,
+        so one failure cannot strand the rest.
+
+        Returns:
+            None: Closes what can be closed.
+        """
+
+        try:
+            await self.aclose()
+        except Exception:
+            logger.warning(
+                "RuntimeResources: cleanup after failed startup raised; "
+                "ignoring so the original failure propagates.",
+                exc_info=True,
+            )
 
     async def prewarm(self, *, get_text_runtime: Callable[[], object]) -> None:
         """Warm runtime resources before the first user turn."""
@@ -81,14 +180,46 @@ class RuntimeResources:
             )
 
     async def aclose(self) -> None:
-        """Close runtime-owned resources in deterministic order."""
-        await self.memory_store.aclose()
-        await self.crisis_log_backend.aclose()
-        await self.session_feedback_backend.aclose()
+        """Close runtime-owned resources in deterministic order.
+
+        Each resource is closed independently: one backend raising must not
+        strand the ones after it, since that would leak connections during
+        both normal shutdown and startup unwinding. The first failure is
+        re-raised once every resource has been given a chance to close.
+
+        Returns:
+            None: Closes every runtime-owned resource.
+
+        Raises:
+            Exception: Re-raises the first close failure, if any.
+        """
+
+        closables: list[tuple[str, _Closable]] = [
+            ("memory_store", self.memory_store),
+            ("crisis_log_backend", self.crisis_log_backend),
+            ("session_feedback_backend", self.session_feedback_backend),
+        ]
         if self.text_session_store is not None:
-            await self.text_session_store.aclose()
-        await self.state_store.aclose()
-        await self.active_session_store.aclose()
+            closables.append(("text_session_store", self.text_session_store))
+        closables.append(("state_store", self.state_store))
+        closables.append(("active_session_store", self.active_session_store))
+
+        first_failure: BaseException | None = None
+        for name, closable in closables:
+            try:
+                await closable.aclose()
+            except Exception as exc:
+                logger.warning(
+                    "RuntimeResources.aclose: closing %s raised; continuing "
+                    "so remaining resources are still released.",
+                    name,
+                    exc_info=True,
+                )
+                if first_failure is None:
+                    first_failure = exc
+
+        if first_failure is not None:
+            raise first_failure
 
 
 def build_runtime_resources(
@@ -151,16 +282,19 @@ def build_runtime_resources(
         memory_store=memory_store,
         memory_backend=backend_selection.memory_store_backend,
         memory_database_url=memory_database_url,
+        memory_mode=memory_mode,
     )
     resolved_crisis_log_backend = create_crisis_log_backend(
         crisis_log_backend=crisis_log_backend,
         crisis_log_persistence_backend=backend_selection.crisis_log_backend,
         crisis_log_database_url=crisis_log_database_url,
+        memory_mode=memory_mode,
     )
     resolved_session_feedback_backend = create_session_feedback_backend(
         session_feedback_backend=session_feedback_backend,
         session_feedback_persistence_backend=backend_selection.session_feedback_backend,
         session_feedback_database_url=session_feedback_database_url,
+        memory_mode=memory_mode,
     )
     resolved_embedding_provider = create_embedding_provider(
         memory_mode=memory_mode,

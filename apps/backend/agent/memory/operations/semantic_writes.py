@@ -10,6 +10,7 @@ from uuid import uuid4
 from agent.memory.hashing import iso_now as _iso_now
 from agent.memory.operations.dedup import find_near_duplicate
 from agent.memory.operations.reconciliation import (
+    SemanticReconciliationFailurePolicy,
     filter_semantic_collision_candidates,
     plan_semantic_write_llm_primary,
 )
@@ -197,6 +198,55 @@ async def bump_semantic_last_referenced_at(
         matched_record.namespace,
         key=matched_record.key,
         value=updated_value,
+        embedding=getattr(matched_record, "embedding", None),
+        embedding_model=getattr(matched_record, "embedding_model", None),
+    )
+
+
+def build_superseded_value(
+    matched_record: Any,
+    *,
+    replacement_fact_id: str,
+    superseded_at: str,
+) -> dict[str, Any]:
+    """Return the stored value marking one fact superseded by a newer fact.
+
+    Args:
+        matched_record (Any): Existing semantic record to mark dormant.
+        replacement_fact_id (str): New fact id that supersedes the matched record.
+        superseded_at (str): Timestamp recorded for the supersede transition.
+
+    Returns:
+        dict[str, Any]: Updated record value; the input record is not mutated.
+    """
+
+    updated_value = dict(matched_record.value)
+    updated_value["last_referenced_at"] = superseded_at
+    updated_value["dormant_at"] = superseded_at
+    updated_value["superseded_by"] = replacement_fact_id
+    return updated_value
+
+
+def _record_to_batch_item(
+    matched_record: Any,
+    value: dict[str, Any],
+) -> tuple[Any, str, dict[str, Any], list[float] | None, str | None]:
+    """Return one ``aput_batch`` item preserving a record's embedding metadata.
+
+    Args:
+        matched_record (Any): Record supplying namespace, key, and embeddings.
+        value (dict[str, Any]): Serialized value to persist for the record.
+
+    Returns:
+        tuple: Item shaped as ``(namespace, key, value, embedding, embedding_model)``.
+    """
+
+    return (
+        matched_record.namespace,
+        matched_record.key,
+        value,
+        getattr(matched_record, "embedding", None),
+        getattr(matched_record, "embedding_model", None),
     )
 
 
@@ -217,11 +267,11 @@ async def mark_semantic_fact_superseded(
         None: Updates the stored record as a side effect.
     """
 
-    updated_value = dict(matched_record.value)
-    now = _iso_now()
-    updated_value["last_referenced_at"] = now
-    updated_value["dormant_at"] = now
-    updated_value["superseded_by"] = replacement_fact_id
+    updated_value = build_superseded_value(
+        matched_record,
+        replacement_fact_id=replacement_fact_id,
+        superseded_at=_iso_now(),
+    )
     await store.aput(
         matched_record.namespace,
         key=matched_record.key,
@@ -244,6 +294,7 @@ async def apply_semantic_write(
     embedding: list[float] | None = None,
     embedding_model: str | None = None,
     log_context: str = "semantic_writes",
+    reconciliation_failure_policy: SemanticReconciliationFailurePolicy = "raise",
 ) -> SemanticWriteOutcome:
     """Apply dedup, reconciliation, write, bump, and supersede for one fact.
 
@@ -260,6 +311,8 @@ async def apply_semantic_write(
         embedding (list[float] | None): Optional document embedding.
         embedding_model (str | None): Optional embedding model identifier.
         log_context (str): Prefix used in warning log messages.
+        reconciliation_failure_policy: Fallback applied when reconciliation
+            cannot use the LLM.
 
     Returns:
         SemanticWriteOutcome: Counters plus the written fact when a new record
@@ -306,6 +359,7 @@ async def apply_semantic_write(
             fact,
             collision_records,
             llm_client=llm_client,
+            failure_policy=reconciliation_failure_policy,
         )
         if reconciliation.bump_record is not None:
             await bump_semantic_last_referenced_at(
@@ -314,44 +368,54 @@ async def apply_semantic_write(
             )
             return SemanticWriteOutcome(bumped=1)
 
-        await write_new_semantic_fact(
-            store,
-            owner_id=owner_id,
-            fact=fact,
-            embedding=embedding,
-            embedding_model=embedding_model,
+        # Prepare the replacement plus every supersede mutation before touching
+        # the store, then commit them as one batch. A partial commit would leave
+        # the replacement active alongside the facts it contradicts, so the plan
+        # must succeed or fail as a unit.
+        namespace = (owner_id, "semantic")
+        fact_value = fact.model_dump(mode="json")
+        superseded_values = [
+            build_superseded_value(
+                superseded_record,
+                replacement_fact_id=fact.id,
+                superseded_at=fact.created_at,
+            )
+            for superseded_record in reconciliation.supersede_records
+        ]
+        await store.aput_batch(
+            [
+                (namespace, fact.id, fact_value, embedding, embedding_model),
+                *(
+                    _record_to_batch_item(superseded_record, superseded_value)
+                    for superseded_record, superseded_value in zip(
+                        reconciliation.supersede_records,
+                        superseded_values,
+                        strict=True,
+                    )
+                ),
+            ]
         )
+
         existing_records.append(
             StoreRecord(
-                namespace=(owner_id, "semantic"),
+                namespace=namespace,
                 key=fact.id,
-                value=fact.model_dump(mode="json"),
+                value=fact_value,
                 embedding=embedding,
                 embedding_model=embedding_model,
             )
         )
-        for superseded_record in reconciliation.supersede_records:
-            try:
-                await mark_semantic_fact_superseded(
-                    store,
-                    matched_record=superseded_record,
-                    replacement_fact_id=fact.id,
-                )
-                superseded_record.value["last_referenced_at"] = fact.created_at
-                superseded_record.value["dormant_at"] = fact.created_at
-                superseded_record.value["superseded_by"] = fact.id
-            except Exception:
-                logger.warning(
-                    "%s: failed to mark stale fact %r as superseded after "
-                    "writing replacement.",
-                    log_context,
-                    superseded_record.key,
-                    exc_info=True,
-                )
+        for superseded_record, superseded_value in zip(
+            reconciliation.supersede_records,
+            superseded_values,
+            strict=True,
+        ):
+            superseded_record.value.update(superseded_value)
         return SemanticWriteOutcome(written=1, fact=fact)
     except Exception:
         logger.warning(
-            "%s: failed to write semantic candidate %r.",
+            "%s: failed to write semantic candidate %r; the reconciliation plan "
+            "was not applied.",
             log_context,
             write.evidence_quote[:60],
             exc_info=True,
@@ -408,6 +472,7 @@ async def apply_semantic_writes_batch(
     llm_client: Any,
     embedding_provider: "EmbeddingProvider | None" = None,
     log_context: str,
+    reconciliation_failure_policy: SemanticReconciliationFailurePolicy = "raise",
 ) -> BatchSemanticWriteOutcome:
     """Apply a batch of semantic candidates with shared dedup and embeddings.
 
@@ -421,6 +486,8 @@ async def apply_semantic_writes_batch(
         llm_client: Optional control LLM used by reconciliation.
         embedding_provider: Optional document embedding provider.
         log_context: Prefix used in warning log messages.
+        reconciliation_failure_policy: Fallback applied when reconciliation
+            cannot use the LLM.
 
     Returns:
         Aggregate batch outcome with counters and written facts. When the
@@ -467,6 +534,7 @@ async def apply_semantic_writes_batch(
             embedding=embedding,
             embedding_model=embedding_model,
             log_context=log_context,
+            reconciliation_failure_policy=reconciliation_failure_policy,
         )
         outcome.written += item_outcome.written
         outcome.bumped += item_outcome.bumped

@@ -15,7 +15,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from agent.feedback.models import FeedbackLabel, FeedbackModality
 from config import ResponseModelTier
@@ -136,6 +136,7 @@ class VoiceToolCallRequest(BaseModel):
 
     thread_id: str = Field(min_length=1)
     user_id: str | None = None
+    client_turn_id: str | None = Field(default=None, min_length=1, max_length=128)
     current_user_message: str = ""
     transcript: list[dict[str, object]] = Field(default_factory=list)
     memory_mode: ApiMemoryMode | None = None
@@ -160,9 +161,26 @@ class VoiceTurnRecordRequest(BaseModel):
     user_text: str = ""
     assistant_text: str = ""
     memory_mode: ApiMemoryMode | None = None
+    client_turn_id: str | None = Field(default=None, min_length=1, max_length=128)
+    outcome: Literal["completed", "connection_interrupted", "safety_interrupted"] = (
+        "completed"
+    )
+    interruption_token: str | None = Field(default=None, min_length=1, max_length=2048)
     route: str | None = None
     response_style: str | None = None
     tool_calls: list[VoiceRecordedToolCall] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_interrupted_turn(self) -> VoiceTurnRecordRequest:
+        if self.outcome in {"connection_interrupted", "safety_interrupted"}:
+            if not self.user_text.strip():
+                raise ValueError(f"{self.outcome} requires user_text")
+            if self.client_turn_id is None:
+                raise ValueError(f"{self.outcome} requires client_turn_id")
+        if self.outcome == "safety_interrupted":
+            if self.interruption_token is None:
+                raise ValueError("safety_interrupted requires interruption_token")
+        return self
 
 
 class VoiceEndSessionRequest(BaseModel):
@@ -179,6 +197,28 @@ class VoiceEndSessionRequest(BaseModel):
             "no feedback record is created and summarization proceeds "
             "as usual."
         ),
+    )
+
+
+class VoiceSafetyTranscriptEntry(BaseModel):
+    """Bounded transcript context accepted by Realtime safety endpoints."""
+
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=4000)
+
+
+class VoiceConcurrentSafetyRequest(BaseModel):
+    """POST /api/voice/realtime/safety/check request body."""
+
+    thread_id: str = Field(min_length=1)
+    user_id: str | None = None
+    memory_mode: ApiMemoryMode | None = None
+    client_turn_id: str = Field(min_length=1, max_length=128)
+    user_text: str = Field(min_length=1)
+    prior_message_count: int = Field(ge=0)
+    pending_prior_transcript: list[VoiceSafetyTranscriptEntry] = Field(
+        default_factory=list,
+        max_length=20,
     )
 
 
@@ -288,6 +328,7 @@ class VoiceRealtimeSessionResponse(BaseModel):
     thread_id: str
     user_id: str | None = None
     memory_mode: Literal["incognito", "persistent"]
+    message_count: int = Field(ge=0)
     session_config: dict[str, object]
 
 
@@ -304,6 +345,60 @@ class VoicePostTurnSafetyResponse(BaseModel):
     status: Literal["scheduled", "skipped"]
     reason: str | None = None
     pending_count: int = Field(default=0, ge=0)
+
+
+class VoiceConcurrentSafetyResponse(BaseModel):
+    """Concurrent voice safety status and server-owned playback decision."""
+
+    client_turn_id: str
+    status: Literal["completed", "skipped", "timeout", "failed"]
+    reason: (
+        Literal[
+            "no_llm_client",
+            "empty_user_text",
+            "timeout",
+            "exception",
+            "state_snapshot_failed",
+        ]
+        | None
+    ) = None
+    action: Literal["continue", "interrupt"]
+    risk_level: Literal[2, 3] | None = None
+    support: VoiceSafetySupportResponse | None = None
+    interruption_token: str | None = None
+
+
+class VoiceSafetySupportResponse(BaseModel):
+    """Public deterministic support shown after playback interruption."""
+
+    headline: str
+    validation: str
+    immediate_step: str
+
+
+class VoiceSafetyResource(BaseModel):
+    """One verified crisis resource returned to the voice client."""
+
+    name: str
+    phone: str
+    url: str
+    region: str
+
+
+class VoiceSafetyResourcesResponse(BaseModel):
+    """POST /api/voice/realtime/safety/resources response body."""
+
+    client_turn_id: str
+    status: Literal[
+        "found",
+        "no_location",
+        "location_refused",
+        "no_verified_results",
+        "lookup_error",
+    ]
+    inferred_location: str
+    resources: list[VoiceSafetyResource] = Field(default_factory=list)
+    message: str
 
 
 class VoiceTurnRecordResponse(BaseModel):

@@ -16,8 +16,8 @@ from agent.flows.guided_exercise import _build_guided_exercise_agent
 from agent.flows.therapeutic import run_therapeutic_turn
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore
-from agent.memory.types import TurnDispatchDecision
-from agent.models import AgentInput
+from agent.runtime.dispatch_models import TurnDispatchDecision
+from agent.models import AgentInput, CrisisAssessment
 from agent.runtime import build_initial_state
 from agent.runtime.workflow_context import WorkflowContext
 from agent.runtime.services import TextRuntimeServices
@@ -271,9 +271,9 @@ async def test_therapeutic_flow_uses_explicit_runtime_services_boundary() -> Non
             agent_state=state,
         ),
         build_agent=lambda state: roster.therapeutic_agent,
-        input_text_for_state=lambda state, include_recent_history=True: (
-            f"services prompt: {state['message']}"
-        ),
+        input_text_for_state=lambda state,
+        include_recent_history=True,
+        prompt_appendix=None: (f"services prompt: {state['message']}"),
         crisis_input_text_for_state=lambda *args, **kwargs: "crisis prompt",
         run_openai_agent_with=run_agent_with,
         finalize_turn=finalize_turn,
@@ -612,8 +612,34 @@ async def test_crisis_support_template_tool_uses_fallback_without_resources() ->
 
     assert result.risk_level == "moderate"
     assert "local emergency services" in result.resource_guidance
-    assert "Do not invent phone numbers" in result.resource_guidance
+    assert "do not invent phone numbers" in result.resource_guidance.lower()
     assert "Are you somewhere safe enough" in result.one_question
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("resource_lookup_status", "expected_guidance"),
+    [
+        ("location_refused", "Respect that boundary"),
+        ("no_verified_results", "could not be verified"),
+        ("lookup_error", "temporary issue"),
+        ("not_attempted", "Ask once for country or region"),
+    ],
+)
+async def test_crisis_support_template_tool_preserves_lookup_fallbacks(
+    resource_lookup_status: str,
+    expected_guidance: str,
+) -> None:
+    result = await execute_crisis_support_template_tool(
+        risk_level="high",
+        inferred_location="Example"
+        if resource_lookup_status == "no_verified_results"
+        else "",
+        resource_lookup_status=resource_lookup_status,  # type: ignore[arg-type]
+    )
+
+    assert expected_guidance in result.resource_guidance
+    assert "do not invent phone numbers" in result.resource_guidance.lower()
 
 
 @pytest.mark.asyncio
@@ -639,6 +665,56 @@ async def test_crisis_support_template_function_tool_invokes_with_arguments() ->
     assert isinstance(result, CrisisSupportTemplateToolResult)
     assert result.risk_level == "imminent"
     assert "1767" in result.resource_guidance
+
+
+@pytest.mark.asyncio
+async def test_crisis_support_template_tool_cannot_downrank_trusted_assessment() -> (
+    None
+):
+    """The text tool must use app assessment instead of model-provided severity."""
+
+    context = _run_context()
+    context.agent_state = {
+        "crisis": CrisisAssessment(
+            level=3,
+            reason="imminent risk",
+            needs_crisis_response=True,
+        )
+    }
+
+    result = await _invoke_tool(
+        get_crisis_support_template,
+        context,
+        {"risk_level": "moderate"},
+    )
+
+    assert isinstance(result, CrisisSupportTemplateToolResult)
+    assert result.risk_level == "imminent"
+    assert "emergency services" in result.immediate_safety_step
+
+
+@pytest.mark.asyncio
+async def test_crisis_support_template_tool_cannot_uprank_trusted_assessment() -> None:
+    """The text tool must use app assessment even when the model overstates risk."""
+
+    context = _run_context()
+    context.agent_state = {
+        "crisis": CrisisAssessment(
+            level=2,
+            reason="clear ideation",
+            needs_crisis_response=True,
+        )
+    }
+
+    result = await _invoke_tool(
+        get_crisis_support_template,
+        context,
+        {"risk_level": "imminent"},
+    )
+
+    assert isinstance(result, CrisisSupportTemplateToolResult)
+    assert result.risk_level == "moderate"
+    assert "Pause and move to a safer place" in result.immediate_safety_step
 
 
 @pytest.mark.asyncio

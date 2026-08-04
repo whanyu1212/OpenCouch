@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from agent.guardrails.crisis_response import CRISIS_RESPONSE_AVOID
+
 
 def build_voice_instructions(
     *,
@@ -62,19 +64,23 @@ def build_voice_instructions(
         "lookup_crisis_resources to obtain any specific crisis resource names, "
         "phone numbers, URLs, or local availability. Those tools are the only "
         "source for crisis resources; never invent or guess a phone number or "
-        "service. Do not diagnose, do not promise confidentiality or that "
-        "everything will be okay, and never claim OpenCouch has contacted "
-        "emergency services or another person."
+        "service. "
+        f"{CRISIS_RESPONSE_AVOID[0]} {CRISIS_RESPONSE_AVOID[1]} and "
+        f"{CRISIS_RESPONSE_AVOID[2].replace('Do not', 'never', 1)}"
     )
     exercise_policy = (
         "# Guided Exercises\n"
         "For guided exercises, use runtime-selected exercise skill IDs and "
-        "loaded skill context. In an active exercise, call "
-        "record_guided_exercise_progress when the user's latest response "
-        "completes, partially completes, pauses, gets stuck on, exits, or makes "
-        "unsafe the current step; then follow the returned runtime_action and "
-        "response_instruction. Do not default to 5-4-3-2-1 grounding unless "
-        "that exact runtime-selected skill is provided."
+        "loaded skill context. After selecting a fresh exercise, call "
+        "start_guided_exercise exactly once before guiding its first step; do "
+        "not use load_guided_exercise_skill as a substitute for starting. In an "
+        "active exercise, call record_guided_exercise_progress when the user's "
+        "latest response completes, partially completes, pauses, gets stuck on, "
+        "exits, or makes unsafe the current step; then follow the returned "
+        "runtime_action and response_instruction. After an advance action, call "
+        "load_guided_exercise_skill for the new current step. Do not default to "
+        "5-4-3-2-1 grounding unless that exact runtime-selected skill is "
+        "provided."
     )
 
     if normalized_mode == "incognito":

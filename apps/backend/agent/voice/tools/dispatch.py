@@ -14,112 +14,12 @@ from agent.observability.events import (
     VOICE_TOOL_DISPATCH,
     VOICE_TOOL_FAILED,
 )
-from agent.voice.tools.context import VoiceToolDefinition, VoiceToolDispatchContext
-from agent.voice.tools.handlers import (
-    _handle_answer_grounded_lookup,
-    _handle_cancel_memory_deletion,
-    _handle_confirm_memory_deletion,
-    _handle_get_crisis_support_template,
-    _handle_list_guided_exercise_skills,
-    _handle_load_guided_exercise_skill,
-    _handle_load_therapeutic_response_skill,
-    _handle_lookup_crisis_resources,
-    _handle_prepare_memory_deletion_by_index,
-    _handle_prepare_memory_deletion_by_query,
-    _handle_recall_saved_memory,
-    _handle_record_guided_exercise_progress,
-    _handle_save_response_preference,
-    _handle_set_proactive_memory_recall,
-    _handle_show_memory_status,
-    _handle_show_saved_memory,
-    _handle_wait_for_user,
-)
-from agent.voice.tools.schemas import (
-    _INTENT_GATED_MUTATOR_TOOL_NAMES,
-    _PERSISTENT_ONLY_TOOL_NAMES,
-    _SUPPORTED_VOICE_TOOL_NAMES,
-    _VOICE_MEMORY_MUTATOR_TOOL_NAMES,
-)
+from agent.voice.tools.context import VoiceToolDispatchContext
+from agent.voice.tools.specs import VOICE_TOOL_SPECS_BY_NAME
 from llm.base import BaseLLMClient
 
 _RECENT_USER_TURN_LIMIT = 3
 _MIN_USER_QUOTE_LENGTH = 8
-
-_VOICE_TOOL_REGISTRY: dict[str, VoiceToolDefinition] = {
-    "wait_for_user": VoiceToolDefinition(
-        name="wait_for_user",
-        handler=_handle_wait_for_user,
-        requires_context=False,
-    ),
-    "show_memory_status": VoiceToolDefinition(
-        name="show_memory_status",
-        handler=_handle_show_memory_status,
-    ),
-    "show_saved_memory": VoiceToolDefinition(
-        name="show_saved_memory",
-        handler=_handle_show_saved_memory,
-    ),
-    "recall_saved_memory": VoiceToolDefinition(
-        name="recall_saved_memory",
-        handler=_handle_recall_saved_memory,
-    ),
-    "set_proactive_memory_recall": VoiceToolDefinition(
-        name="set_proactive_memory_recall",
-        handler=_handle_set_proactive_memory_recall,
-    ),
-    "save_response_preference": VoiceToolDefinition(
-        name="save_response_preference",
-        handler=_handle_save_response_preference,
-    ),
-    "prepare_memory_deletion_by_index": VoiceToolDefinition(
-        name="prepare_memory_deletion_by_index",
-        handler=_handle_prepare_memory_deletion_by_index,
-    ),
-    "prepare_memory_deletion_by_query": VoiceToolDefinition(
-        name="prepare_memory_deletion_by_query",
-        handler=_handle_prepare_memory_deletion_by_query,
-    ),
-    "confirm_memory_deletion": VoiceToolDefinition(
-        name="confirm_memory_deletion",
-        handler=_handle_confirm_memory_deletion,
-    ),
-    "cancel_memory_deletion": VoiceToolDefinition(
-        name="cancel_memory_deletion",
-        handler=_handle_cancel_memory_deletion,
-    ),
-    "answer_grounded_lookup": VoiceToolDefinition(
-        name="answer_grounded_lookup",
-        handler=_handle_answer_grounded_lookup,
-    ),
-    "lookup_crisis_resources": VoiceToolDefinition(
-        name="lookup_crisis_resources",
-        handler=_handle_lookup_crisis_resources,
-    ),
-    "get_crisis_support_template": VoiceToolDefinition(
-        name="get_crisis_support_template",
-        handler=_handle_get_crisis_support_template,
-    ),
-    "list_guided_exercise_skills": VoiceToolDefinition(
-        name="list_guided_exercise_skills",
-        handler=_handle_list_guided_exercise_skills,
-    ),
-    "load_therapeutic_response_skill": VoiceToolDefinition(
-        name="load_therapeutic_response_skill",
-        handler=_handle_load_therapeutic_response_skill,
-    ),
-    "load_guided_exercise_skill": VoiceToolDefinition(
-        name="load_guided_exercise_skill",
-        handler=_handle_load_guided_exercise_skill,
-    ),
-    "record_guided_exercise_progress": VoiceToolDefinition(
-        name="record_guided_exercise_progress",
-        handler=_handle_record_guided_exercise_progress,
-    ),
-}
-
-
-def _registered_voice_tool_names() -> set[str]:
-    return set(_VOICE_TOOL_REGISTRY)
 
 
 def _normalize_voice_tool_result(result: object) -> dict[str, object]:
@@ -131,7 +31,7 @@ def _normalize_voice_tool_result(result: object) -> dict[str, object]:
 
 
 def _safe_trace_tool_name(tool_name: object) -> str:
-    if isinstance(tool_name, str) and tool_name in _SUPPORTED_VOICE_TOOL_NAMES:
+    if isinstance(tool_name, str) and tool_name in VOICE_TOOL_SPECS_BY_NAME:
         return tool_name
     return "unsupported"
 
@@ -161,20 +61,21 @@ async def execute_voice_tool_call(
     user_id: str | None,
     current_user_message: str,
     transcript: list[dict[str, object]],
+    client_turn_id: str | None = None,
     memory_mode: str | None = None,
     llm_client: BaseLLMClient | None = None,
 ) -> dict[str, object]:
     """Execute one app-owned voice function tool call."""
 
-    if tool_name not in _SUPPORTED_VOICE_TOOL_NAMES:
+    if tool_name not in VOICE_TOOL_SPECS_BY_NAME:
         trace_event(
             VOICE_TOOL_FAILED,
             {"tool_name": "unsupported", "error_type": "unsupported_tool"},
         )
         raise ValueError(f"Unsupported voice tool: {tool_name!r}")
 
-    definition = _VOICE_TOOL_REGISTRY.get(tool_name)
-    if definition is None:
+    spec = VOICE_TOOL_SPECS_BY_NAME.get(tool_name)
+    if spec is None:
         trace_event(
             VOICE_TOOL_FAILED,
             {"tool_name": tool_name, "error_type": "unhandled_tool"},
@@ -193,14 +94,14 @@ async def execute_voice_tool_call(
                 },
             )
             return _incognito_memory_status_result()
-        if tool_name in _PERSISTENT_ONLY_TOOL_NAMES:
+        if spec.persistent_only:
             trace_event(
                 VOICE_TOOL_FAILED,
                 {"tool_name": tool_name, "error_type": "incognito_unavailable"},
             )
             raise ValueError(f"{tool_name!r} is not available in incognito voice mode.")
 
-    if tool_name in _VOICE_MEMORY_MUTATOR_TOOL_NAMES and not _has_owner_or_session_id(
+    if spec.memory_mutator and not _has_owner_or_session_id(
         user_id=user_id,
         thread_id=thread_id,
     ):
@@ -220,7 +121,7 @@ async def execute_voice_tool_call(
             ),
         )
 
-    if tool_name in _INTENT_GATED_MUTATOR_TOOL_NAMES and not _user_quote_matches_turn(
+    if spec.intent_gated_mutator and not _user_quote_matches_turn(
         arguments=arguments,
         current_user_message=current_user_message,
         transcript=transcript,
@@ -241,34 +142,36 @@ async def execute_voice_tool_call(
             ),
         )
 
-    if tool_name == "record_guided_exercise_progress":
-        await runtime.voice.prepare_voice_guided_exercise_progress(
+    if tool_name in {"start_guided_exercise", "record_guided_exercise_progress"}:
+        await runtime.voice.prepare_voice_guided_exercise_tool(
             thread_id=thread_id,
             llm_client=llm_client,
         )
 
     tool_context = None
-    if definition.requires_context:
+    if spec.requires_context:
         tool_context = await runtime.voice.build_voice_tool_context(
             thread_id=thread_id,
             user_id=user_id,
             current_user_message=current_user_message,
             transcript=transcript,
+            client_turn_id=client_turn_id,
             llm_client=llm_client,
         )
 
     try:
-        result = await definition.handler(
+        result = await spec.handler(
             VoiceToolDispatchContext(
                 runtime=runtime,
                 tool_context=tool_context,
                 thread_id=thread_id,
                 user_id=user_id,
+                client_turn_id=client_turn_id,
             ),
             arguments,
         )
         normalized_result = _normalize_voice_tool_result(result)
-        if tool_name in _VOICE_MEMORY_MUTATOR_TOOL_NAMES:
+        if spec.memory_mutator:
             await runtime.voice.persist_voice_memory_tool_result(
                 thread_id=thread_id,
                 user_id=user_id,
@@ -276,13 +179,16 @@ async def execute_voice_tool_call(
                 transcript=transcript,
                 result=normalized_result,
             )
-        if tool_name == "record_guided_exercise_progress":
-            await runtime.voice.persist_voice_guided_exercise_progress(
-                thread_id=thread_id,
-                user_id=user_id,
-                current_user_message=current_user_message,
-                transcript=transcript,
-                result=normalized_result,
+        if tool_name in {"start_guided_exercise", "record_guided_exercise_progress"}:
+            normalized_result = (
+                await runtime.voice.persist_voice_guided_exercise_result(
+                    thread_id=thread_id,
+                    user_id=user_id,
+                    current_user_message=current_user_message,
+                    transcript=transcript,
+                    result=normalized_result,
+                    memory_mode=effective_memory_mode,
+                )
             )
     except Exception as exc:
         trace_event(

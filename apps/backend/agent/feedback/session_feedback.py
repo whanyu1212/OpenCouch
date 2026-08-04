@@ -80,6 +80,18 @@ class SessionFeedbackBackend(Protocol):
         """
         ...
 
+    async def ensure_schema(self) -> None:
+        """Prepare durable storage before the backend serves traffic.
+
+        Durable backends connect and apply schema DDL here so request-time
+        operations perform data work rather than migrations. Ephemeral
+        backends implement this as a no-op.
+
+        Returns:
+            None: Prepares the backend.
+        """
+        ...
+
     async def aclose(self) -> None:
         """Release backend resources.
 
@@ -100,6 +112,9 @@ class InMemorySessionFeedbackBackend:
 
     NOT thread-safe. Each runtime instance should own its own backend.
     """
+
+    #: Records live in memory only, so incognito runtimes may use this backend.
+    supports_incognito: bool = True
 
     def __init__(self) -> None:
         """Initialize the in-memory feedback backend.
@@ -153,6 +168,18 @@ class InMemorySessionFeedbackBackend:
 
         self._ensure_open()
         return list(self._records_by_session.get(session_id_opaque, []))
+
+    async def ensure_schema(self) -> None:
+        """Prepare the in-memory feedback backend.
+
+        Records live in per-instance dicts, so there is nothing to create and
+        no connection to open.
+
+        Returns:
+            None: No preparation is required.
+        """
+
+        self._ensure_open()
 
     async def aclose(self) -> None:
         """Close the in-memory feedback backend.
@@ -224,11 +251,23 @@ class NullSessionFeedbackBackend:
     silently drop feedback rather than respecting the user's rating.
     """
 
+    #: Discards every record, so incognito runtimes may use this backend.
+    supports_incognito: bool = True
+
     async def aappend(self, record: SessionFeedbackRecord) -> None:  # noqa: ARG002
         """Discard a feedback record.
 
         Args:
             record (SessionFeedbackRecord): Feedback record to ignore.
+
+        Returns:
+            None: No-op for the null backend.
+        """
+
+        return None
+
+    async def ensure_schema(self) -> None:
+        """Prepare the null feedback backend.
 
         Returns:
             None: No-op for the null backend.

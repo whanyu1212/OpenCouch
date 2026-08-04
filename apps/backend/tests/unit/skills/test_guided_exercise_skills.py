@@ -23,7 +23,11 @@ from agent.skills.guided_exercises.rendering.skill_context import (
     render_exercise_skill_context,
 )
 from agent.tools import guided_exercise as guided_exercise_tools
-from agent.tools.guided_exercise import execute_guided_exercise_discovery_tool
+from agent.tools.guided_exercise import (
+    execute_guided_exercise_discovery_tool,
+    execute_guided_exercise_progress_tool,
+    execute_guided_exercise_start_tool,
+)
 
 
 def test_all_registered_exercises_build_prompt_ready_skills() -> None:
@@ -57,6 +61,79 @@ def _run_context(
     )
 
 
+def _guided_exercise_context(
+    *,
+    step_index: int = 0,
+) -> OpenAITextRunContext:
+    context = _run_context()
+    definition = get_exercise_definition(EXERCISE_BOX_BREATHING)
+    assert definition is not None
+    step = definition.steps[step_index]
+    context.agent_state = {
+        "exercise_state": {
+            "exercise_type": EXERCISE_BOX_BREATHING,
+            "exercise_step": step_index,
+            "exercise_step_id": step.id,
+            "exercise_version": definition.version,
+            "exercise_therapeutic_approach": "dbt_skills",
+        }
+    }
+    return context
+
+
+@pytest.mark.asyncio
+async def test_start_tool_returns_first_step_state_and_skill_context() -> None:
+    result = await execute_guided_exercise_start_tool(
+        _run_context(),
+        exercise_type=EXERCISE_BOX_BREATHING,
+        therapeutic_approach="dbt_skills",
+    )
+
+    assert result.status == "active"
+    assert result.runtime_action == "start"
+    assert result.current_step_index == 0
+    assert result.current_step_id == "inhale"
+    assert result.exercise_state_delta["exercise_state"] == {
+        "exercise_type": EXERCISE_BOX_BREATHING,
+        "exercise_step": 0,
+        "exercise_step_id": "inhale",
+        "exercise_version": 1,
+        "exercise_therapeutic_approach": "dbt_skills",
+    }
+    assert f"- skill_id: {EXERCISE_BOX_BREATHING}" in result.skill_context
+
+
+@pytest.mark.asyncio
+async def test_start_tool_rejects_unknown_exercise() -> None:
+    with pytest.raises(ValueError, match="Unknown guided exercise"):
+        await execute_guided_exercise_start_tool(
+            _run_context(),
+            exercise_type="not_registered",
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_tool_rejects_exercise_unavailable_for_voice() -> None:
+    with pytest.raises(ValueError, match="unavailable for voice"):
+        await execute_guided_exercise_start_tool(
+            _run_context(),
+            exercise_type="thought_work_simple_record",
+        )
+
+
+@pytest.mark.asyncio
+async def test_start_tool_rejects_replacing_an_active_exercise() -> None:
+    result = await execute_guided_exercise_start_tool(
+        _guided_exercise_context(),
+        exercise_type=EXERCISE_5_4_3_2_1,
+    )
+
+    assert result.status == "conflict"
+    assert result.runtime_action == "conflict"
+    assert result.skill_id == EXERCISE_BOX_BREATHING
+    assert result.exercise_state_delta == {}
+
+
 def _definition(
     exercise_id: str,
     *,
@@ -76,6 +153,61 @@ def _definition(
         selection_aliases=(exercise_id.replace("_", " "),),
         required_capability=required_capability,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "status", "runtime_action", "exercise_state_delta"),
+    [
+        ("partial", "active", "hold", {}),
+        ("hold", "active", "hold", {}),
+        ("stuck", "active", "simplify", {}),
+        ("unsafe", "unsafe", "crisis", None),
+        ("exit", "cancelled", "cancel", None),
+    ],
+)
+async def test_progress_tool_adapts_shared_transition_outcomes(
+    outcome: str,
+    status: str,
+    runtime_action: str,
+    exercise_state_delta: dict[str, object] | None,
+) -> None:
+    result = await execute_guided_exercise_progress_tool(
+        _guided_exercise_context(),
+        expected_skill_id=EXERCISE_BOX_BREATHING,
+        expected_step_id="inhale",
+        outcome=outcome,  # type: ignore[arg-type]
+        user_response_summary="The user responded to the current step.",
+    )
+
+    assert result.status == status
+    assert result.runtime_action == runtime_action
+    if outcome == "exit":
+        assert result.exercise_state_delta["exercise_state"]["exercise_type"] is None
+    elif exercise_state_delta is None:
+        assert result.exercise_state_delta == {}
+    else:
+        assert result.exercise_state_delta == {"exercise_state": exercise_state_delta}
+
+
+@pytest.mark.asyncio
+async def test_progress_tool_adapts_terminal_completion() -> None:
+    definition = get_exercise_definition(EXERCISE_BOX_BREATHING)
+    assert definition is not None
+    final_index = len(definition.steps) - 1
+    final_step = definition.steps[final_index]
+
+    result = await execute_guided_exercise_progress_tool(
+        _guided_exercise_context(step_index=final_index),
+        expected_skill_id=EXERCISE_BOX_BREATHING,
+        expected_step_id=final_step.id,
+        outcome="complete",
+        user_response_summary="The user completed the final step.",
+    )
+
+    assert result.status == "completed"
+    assert result.runtime_action == "complete"
+    assert result.exercise_state_delta["exercise_state"]["exercise_type"] is None
 
 
 def test_all_registered_exercises_have_delivery_suitability_metadata() -> None:

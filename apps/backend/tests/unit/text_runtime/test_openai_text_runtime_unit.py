@@ -14,7 +14,7 @@ from agent.flows.therapeutic import (
     sanitize_response_llm_text,
 )
 from agent.memory.operations.procedural_profile import aset_proactive_recall
-from agent.memory.types import TurnDispatchDecision
+from agent.runtime.dispatch_models import TurnDispatchDecision
 from agent.runtime import build_initial_state
 from agent.memory.modes import MemoryMode
 from agent.memory.store import OpenCouchMemoryStore

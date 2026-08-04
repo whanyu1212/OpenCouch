@@ -88,7 +88,7 @@ async def finalize_session_window(
     # (its contract is summarize-only), so it leaves extract_candidates=False.
     if extract_candidates and session_buffer is not None:
         await extract_session_candidates(
-            conversation=session_conversation,
+            user_turn_texts=session_conversation.user_texts(),
             session_id=thread_id,
             session_buffer=session_buffer,
             llm_client=llm_client,

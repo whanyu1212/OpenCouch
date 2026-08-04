@@ -85,6 +85,8 @@ class WorkflowContext:
             ``None`` when speculation is disabled, the turn is incognito, or
             the runtime did not pre-schedule (e.g., one-shot calls via
             ``run_agent``).
+        prompt_appendix: Optional presentation-owned prompt guidance for this
+            request. It is not persisted in agent state.
     """
 
     llm_client: BaseLLMClient | None
@@ -95,6 +97,7 @@ class WorkflowContext:
     embedding_provider: EmbeddingProvider | None = None
     session_memory_buffer: SessionMemoryBuffer | None = None
     pre_fetched_memory: PrefetchedTurnMemory | None = None
+    prompt_appendix: str | None = None
 
     @property
     def control_llm(self) -> BaseLLMClient | None:

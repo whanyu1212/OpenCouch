@@ -156,6 +156,15 @@ async def test_crisis_log_rejects_duplicate_ids() -> None:
         assert await backend.arecord_count() == 2
 
 
+async def test_crisis_log_idempotent_append_deduplicates_ids() -> None:
+    record = _record(record_id=f"idempotent-{uuid4()}")
+
+    async with open_postgres_crisis_log_backend() as backend:
+        assert await backend.aappend_once(record) is True
+        assert await backend.aappend_once(record) is False
+        assert await backend.arecord_count() == 1
+
+
 async def test_crisis_log_rejects_malformed_timestamp() -> None:
     """Malformed timestamps must fail instead of entering an invalid date bucket."""
 

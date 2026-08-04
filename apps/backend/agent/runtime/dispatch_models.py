@@ -1,4 +1,4 @@
-"""Therapeutic response-style models used by memory-aware response planning."""
+"""Structured routing models owned by the text runtime."""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from agent.memory.types.primitives import ConfidenceLevel
 from agent.models import (
     GuidancePermission,
     SessionIntent,
+    SessionStage,
     TherapeuticApproach,
 )
 
@@ -30,8 +31,6 @@ TherapeuticResponseGuidanceStyle = Literal[
     "clarifying",
     "technique",
 ]
-
-SessionStage = Literal["opening", "deepening", "stabilizing", "closing"]
 
 ExerciseStartBasis = Literal[
     "explicit_user_request",
@@ -161,10 +160,6 @@ class DispatchDecision(BaseModel):
 __all__ = [
     "TherapeuticResponseStyle",
     "TherapeuticResponseGuidanceStyle",
-    "TherapeuticApproach",
-    "SessionIntent",
-    "SessionStage",
-    "GuidancePermission",
     "ExerciseStartBasis",
     "TurnRoute",
     "ActiveFlowAction",

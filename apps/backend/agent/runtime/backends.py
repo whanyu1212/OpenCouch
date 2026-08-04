@@ -17,7 +17,11 @@ from agent.memory.providers.embeddings import (
     NullEmbeddingProvider,
     create_configured_embedding_provider,
 )
-from agent.memory.modes import MemoryMode
+from agent.memory.modes import (
+    EPHEMERAL_CAPABILITY_ATTRIBUTE,
+    MemoryMode,
+    is_ephemeral_capable,
+)
 from agent.memory.store.postgres import PostgresMemoryStore
 from agent.memory.store import MemoryStore, OpenCouchMemoryStore
 from agent.runtime.postgres import require_postgres_database_url
@@ -36,6 +40,50 @@ class RuntimeBackendSelection:
     memory_store_backend: MemoryStoreBackend
     crisis_log_backend: RuntimeStoreBackend
     session_feedback_backend: RuntimeStoreBackend
+
+
+def require_ephemeral_dependency(
+    dependency: object,
+    *,
+    memory_mode: MemoryMode,
+    dependency_name: str,
+) -> None:
+    """Reject an injected dependency an incognito runtime must not use.
+
+    Runtime-owned selection already picks ephemeral backends for incognito,
+    but injected dependencies take precedence over that choice. Without this
+    check, an incognito runtime silently accepts a durable store or a network
+    embedding provider, violating the documented no-persistence contract.
+
+    Validation fails closed: a dependency must declare
+    ``supports_incognito = True`` to be accepted. Unrecognized
+    implementations — including a caller's own durable wrapper — are rejected
+    rather than assumed safe.
+
+    Args:
+        dependency (object): Injected dependency, or ``None`` when absent.
+        memory_mode (MemoryMode): Runtime memory mode.
+        dependency_name (str): Name used in the error message.
+
+    Returns:
+        None: Returns when the dependency is allowed.
+
+    Raises:
+        ValueError: If an incognito runtime is given a dependency that does
+            not declare itself ephemeral.
+    """
+
+    if dependency is None or memory_mode != MemoryMode.INCOGNITO:
+        return
+    if is_ephemeral_capable(dependency):
+        return
+    raise ValueError(
+        f"Incognito runtimes cannot use the injected {dependency_name} "
+        f"{type(dependency).__name__!r}: incognito must not write to durable "
+        "storage or call remote services. Inject an ephemeral implementation, "
+        f"or set '{EPHEMERAL_CAPABILITY_ATTRIBUTE} = True' on the class to "
+        "declare that it performs no durable writes and no network calls."
+    )
 
 
 def select_runtime_backends(
@@ -93,6 +141,7 @@ def create_memory_store(
     memory_store: MemoryStore | None,
     memory_backend: MemoryStoreBackend,
     memory_database_url: str | None,
+    memory_mode: MemoryMode = MemoryMode.LOCAL,
 ) -> MemoryStore:
     """Create the runtime memory store.
 
@@ -108,6 +157,11 @@ def create_memory_store(
         ValueError: If PostgreSQL memory is selected without a database URL.
     """
 
+    require_ephemeral_dependency(
+        memory_store,
+        memory_mode=memory_mode,
+        dependency_name="memory store",
+    )
     if memory_store is not None:
         return memory_store
     if memory_backend == "memory":
@@ -122,6 +176,7 @@ def create_crisis_log_backend(
     crisis_log_backend: CrisisLogBackend | None,
     crisis_log_persistence_backend: RuntimeStoreBackend,
     crisis_log_database_url: str | None,
+    memory_mode: MemoryMode = MemoryMode.LOCAL,
 ) -> CrisisLogBackend:
     """Create the runtime crisis-log backend.
 
@@ -140,6 +195,11 @@ def create_crisis_log_backend(
             URL.
     """
 
+    require_ephemeral_dependency(
+        crisis_log_backend,
+        memory_mode=memory_mode,
+        dependency_name="crisis-log backend",
+    )
     if crisis_log_backend is not None:
         return crisis_log_backend
     if crisis_log_persistence_backend == "memory":
@@ -158,6 +218,7 @@ def create_session_feedback_backend(
     session_feedback_backend: SessionFeedbackBackend | None,
     session_feedback_persistence_backend: RuntimeStoreBackend,
     session_feedback_database_url: str | None,
+    memory_mode: MemoryMode = MemoryMode.LOCAL,
 ) -> SessionFeedbackBackend:
     """Create the runtime session-feedback backend.
 
@@ -176,6 +237,11 @@ def create_session_feedback_backend(
             database URL.
     """
 
+    require_ephemeral_dependency(
+        session_feedback_backend,
+        memory_mode=memory_mode,
+        dependency_name="session-feedback backend",
+    )
     if session_feedback_backend is not None:
         return session_feedback_backend
     if session_feedback_persistence_backend == "memory":
@@ -205,6 +271,11 @@ def create_embedding_provider(
         EmbeddingProvider: Configured embedding provider.
     """
 
+    require_ephemeral_dependency(
+        embedding_provider,
+        memory_mode=memory_mode,
+        dependency_name="embedding provider",
+    )
     if embedding_provider is not None:
         return embedding_provider
     if memory_mode == MemoryMode.INCOGNITO:

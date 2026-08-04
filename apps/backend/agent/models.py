@@ -42,6 +42,7 @@ SessionIntent = Literal[
     "repair",
     "close",
 ]
+SessionStage = Literal["opening", "deepening", "stabilizing", "closing"]
 
 GuidancePermission = Literal["unknown", "not_yet", "granted"]
 

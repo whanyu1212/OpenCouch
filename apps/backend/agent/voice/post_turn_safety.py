@@ -34,6 +34,7 @@ _DEFAULT_TIMEOUT_SECONDS = 8.0
 _DEFAULT_CLOSE_DRAIN_TIMEOUT_SECONDS = 5.0
 _DEFAULT_MAX_CONCURRENCY = 2
 _DEFAULT_MAX_PENDING_TASKS = 100
+_TRANSIENT_SKIP_REASONS = {"no_llm_client", "task_limit_reached"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +50,7 @@ class VoicePostTurnSafetyCheck:
     prior_state: AgentState | None
     context: Any
     llm_client: BaseLLMClient | None
+    turn_instance_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +99,9 @@ class VoicePostTurnSafetyAuditor:
         self._semaphore = asyncio.Semaphore(max(1, int(max_concurrency)))
         self._max_pending_tasks = max(1, int(max_pending_tasks))
         self._tasks: set[asyncio.Task[None]] = set()
+        self._schedule_results: dict[
+            tuple[str, str], VoicePostTurnSafetyScheduleResult
+        ] = {}
         self._closed = False
 
     @property
@@ -105,6 +110,18 @@ class VoicePostTurnSafetyAuditor:
 
         self._discard_finished_tasks()
         return len(self._tasks)
+
+    def forget_schedule_result(
+        self,
+        *,
+        thread_id: str,
+        turn_instance_id: str | None,
+    ) -> None:
+        """Release retry state after the turn receipt is durable."""
+
+        if turn_instance_id is None:
+            return
+        self._schedule_results.pop((thread_id, turn_instance_id), None)
 
     def schedule_check(
         self,
@@ -118,18 +135,40 @@ class VoicePostTurnSafetyAuditor:
             because later classifier completion/failure happens asynchronously.
         """
 
+        if check.turn_instance_id is not None:
+            previous = self._schedule_results.get(
+                (check.thread_id, check.turn_instance_id)
+            )
+            if previous is not None:
+                return previous
+
         if self._closed:
-            return self._skip_check(check, reason="closed")
+            return self._remember_schedule_result(
+                check,
+                self._skip_check(check, reason="closed"),
+            )
         if check.llm_client is None:
-            return self._skip_check(check, reason="no_llm_client")
+            return self._remember_schedule_result(
+                check,
+                self._skip_check(check, reason="no_llm_client"),
+            )
         if not check.user_text.strip():
-            return self._skip_check(check, reason="empty_user_text")
+            return self._remember_schedule_result(
+                check,
+                self._skip_check(check, reason="empty_user_text"),
+            )
         if check.realtime_route == "crisis":
-            return self._skip_check(check, reason="already_crisis_routed")
+            return self._remember_schedule_result(
+                check,
+                self._skip_check(check, reason="already_crisis_routed"),
+            )
 
         self._discard_finished_tasks()
         if len(self._tasks) >= self._max_pending_tasks:
-            return self._skip_check(check, reason="task_limit_reached")
+            return self._remember_schedule_result(
+                check,
+                self._skip_check(check, reason="task_limit_reached"),
+            )
 
         task = asyncio.create_task(
             self._run_check(check),
@@ -147,9 +186,12 @@ class VoicePostTurnSafetyAuditor:
                 "pending_count": pending_count,
             },
         )
-        return VoicePostTurnSafetyScheduleResult(
-            scheduled=True,
-            pending_count=pending_count,
+        return self._remember_schedule_result(
+            check,
+            VoicePostTurnSafetyScheduleResult(
+                scheduled=True,
+                pending_count=pending_count,
+            ),
         )
 
     async def drain(self, timeout_seconds: float | None = None) -> int:
@@ -296,6 +338,21 @@ class VoicePostTurnSafetyAuditor:
 
     def _discard_finished_tasks(self) -> None:
         self._tasks = {task for task in self._tasks if not task.done()}
+
+    def _remember_schedule_result(
+        self,
+        check: VoicePostTurnSafetyCheck,
+        result: VoicePostTurnSafetyScheduleResult,
+    ) -> VoicePostTurnSafetyScheduleResult:
+        turn_instance_id = check.turn_instance_id
+        if (
+            turn_instance_id is None
+            or not result.scheduled
+            and result.reason in _TRANSIENT_SKIP_REASONS
+        ):
+            return result
+        self._schedule_results[(check.thread_id, turn_instance_id)] = result
+        return result
 
 
 def _classifier_state_for_check(check: VoicePostTurnSafetyCheck) -> AgentState:

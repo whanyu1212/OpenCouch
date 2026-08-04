@@ -19,7 +19,6 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agent.memory.types import (
-    DispatchDecision,
     ExtractionResult,
     ProceduralExtractionResult,
     ProceduralProfile,
@@ -33,6 +32,7 @@ from agent.memory.operations.procedural_profile import (
 from agent.memory.modes import MemoryMode
 from agent.models import AgentOutput, CrisisAssessment, ResponseCategory
 from agent.runtime import PersistentAgentRuntime, RuntimeDependencies
+from agent.runtime.dispatch_models import DispatchDecision
 from api.models import ApiMemoryMode
 from llm.base import BaseLLMClient, StructuredResponseT
 from tests.support.api_selection import runtime_selection

@@ -61,7 +61,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Callable, Literal, TypeVar
+from typing import Any, Callable, Literal, TypeVar
 
 from agent.memory.hashing import iso_now
 from agent.memory.types import (
@@ -88,6 +88,7 @@ ProceduralUpsertAction = Literal["added", "replaced", "skipped"]
 # remain readable but will be trimmed on the next rule write.
 MAX_ACTIVE_RULES = 20
 _PROCEDURAL_PROFILE_LOCKS: dict[str, asyncio.Lock] = {}
+_MISSING_WAITERS = object()
 _MutationResultT = TypeVar("_MutationResultT")
 
 
@@ -114,6 +115,55 @@ def _procedural_profile_lock(user_id: str) -> asyncio.Lock:
         lock = asyncio.Lock()
         _PROCEDURAL_PROFILE_LOCKS[user_id] = lock
     return lock
+
+
+def _lock_has_live_waiters(lock: asyncio.Lock) -> bool:
+    """Return whether a lock has a live waiter or cannot be inspected safely.
+
+    ``asyncio.Lock.release`` clears ``_locked`` and wakes the first waiter's
+    future without removing it from ``_waiters``. During that handoff window
+    ``locked()`` is false while a live waiter is still queued, so pruning then
+    would hand two coroutines separate mutexes for the same user. ``_waiters``
+    is a private implementation detail, so an unknown shape fails closed by
+    keeping the lock.
+
+    Args:
+        lock (asyncio.Lock): Lock to inspect.
+
+    Returns:
+        bool: ``True`` when the lock must be retained.
+    """
+
+    waiters: Any = getattr(lock, "_waiters", _MISSING_WAITERS)
+    if waiters is _MISSING_WAITERS:
+        return True
+    if not waiters:
+        return False
+    try:
+        return any(not waiter.cancelled() for waiter in waiters)
+    except (AttributeError, TypeError):
+        return True
+
+
+def prune_idle_procedural_profile_locks() -> int:
+    """Drop procedural-profile locks with no held or pending work.
+
+    The registry is module-level and gains an entry per user id, so without
+    pruning it grows for the lifetime of the process. Locks are only dropped
+    when nothing holds or awaits them, which keeps mutual exclusion intact for
+    any user with work in flight.
+
+    Returns:
+        int: Number of locks dropped.
+    """
+
+    pruned = 0
+    for user_id, lock in list(_PROCEDURAL_PROFILE_LOCKS.items()):
+        if lock.locked() or _lock_has_live_waiters(lock):
+            continue
+        del _PROCEDURAL_PROFILE_LOCKS[user_id]
+        pruned += 1
+    return pruned
 
 
 async def _mutate_procedural_profile(

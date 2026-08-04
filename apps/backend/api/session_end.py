@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from agent.feedback.models import FeedbackLabel, FeedbackModality
 from agent.runtime import PersistentAgentRuntime
 from api.models import ApiMemoryMode
-from api.session_feedback import record_runtime_feedback
 from llm.base import BaseLLMClient
 
 _GENERIC_NO_SUMMARY_DETAIL = (
@@ -40,17 +39,23 @@ async def end_runtime_session(
     memory_mode: ApiMemoryMode,
     modality: FeedbackModality = "text",
 ) -> SessionEndResult:
-    """Record optional feedback, finalize the runtime session, and normalize output."""
+    """Record optional feedback, finalize the runtime session, and normalize output.
+
+    When feedback accompanies the end request, both steps run under one thread
+    lock so the recorded ``turn_count_at_end`` describes the same session
+    window that gets finalized. Without feedback this is a plain finalize.
+    """
 
     if feedback is not None:
-        await record_runtime_feedback(
-            runtime=runtime,
-            thread_id=thread_id,
-            feedback=feedback,
+        _, arc = await runtime.end_session_with_feedback(
+            thread_id,
+            label=feedback,
+            source="api_end",
             modality=modality,
+            llm_client=llm_client,
         )
-
-    arc = await runtime.end_session(thread_id, llm_client=llm_client)
+    else:
+        arc = await runtime.end_session(thread_id, llm_client=llm_client)
     if arc is None:
         detail = (
             _INCOGNITO_NO_SUMMARY_DETAIL

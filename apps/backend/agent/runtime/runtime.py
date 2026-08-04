@@ -221,10 +221,18 @@ class PersistentAgentRuntime:
             auto_finalize_excluded=self._auto_finalize_excluded,
         )
 
+        from agent.voice.runtime_collaboration import VoiceRuntimeCollaboration
         from agent.voice.runtime_facade import VoiceRuntimeFacade
 
         self.voice = VoiceRuntimeFacade(
-            runtime=self,
+            collaboration=VoiceRuntimeCollaboration(
+                get_state=self.get_state,
+                build_turn_initial_state=self._build_turn_initial_state,
+                build_workflow_context=self._context_for_turn,
+                prepare_session_for_turn=self._prepare_session_for_turn,
+                remember_llm_client=self._remember_llm_client,
+                ensure_sdk_turn_recorded=self._ensure_openai_sdk_turn_recorded,
+            ),
             state_store=self._state_store,
             memory_store=self._memory_store,
             active_session_manager=self._active_session_manager,
@@ -236,15 +244,33 @@ class PersistentAgentRuntime:
     async def __aenter__(self) -> PersistentAgentRuntime:
         """Open runtime resources.
 
+        Schema preparation opens durable connections, so every later startup
+        step runs under an unwind guard. Python does not call ``__aexit__``
+        when ``__aenter__`` raises, so a failure or cancellation after
+        preparation would otherwise leak those connections.
+
         Returns:
             The initialized runtime instance.
+
+        Raises:
+            BaseException: Re-raises the startup failure after releasing
+                already-opened resources.
         """
 
         await self._ensure_runtime_schema()
-        await self._prewarm()
-        self._session_lifecycle.start_background_tasks(
-            finalize_expired_sessions_once=self._finalize_expired_sessions_once
-        )
+        try:
+            await self._prewarm()
+            self._session_lifecycle.start_background_tasks(
+                finalize_expired_sessions_once=self._finalize_expired_sessions_once
+            )
+        except BaseException:
+            logger.warning(
+                "PersistentAgentRuntime: startup failed after schema "
+                "preparation; releasing opened resources.",
+                exc_info=True,
+            )
+            await self._resources.aclose_quietly()
+            raise
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -485,6 +511,7 @@ class PersistentAgentRuntime:
         user_id: str | None,
         llm_client: BaseLLMClient | None,
         response_llm_client: BaseLLMClient | None = None,
+        prompt_appendix: str | None = None,
         track_session: bool = True,
     ) -> WorkflowContext:
         """Build the agent workflow runtime context for one turn.
@@ -531,6 +558,7 @@ class PersistentAgentRuntime:
                 if track_session
                 else None
             ),
+            prompt_appendix=prompt_appendix,
         )
 
     def _schedule_memory_prefetch(
@@ -765,6 +793,7 @@ class PersistentAgentRuntime:
         llm_client: BaseLLMClient | None,
         response_llm_client: BaseLLMClient | None,
         prior_state: AgentState | None,
+        prompt_appendix: str | None,
         streaming: bool,
     ) -> TextTurnExecutionContext:
         """Build context/config once active-session mutation setup succeeds."""
@@ -777,6 +806,7 @@ class PersistentAgentRuntime:
                 user_id=user_id,
                 llm_client=llm_client,
                 response_llm_client=response_llm_client,
+                prompt_appendix=prompt_appendix,
             ),
             config=self._config_for_thread(
                 thread_id,
@@ -796,6 +826,7 @@ class PersistentAgentRuntime:
         installed_skills: list[str] | None = None,
         llm_client: BaseLLMClient | None = None,
         response_llm_client: BaseLLMClient | None = None,
+        prompt_appendix: str | None = None,
         expected_liveness: ExpectedSessionLiveness | None = None,
         session_transcript_soft_limit: int | None = None,
     ) -> PersistentTurnResult:
@@ -841,6 +872,7 @@ class PersistentAgentRuntime:
                     llm_client=llm_client,
                     response_llm_client=response_llm_client,
                     prior_state=prepared.prior_state,
+                    prompt_appendix=prompt_appendix,
                     streaming=False,
                 )
                 turn_output = await prepared.text_runtime.run_turn(
@@ -903,6 +935,66 @@ class PersistentAgentRuntime:
                 llm_client=llm_client,
                 finalize_only_if_expired=finalize_only_if_expired,
             )
+
+    async def end_session_with_feedback(
+        self,
+        thread_id: str,
+        *,
+        label: FeedbackLabel,
+        source: FeedbackSource,
+        modality: FeedbackModality = "text",
+        llm_client: BaseLLMClient | None = None,
+    ) -> tuple[SessionFeedbackRecord | None, StoredSessionArc | None]:
+        """Record end-of-session feedback and finalize under one lock.
+
+        Recording feedback and finalizing separately lets a concurrent turn
+        change the session between them, so the stored ``turn_count_at_end``
+        would describe a window that was never the one summarized. Holding the
+        thread lock across both makes the feedback metadata and the finalized
+        session the same observation.
+
+        Feedback failures stay best-effort and never block finalization, which
+        preserves the existing end-session contract.
+
+        Args:
+            thread_id: The thread whose session is ending.
+            label: The explicit feedback label the user provided.
+            source: Which end-session surface produced this feedback.
+            modality: Which interaction channel the user is rating.
+            llm_client: The optional LLM client for session summarization.
+
+        Returns:
+            The written feedback record (``None`` on failure) and the written
+            session arc (``None`` when summarization is skipped).
+        """
+
+        async with self._thread_lock(thread_id):
+            try:
+                state = await self.get_state(thread_id)
+            except Exception:
+                logger.warning(
+                    "session feedback write failed for thread %s",
+                    thread_id,
+                    exc_info=True,
+                )
+                state = None
+                feedback_record = None
+            else:
+                feedback_record = await record_runtime_session_feedback(
+                    backend=self._session_feedback_backend,
+                    thread_id=thread_id,
+                    state=state,
+                    memory_mode=self.memory_mode,
+                    label=label,
+                    source=source,
+                    modality=modality,
+                )
+
+            arc = await self._end_session_unlocked(
+                thread_id,
+                llm_client=llm_client,
+            )
+            return feedback_record, arc
 
     async def _end_session_unlocked(
         self,
@@ -1041,6 +1133,7 @@ class PersistentAgentRuntime:
         installed_skills: list[str] | None = None,
         llm_client: BaseLLMClient | None = None,
         response_llm_client: BaseLLMClient | None = None,
+        prompt_appendix: str | None = None,
         expected_liveness: ExpectedSessionLiveness | None = None,
         session_transcript_soft_limit: int | None = None,
     ) -> AsyncIterator[StreamEvent]:
@@ -1090,6 +1183,7 @@ class PersistentAgentRuntime:
                     llm_client=llm_client,
                     response_llm_client=response_llm_client,
                     prior_state=prepared.prior_state,
+                    prompt_appendix=prompt_appendix,
                     streaming=True,
                 )
                 async for event in prepared.text_runtime.run_turn_stream(

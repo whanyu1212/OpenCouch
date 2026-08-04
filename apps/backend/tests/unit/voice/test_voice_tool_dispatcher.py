@@ -15,11 +15,8 @@ from agent.observability.events import (
 from agent.observability.recorder import InMemoryTraceRecorder
 from agent.runtime import PersistentAgentRuntime, RuntimeBehaviorConfig
 from agent.runtime.context import CrisisResourceToolCallRecord
-from agent.voice.tools import (
-    _execute_crisis_support_template,
-    _registered_voice_tool_names,
-    execute_voice_tool_call,
-)
+from agent.voice.tools import execute_voice_tool_call
+from agent.voice.tools.handlers import _execute_crisis_support_template
 from tests.support.openai_text import ScriptedOpenAITextRouteLLM
 from tests.support.persistence import (
     FakeCrossRestartLLM,
@@ -65,12 +62,6 @@ class _VoiceFacadeThatMustNotBuildContext:
 class _RuntimeThatMustNotBuildContext:
     memory_mode = MemoryMode.LOCAL
     voice = _VoiceFacadeThatMustNotBuildContext()
-
-
-def test_voice_tool_registry_covers_supported_tools() -> None:
-    from agent.voice.tools import _SUPPORTED_VOICE_TOOL_NAMES
-
-    assert _registered_voice_tool_names() == _SUPPORTED_VOICE_TOOL_NAMES
 
 
 @pytest.mark.asyncio
@@ -1043,6 +1034,13 @@ async def test_voice_crisis_lookup_does_not_bleed_into_a_later_turn() -> None:
 
     async with runtime:
         # Turn 1: a crisis whose lookup finds and persists a Singapore hotline.
+        await runtime.voice.persist_voice_crisis_resource_lookup(
+            thread_id="voice-thread",
+            user_id=None,
+            inferred_location="Singapore",
+            found_resources=[found_resource],
+            resource_lookup_status="found",
+        )
         await runtime.voice.record_voice_turn(
             thread_id="voice-thread",
             user_id=None,

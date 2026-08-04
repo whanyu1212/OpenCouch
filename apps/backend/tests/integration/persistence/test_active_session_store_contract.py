@@ -132,3 +132,59 @@ async def test_active_session_store_mutation_rotation_and_delete() -> None:
         assert await store.load_row(thread_id) is None
         await store.delete_session(thread_id)
         assert await store.load_row(thread_id) is None
+
+
+async def test_mutation_claim_requires_an_unclaimed_or_owned_marker() -> None:
+    """A second claimant cannot overwrite a live mutation marker.
+
+    OpenCouch serves from a single worker, so this is defense in depth rather
+    than the mechanism that makes concurrent claims safe. It mirrors the
+    ownership check ``clear_mutation`` already applies.
+    """
+
+    thread_id = _thread_id("postgres-claim-ownership")
+    payload_json = (
+        f'{{"thread_id":"{thread_id}","session_buffer":{{"session_id":"{thread_id}"}}}}'
+    )
+
+    async with open_postgres_active_session_store() as store:
+        await store.save_payload(thread_id, payload_json)
+        await store.set_mutation(
+            thread_id,
+            mutation_token="owner-token",
+            mutation_kind="turn",
+        )
+
+        # A different token must not steal the marker.
+        await store.set_mutation(
+            thread_id,
+            mutation_token="intruder-token",
+            mutation_kind="rotation",
+        )
+        row = await store.load_row(thread_id)
+        assert row is not None
+        assert row[1] == "owner-token"
+        assert row[2] == "turn"
+
+        # The owning token may still update its own claim.
+        await store.set_mutation(
+            thread_id,
+            mutation_token="owner-token",
+            mutation_kind="finalize",
+        )
+        row = await store.load_row(thread_id)
+        assert row is not None
+        assert row[2] == "finalize"
+
+        # Once released, the marker is claimable again.
+        await store.clear_mutation(thread_id, "owner-token")
+        await store.set_mutation(
+            thread_id,
+            mutation_token="next-token",
+            mutation_kind="turn",
+        )
+        row = await store.load_row(thread_id)
+        assert row is not None
+        assert row[1] == "next-token"
+
+        await store.delete_session(thread_id)

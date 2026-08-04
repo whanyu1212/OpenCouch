@@ -18,10 +18,4 @@ class VoiceToolDispatchContext:
     tool_context: Any | None
     thread_id: str
     user_id: str | None
-
-
-@dataclass(frozen=True)
-class VoiceToolDefinition:
-    name: str
-    handler: VoiceToolHandler
-    requires_context: bool = True
+    client_turn_id: str | None = None

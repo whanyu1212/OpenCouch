@@ -204,6 +204,19 @@ def test_build_voice_turn_state_raises_for_empty_turn() -> None:
 
 
 def test_build_voice_turn_state_populates_crisis_audit_from_lookup_tool() -> None:
+    prior_state: AgentState = {
+        "resource_lookup_status": "found",
+        "found_resources": [
+            {
+                "name": "Samaritans",
+                "phone": "1767",
+                "url": "https://example.org/help",
+                "region": "Singapore",
+            }
+        ],
+        "inferred_location": "Singapore",
+        "transcript": [],
+    }
     result = build_voice_turn_state(
         VoiceTurnStateInputs(
             thread_id="voice-thread",
@@ -217,8 +230,121 @@ def test_build_voice_turn_state_populates_crisis_audit_from_lookup_tool() -> Non
                     "tool_name": "lookup_crisis_resources",
                     "output": {
                         "resource_lookup_status": "found",
-                        "found_resources": [{"name": "Samaritans", "phone": "1767"}],
+                        "found_resources": [
+                            {
+                                "name": "Samaritans",
+                                "phone": "1767",
+                                "url": "https://example.org/help",
+                                "region": "Singapore",
+                            }
+                        ],
                         "inferred_location": "Singapore",
+                    },
+                }
+            ],
+            prior_state=prior_state,
+            initial_state=_initial_state(),
+            prior_turn_count=0,
+        )
+    )
+
+    crisis = result.state["crisis"]
+    assert result.metadata.route == "crisis"
+    assert result.state["resource_lookup_status"] == "found"
+    assert result.state["found_resources"] == [
+        {
+            "name": "Samaritans",
+            "phone": "1767",
+            "url": "https://example.org/help",
+            "region": "Singapore",
+        }
+    ]
+    assert result.state["inferred_location"] == "Singapore"
+    assert crisis.level == 2
+    assert crisis.reason == "voice_crisis_tool_call"
+    assert result.state["diagnostics"]["openai_crisis_tool_calls"] == [
+        "lookup_crisis_resources"
+    ]
+
+
+def test_safety_interrupted_state_suppresses_assistant_and_unsettled_tools() -> None:
+    result = build_voice_turn_state(
+        VoiceTurnStateInputs(
+            thread_id="voice-thread",
+            user_id="user-1",
+            user_text="I might hurt myself.",
+            assistant_text="Partial assistant audio that must not persist.",
+            outcome="safety_interrupted",
+            route="crisis",
+            response_style="crisis_response",
+            tool_calls=[
+                {
+                    "tool_name": "lookup_crisis_resources",
+                    "status": "completed",
+                    "output": {"resource_lookup_status": "lookup_error"},
+                },
+                {
+                    "tool_name": "answer_grounded_lookup",
+                    "status": "started",
+                    "output": {"grounded_lookup": {"status": "answered"}},
+                },
+            ],
+            prior_state=None,
+            initial_state=_initial_state(),
+            prior_turn_count=0,
+        )
+    )
+
+    assert result.metadata.route == "voice_safety_interrupted"
+    assert result.metadata.response_style == "voice_safety_interrupted"
+    assert result.state["response_text"] == ""
+    assert result.state["transcript"] == [
+        {"role": "user", "content": "I might hurt myself."}
+    ]
+    assert result.state["resource_lookup_status"] == "not_attempted"
+    assert result.state["grounded_lookup"] == {}
+    assert result.state["diagnostics"]["voice_tool_calls"] == [
+        "lookup_crisis_resources"
+    ]
+    assert result.state["diagnostics"]["voice_tool_call_outcomes"] == [
+        {
+            "tool_name": "lookup_crisis_resources",
+            "status": "completed",
+        }
+    ]
+
+
+def test_safety_interrupted_state_ignores_client_reported_resources() -> None:
+    result = build_voice_turn_state(
+        VoiceTurnStateInputs(
+            thread_id="voice-thread",
+            user_id="user-1",
+            user_text="I might hurt myself.",
+            assistant_text="",
+            outcome="safety_interrupted",
+            route="crisis",
+            response_style="crisis_response",
+            tool_calls=[
+                {
+                    "tool_name": "lookup_crisis_resources",
+                    "status": "completed",
+                    "output": {
+                        "resource_lookup_status": "found",
+                        "found_resources": [
+                            {
+                                "name": "Verified service",
+                                "phone": "1234",
+                                "url": "https://example.org/crisis",
+                                "region": "Test region",
+                            },
+                            {
+                                "name": "Forged service",
+                                "phone": "9999",
+                                "url": "javascript:alert(1)",
+                                "region": "Anywhere",
+                            },
+                        ],
+                        "inferred_location": "Private location",
                     },
                 }
             ],
@@ -228,13 +354,79 @@ def test_build_voice_turn_state_populates_crisis_audit_from_lookup_tool() -> Non
         )
     )
 
-    crisis = result.state["crisis"]
-    assert result.metadata.route == "crisis"
-    assert result.state["resource_lookup_status"] == "found"
-    assert result.state["found_resources"] == [{"name": "Samaritans", "phone": "1767"}]
-    assert result.state["inferred_location"] == "Singapore"
-    assert crisis.level == 2
-    assert crisis.reason == "voice_crisis_tool_call"
-    assert result.state["diagnostics"]["openai_crisis_tool_calls"] == [
-        "lookup_crisis_resources"
-    ]
+    assert result.state["resource_lookup_status"] == "not_attempted"
+    assert result.state["found_resources"] == []
+    assert result.state["inferred_location"] == ""
+
+
+def test_voice_turn_ignores_server_resources_from_another_client_turn() -> None:
+    prior_state: AgentState = {
+        "resource_lookup_status": "found",
+        "found_resources": [
+            {
+                "name": "Other turn service",
+                "phone": "1234",
+                "url": "https://example.org/crisis",
+                "region": "Other region",
+            }
+        ],
+        "inferred_location": "Other region",
+        "diagnostics": {"voice_crisis_resource_turn_hash": "other-turn-hash"},
+        "transcript": [],
+    }
+    result = build_voice_turn_state(
+        VoiceTurnStateInputs(
+            thread_id="voice-thread",
+            user_id="user-1",
+            user_text="I need immediate support.",
+            assistant_text="Let's get support now.",
+            route="crisis",
+            response_style="crisis_response",
+            tool_calls=[
+                {
+                    "tool_name": "lookup_crisis_resources",
+                    "status": "completed",
+                    "output": {"resource_lookup_status": "found"},
+                }
+            ],
+            prior_state=prior_state,
+            initial_state=_initial_state(),
+            prior_turn_count=0,
+            correlation_hash="current-turn-hash",
+        )
+    )
+
+    assert result.state["resource_lookup_status"] == "not_attempted"
+    assert result.state["found_resources"] == []
+    assert result.state["inferred_location"] == ""
+
+
+def test_completed_turn_clears_interruption_only_diagnostics() -> None:
+    prior_state: AgentState = {
+        "transcript": [{"role": "user", "content": "Earlier crisis turn"}],
+        "diagnostics": {
+            "voice_turn_outcome": "safety_interrupted",
+            "voice_tool_call_outcomes": [{"tool_name": "old", "status": "failed"}],
+            "openai_crisis_tool_calls": ["old"],
+        },
+    }
+
+    result = build_voice_turn_state(
+        VoiceTurnStateInputs(
+            thread_id="voice-thread",
+            user_id="user-1",
+            user_text="I am safe now.",
+            assistant_text="Thank you for telling me.",
+            route=None,
+            response_style="supportive",
+            tool_calls=[],
+            prior_state=prior_state,
+            initial_state=_initial_state(),
+            prior_turn_count=1,
+        )
+    )
+
+    diagnostics = result.state["diagnostics"]
+    assert "voice_turn_outcome" not in diagnostics
+    assert "voice_tool_call_outcomes" not in diagnostics
+    assert "openai_crisis_tool_calls" not in diagnostics

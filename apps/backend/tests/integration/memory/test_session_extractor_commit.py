@@ -121,7 +121,7 @@ async def test_extractor_then_commit_writes_durable_fact() -> None:
 
     # 1. Extract from the whole transcript -> populates the buffer.
     await extract_session_candidates(
-        conversation=_conversation(),
+        user_turn_texts=_conversation().user_texts(),
         session_id="thread-test",
         session_buffer=buffer,
         llm_client=_ExtractorLLM(),

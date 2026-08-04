@@ -17,6 +17,7 @@ from agent.tools.guided_exercise import (
     execute_guided_exercise_discovery_tool,
     execute_guided_exercise_progress_tool,
     execute_guided_exercise_skill_tool,
+    execute_guided_exercise_start_tool,
 )
 from agent.tools.memory import (
     execute_memory_tool_action,
@@ -179,6 +180,7 @@ async def _handle_lookup_crisis_resources(
     await dispatch_context.runtime.voice.persist_voice_crisis_resource_lookup(
         thread_id=dispatch_context.thread_id,
         user_id=dispatch_context.user_id,
+        client_turn_id=dispatch_context.client_turn_id,
         inferred_location=result.inferred_location,
         found_resources=result.found_resources,
         resource_lookup_status=result.resource_lookup_status,
@@ -213,6 +215,17 @@ async def _handle_load_therapeutic_response_skill(
     return await execute_therapeutic_response_skill_tool(
         dispatch_context.tool_context,
         response_style=str(arguments.get("response_style") or "supportive"),
+        therapeutic_approach=_optional_string(arguments.get("therapeutic_approach")),
+    )
+
+
+async def _handle_start_guided_exercise(
+    dispatch_context: VoiceToolDispatchContext,
+    arguments: dict[str, object],
+) -> object:
+    return await execute_guided_exercise_start_tool(
+        dispatch_context.tool_context,
+        exercise_type=str(arguments.get("exercise_type") or ""),
         therapeutic_approach=_optional_string(arguments.get("therapeutic_approach")),
     )
 
@@ -309,7 +322,7 @@ async def _execute_recall_saved_memory(
        recall-off setting always takes precedence.
     3. Otherwise call ``load_memory_for_turn`` and project results.
 
-    Incognito refusal is handled upstream by ``_PERSISTENT_ONLY_TOOL_NAMES``.
+    Incognito refusal is handled upstream by the canonical voice-tool spec.
     """
 
     raw_query = arguments.get("query")

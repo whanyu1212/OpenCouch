@@ -64,6 +64,11 @@ class CrisisLogBackend(Protocol):
         """
         ...
 
+    async def aappend_once(self, record: CrisisLogRecord) -> bool:
+        """Append a record unless its deterministic ID already exists."""
+
+        ...
+
     async def alist_by_date(self, day: date) -> list[CrisisLogRecord]:
         """List crisis records for one date.
 
@@ -91,6 +96,18 @@ class CrisisLogBackend(Protocol):
 
         Returns:
             int: Number of records deleted.
+        """
+        ...
+
+    async def ensure_schema(self) -> None:
+        """Prepare durable storage before the backend serves traffic.
+
+        Crisis appends run inside a bounded safety-capture timeout, so durable
+        backends connect and apply DDL here rather than inside the first
+        append. Ephemeral backends implement this as a no-op.
+
+        Returns:
+            None: Prepares the backend.
         """
         ...
 
@@ -166,8 +183,13 @@ async def write_crisis_log(
             if trace_context is not None and trace_context.enabled
             else None
         )
+        deterministic_audit_id = diagnostics.get("voice_crisis_audit_id")
         record = CrisisLogRecord(
-            id=str(uuid4()),
+            id=(
+                deterministic_audit_id
+                if isinstance(deterministic_audit_id, str) and deterministic_audit_id
+                else str(uuid4())
+            ),
             session_id_opaque=hash_session_id(state.get("session_id")),
             user_id_or_null=user_id,
             detected_at=iso_now(),
@@ -200,11 +222,20 @@ async def write_crisis_log(
                 enabled_trace_context.runtime_mode if enabled_trace_context else None
             ),
         )
-        await backend.aappend(record)
+        append_once = getattr(backend, "aappend_once", None)
+        if (
+            isinstance(deterministic_audit_id, str)
+            and deterministic_audit_id
+            and callable(append_once)
+        ):
+            audit_recorded = await append_once(record)
+        else:
+            await backend.aappend(record)
+            audit_recorded = True
         trace_event(
             AUDIT_CRISIS_LOG_APPEND,
             {
-                "audit_recorded": True,
+                "audit_recorded": audit_recorded,
                 "event_type": record.event_type,
                 "level": record.level,
                 "classifier_path": record.classifier_path,
@@ -279,6 +310,7 @@ async def record_voice_missed_crisis(
         diagnostics = state.get("diagnostics", {})
         if not isinstance(diagnostics, Mapping):
             diagnostics = {}
+        deterministic_audit_id = diagnostics.get("voice_missed_crisis_audit_id")
         trace_context = get_current_trace_context()
         enabled_trace_context = (
             trace_context
@@ -286,7 +318,11 @@ async def record_voice_missed_crisis(
             else None
         )
         record = CrisisLogRecord(
-            id=str(uuid4()),
+            id=(
+                deterministic_audit_id
+                if isinstance(deterministic_audit_id, str) and deterministic_audit_id
+                else str(uuid4())
+            ),
             event_type="voice_missed_crisis",
             session_id_opaque=hash_session_id(state.get("session_id")),
             user_id_or_null=user_id,
@@ -314,11 +350,20 @@ async def record_voice_missed_crisis(
                 enabled_trace_context.runtime_mode if enabled_trace_context else "voice"
             ),
         )
-        await backend.aappend(record)
+        append_once = getattr(backend, "aappend_once", None)
+        if (
+            isinstance(deterministic_audit_id, str)
+            and deterministic_audit_id
+            and callable(append_once)
+        ):
+            audit_recorded = await append_once(record)
+        else:
+            await backend.aappend(record)
+            audit_recorded = True
         trace_event(
             AUDIT_CRISIS_LOG_APPEND,
             {
-                "audit_recorded": True,
+                "audit_recorded": audit_recorded,
                 "event_type": record.event_type,
                 "level": record.level,
                 "classifier_path": record.classifier_path,
@@ -376,6 +421,8 @@ def _response_path_from_diagnostics(
     # Voice crisis turns answer in the Realtime model's live reply, not via the
     # text SDK tool loop, so none of the text fallback keys below are set. Map
     # them to "sdk" up front; otherwise every voice record would read "unknown".
+    if diagnostics.get("voice_turn_outcome") == "safety_interrupted":
+        return "safety_overlay"
     if diagnostics.get("voice_runtime") == "openai_realtime":
         return "sdk"
     if diagnostics.get("openai_response_llm_override") is True:
@@ -410,6 +457,9 @@ class InMemoryCrisisLogBackend:
 
     NOT thread-safe. Each runtime instance should own its own backend.
     """
+
+    #: Records live in memory only, so incognito runtimes may use this backend.
+    supports_incognito: bool = True
 
     def __init__(self) -> None:
         """Initialize the in-memory crisis backend.
@@ -448,6 +498,19 @@ class InMemoryCrisisLogBackend:
         day = date.fromisoformat(record.detected_at.split("T", 1)[0])
         self._records_by_date[day].append(record)
 
+    async def aappend_once(self, record: CrisisLogRecord) -> bool:
+        """Append a record unless its deterministic ID already exists."""
+
+        self._ensure_open()
+        if any(
+            existing.id == record.id
+            for records in self._records_by_date.values()
+            for existing in records
+        ):
+            return False
+        await self.aappend(record)
+        return True
+
     async def alist_by_date(self, day: date) -> list[CrisisLogRecord]:
         """List in-memory crisis records for one date.
 
@@ -460,6 +523,18 @@ class InMemoryCrisisLogBackend:
 
         self._ensure_open()
         return list(self._records_by_date.get(day, []))
+
+    async def ensure_schema(self) -> None:
+        """Prepare the in-memory crisis backend.
+
+        Records live in per-instance dicts, so there is nothing to create and
+        no connection to open.
+
+        Returns:
+            None: No preparation is required.
+        """
+
+        self._ensure_open()
 
     async def aclose(self) -> None:
         """Close the in-memory crisis backend.
@@ -514,11 +589,28 @@ class NullCrisisLogBackend:
     a real backend in all three memory modes.
     """
 
+    #: Discards every record, so incognito runtimes may use this backend.
+    supports_incognito: bool = True
+
     async def aappend(self, record: CrisisLogRecord) -> None:
         """Discard a crisis record.
 
         Args:
             record (CrisisLogRecord): Crisis event record to ignore.
+
+        Returns:
+            None: No-op for the null backend.
+        """
+
+        return None
+
+    async def aappend_once(self, record: CrisisLogRecord) -> bool:
+        """Discard an idempotent crisis record."""
+
+        return False
+
+    async def ensure_schema(self) -> None:
+        """Prepare the null crisis backend.
 
         Returns:
             None: No-op for the null backend.

@@ -52,6 +52,7 @@ from agent.runtime import (
     RuntimeDependencies,
     RuntimePersistenceConfig,
 )
+from api.worker_contract import enforce_single_worker_contract
 from config import (
     ResponseModelTier,
     Settings,
@@ -110,6 +111,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
 
     global _default_memory_mode, _llm_client, _response_llm_clients, _runtimes  # noqa: PLW0603
 
+    # Reject an unsupported multi-worker deployment before opening any
+    # resources. Runtime mutual exclusion is process-local, and the durable
+    # active-session mutation marker would interleave silently.
+    enforce_single_worker_contract()
+
     # Resolve clients once so request handlers do not pay setup cost.
     # Missing API keys leave clients as None, keeping deterministic paths available.
     try:
@@ -144,20 +150,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:  # noqa: ARG001
             llm_client=_llm_client,
         )
 
+    # Runtime __aexit__ owns shutdown finalization, gated by its
+    # finalize_active_sessions_on_close behavior flag. Finalizing here as well
+    # gave shutdown two owners: the second pass re-listed active sessions and
+    # usually found none, but a session becoming active between the two calls
+    # could be finalized twice. The exit stack unwinds each runtime, so
+    # entering them here is enough.
     async with AsyncExitStack() as stack:
         for runtime in _runtimes.values():
             await stack.enter_async_context(runtime)
-        try:
-            yield
-        finally:
-            for runtime in _runtimes.values():
-                try:
-                    await runtime.finalize_active_sessions(llm_client=_llm_client)
-                except Exception:
-                    logger.warning(
-                        "api lifespan shutdown: failed to finalize active sessions",
-                        exc_info=True,
-                    )
+        yield
 
     _runtimes = {}
     _default_memory_mode = ApiMemoryMode.PERSISTENT

@@ -70,6 +70,10 @@ jobs:
       - name: Install web dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Run web tests
+        working-directory: apps/web
+        run: pnpm test
+
       - name: Run web lint
         working-directory: apps/web
         run: pnpm lint

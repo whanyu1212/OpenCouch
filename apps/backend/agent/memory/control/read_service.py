@@ -2,12 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from agent.memory.control.operations import list_memory_for_owner
-from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.memory.control.types import MemoryControlServiceResult
-from agent.runtime.workflow_context import WorkflowContext
+from agent.memory.operations.procedural_profile import aget_procedural_profile
+from agent.memory.store import MemoryStore
 
 
 def empty_memory_reply() -> str:
@@ -73,7 +71,7 @@ def owner_or_failure_result(
 
 async def handle_memory_list(
     *,
-    store: Any,
+    store: MemoryStore,
     owner_id: str,
 ) -> MemoryControlServiceResult:
     """Return the saved-memory overview for one owner."""
@@ -88,11 +86,9 @@ async def handle_memory_list(
 async def handle_memory_status(
     *,
     owner_id: str,
-    context: WorkflowContext,
+    store: MemoryStore,
 ) -> MemoryControlServiceResult:
     """Return memory status text for one owner."""
-
-    store = context.memory_store
     profile = await aget_procedural_profile(store, user_id=owner_id)
     fact_count = await store.arecord_count((owner_id, "semantic"))
     session_count = await store.arecord_count((owner_id, "episodic"))

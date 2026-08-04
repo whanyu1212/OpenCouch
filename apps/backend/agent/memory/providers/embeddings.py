@@ -168,6 +168,9 @@ class NullEmbeddingProvider:
     """
 
     model_name: str = "null"
+
+    #: Makes no network calls, so incognito runtimes may use this provider.
+    supports_incognito: bool = True
     dimension: int = 0
 
     async def awarmup(self) -> None:

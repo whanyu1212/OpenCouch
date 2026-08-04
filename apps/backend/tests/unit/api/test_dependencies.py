@@ -196,11 +196,23 @@ def test_get_runtime_selection_reports_unavailable_mode(
 
 
 class _FakeRuntime:
+    """Fake runtime that finalizes on exit, mirroring the real contract.
+
+    ``PersistentAgentRuntime.__aexit__`` owns shutdown finalization, gated by
+    its ``finalize_active_sessions_on_close`` flag. Modeling that here keeps
+    the lifespan test honest about who finalizes, and counts the calls so a
+    second owner would be visible.
+    """
+
     def __init__(self, memory_mode: MemoryMode) -> None:
         self.memory_mode = memory_mode
         self.entered = False
         self.exited = False
-        self.finalized = False
+        self.finalize_calls = 0
+
+    @property
+    def finalized(self) -> bool:
+        return self.finalize_calls > 0
 
     async def __aenter__(self) -> _FakeRuntime:
         self.entered = True
@@ -208,9 +220,10 @@ class _FakeRuntime:
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
         self.exited = True
+        await self.finalize_active_sessions(llm_client=None)
 
     async def finalize_active_sessions(self, *, llm_client: object | None) -> None:
-        self.finalized = True
+        self.finalize_calls += 1
 
 
 @pytest.mark.asyncio
@@ -276,7 +289,12 @@ async def test_lifespan_initializes_available_runtimes_and_default_mode(
         )
         assert all(runtime.entered for runtime in built_runtimes)
 
-    assert all(runtime.finalized for runtime in built_runtimes)
+    # Exactly one finalization owner: the runtime's own exit. The lifespan
+    # must not finalize as well, which would double-finalize any session that
+    # became active between the two calls.
+    assert [runtime.finalize_calls for runtime in built_runtimes] == [1] * len(
+        built_runtimes
+    )
     assert all(runtime.exited for runtime in built_runtimes)
     assert dependencies._runtimes == {}
     assert dependencies._default_memory_mode is ApiMemoryMode.PERSISTENT
