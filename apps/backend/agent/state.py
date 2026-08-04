@@ -17,6 +17,7 @@ from typing import Any, Literal, NotRequired, TypedDict
 
 from agent.audit.models import CrisisClassifierPath, CrisisOverrideOutcome
 from agent.models import (
+    AgentRoute,
     Channel,
     CrisisAssessment,
     GuidancePermission,
@@ -289,7 +290,7 @@ class AgentPrivateState(TypedDict):
     turns.
     """
 
-    route: NotRequired[str]
+    route: NotRequired[AgentRoute]
     turn_lifecycle: NotRequired[TurnLifecycleState]
     memory_reference: NotRequired[MemoryReferenceState]
     response_guidance: NotRequired[str]
