@@ -123,6 +123,9 @@ class RuntimeResources:
             prepared.append("state_store")
             await self.active_session_manager.ensure_schema()
             prepared.append("active_session_manager")
+            if self.text_session_store is not None:
+                await self.text_session_store.ensure_schema()
+                prepared.append("text_session_store")
             for name, backend in (
                 ("memory_store", self.memory_store),
                 ("crisis_log_backend", self.crisis_log_backend),

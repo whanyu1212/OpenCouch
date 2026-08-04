@@ -19,6 +19,7 @@ from agent.feedback.session_feedback import (
 )
 from agent.memory.store import OpenCouchMemoryStore
 from agent.memory.store.postgres import PostgresMemoryStore
+from agent.runtime.session_store import TextSessionStore, TextSessionStoreConfig
 
 pytestmark = pytest.mark.asyncio
 
@@ -37,6 +38,7 @@ async def test_every_backend_implementation_exposes_ensure_schema() -> None:
         InMemorySessionFeedbackBackend,
         NullSessionFeedbackBackend,
         PostgresSessionFeedbackBackend,
+        TextSessionStore,
     ]
 
     missing = [
@@ -97,3 +99,15 @@ async def test_durable_backends_surface_connection_failures_at_preparation() -> 
             await store.ensure_schema()
     finally:
         await store.aclose()
+
+    text_session_store = TextSessionStore(
+        TextSessionStoreConfig(
+            backend="sqlalchemy",
+            database_url=_UNREACHABLE_DSN,
+        )
+    )
+    try:
+        with pytest.raises(Exception):
+            await text_session_store.ensure_schema()
+    finally:
+        await text_session_store.aclose()

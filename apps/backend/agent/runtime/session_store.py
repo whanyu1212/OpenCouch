@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from inspect import isawaitable
 import logging
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 from agents.memory import SQLiteSession, SessionSettings
 
@@ -23,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
 ActiveTextSessionBackend = Literal["sqlite", "sqlalchemy"]
+
+_SCHEMA_PREPARATION_SESSION_ID_PREFIX = "__opencouch_schema_preparation__"
+_SCHEMA_PREPARATION_ADVISORY_LOCK_ID = 0x4F50454E434F5543
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +55,7 @@ class TextSessionStore:
         self._failed_close_sessions: list[Any] = []
         self._session_lock = asyncio.Lock()
         self._engine: Any | None = None
+        self._schema_prepared = False
 
         if config.backend == "sqlalchemy":
             from sqlalchemy.ext.asyncio import create_async_engine
@@ -96,10 +102,97 @@ class TextSessionStore:
             return SQLAlchemySession(
                 normalized_thread_id,
                 engine=self._engine,
-                create_tables=self._config.create_tables,
+                create_tables=(
+                    self._config.create_tables and not self._schema_prepared
+                ),
                 session_settings=settings,
             )
         raise ValueError(f"Unsupported text session backend {self._config.backend!r}.")
+
+    async def ensure_schema(self) -> None:
+        """Prepare and validate SQLAlchemy text-session storage at startup."""
+
+        if self._config.backend != "sqlalchemy":
+            return
+
+        async with self._session_lock:
+            if self._engine is None:
+                raise RuntimeError("SQLAlchemy text session engine is not initialized.")
+            if self._schema_prepared:
+                return
+            async with self._schema_preparation_database_lock():
+                session = self._create_session(
+                    f"{_SCHEMA_PREPARATION_SESSION_ID_PREFIX}:{uuid4().hex}"
+                )
+                write_failure: BaseException | None = None
+                try:
+                    await session.add_items(
+                        [
+                            {
+                                "role": "user",
+                                "content": "OpenCouch schema preparation probe.",
+                            }
+                        ]
+                    )
+                except BaseException as exc:
+                    write_failure = exc
+
+                (
+                    cleanup_failure,
+                    cleanup_cancellation,
+                ) = await self._cleanup_schema_preparation_session(session)
+                if write_failure is not None:
+                    raise write_failure
+                if cleanup_cancellation is not None:
+                    raise cleanup_cancellation
+                if cleanup_failure is not None:
+                    raise cleanup_failure
+                self._schema_prepared = True
+
+    @staticmethod
+    async def _cleanup_schema_preparation_session(
+        session: Any,
+    ) -> tuple[BaseException | None, asyncio.CancelledError | None]:
+        """Clear a probe to completion while preserving caller cancellation."""
+
+        async def clear() -> BaseException | None:
+            try:
+                await session.clear_session()
+            except BaseException as exc:
+                return exc
+            return None
+
+        task = asyncio.create_task(
+            clear(), name="opencouch-text-session-schema-cleanup"
+        )
+        cancellation: asyncio.CancelledError | None = None
+        while True:
+            try:
+                failure = await asyncio.shield(task)
+            except asyncio.CancelledError as exc:
+                if cancellation is None:
+                    cancellation = exc
+                continue
+            return failure, cancellation
+
+    @asynccontextmanager
+    async def _schema_preparation_database_lock(self) -> AsyncIterator[None]:
+        """Serialize PostgreSQL SDK table creation across startup processes."""
+
+        if self._engine is None:
+            raise RuntimeError("SQLAlchemy text session engine is not initialized.")
+        if self._engine.dialect.name != "postgresql":
+            yield
+            return
+
+        from sqlalchemy import text
+
+        async with self._engine.begin() as connection:
+            await connection.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                {"lock_id": _SCHEMA_PREPARATION_ADVISORY_LOCK_ID},
+            )
+            yield
 
     async def evict_thread(self, thread_id: str) -> None:
         """Evict one cached SDK session without deleting its history."""
