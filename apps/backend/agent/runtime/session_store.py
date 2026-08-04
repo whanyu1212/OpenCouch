@@ -124,16 +124,56 @@ class TextSessionStore:
                 session = self._create_session(
                     f"{_SCHEMA_PREPARATION_SESSION_ID_PREFIX}:{uuid4().hex}"
                 )
-                await session.add_items(
-                    [
-                        {
-                            "role": "user",
-                            "content": "OpenCouch schema preparation probe.",
-                        }
-                    ]
-                )
-                await session.clear_session()
+                write_failure: BaseException | None = None
+                try:
+                    await session.add_items(
+                        [
+                            {
+                                "role": "user",
+                                "content": "OpenCouch schema preparation probe.",
+                            }
+                        ]
+                    )
+                except BaseException as exc:
+                    write_failure = exc
+
+                (
+                    cleanup_failure,
+                    cleanup_cancellation,
+                ) = await self._cleanup_schema_preparation_session(session)
+                if write_failure is not None:
+                    raise write_failure
+                if cleanup_cancellation is not None:
+                    raise cleanup_cancellation
+                if cleanup_failure is not None:
+                    raise cleanup_failure
                 self._schema_prepared = True
+
+    @staticmethod
+    async def _cleanup_schema_preparation_session(
+        session: Any,
+    ) -> tuple[BaseException | None, asyncio.CancelledError | None]:
+        """Clear a probe to completion while preserving caller cancellation."""
+
+        async def clear() -> BaseException | None:
+            try:
+                await session.clear_session()
+            except BaseException as exc:
+                return exc
+            return None
+
+        task = asyncio.create_task(
+            clear(), name="opencouch-text-session-schema-cleanup"
+        )
+        cancellation: asyncio.CancelledError | None = None
+        while True:
+            try:
+                failure = await asyncio.shield(task)
+            except asyncio.CancelledError as exc:
+                if cancellation is None:
+                    cancellation = exc
+                continue
+            return failure, cancellation
 
     @asynccontextmanager
     async def _schema_preparation_database_lock(self) -> AsyncIterator[None]:

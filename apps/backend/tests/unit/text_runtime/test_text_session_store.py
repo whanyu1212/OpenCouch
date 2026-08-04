@@ -683,6 +683,80 @@ async def test_sqlalchemy_schema_preparation_validates_session_write_table(
 
 
 @pytest.mark.asyncio
+async def test_cancelled_schema_preparation_finishes_probe_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Cancellation after the probe write must not leave synthetic history."""
+
+    class _DelayedCleanupSession:
+        def __init__(self) -> None:
+            self.cleanup_started = asyncio.Event()
+            self.cleanup_release = asyncio.Event()
+            self.cleared = False
+
+        async def add_items(self, items: list[object]) -> None:
+            assert items
+
+        async def clear_session(self) -> None:
+            self.cleanup_started.set()
+            await self.cleanup_release.wait()
+            self.cleared = True
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(
+            backend="sqlalchemy",
+            database_url=f"sqlite+aiosqlite:///{tmp_path / 'sessions.db'}",
+        )
+    )
+    session = _DelayedCleanupSession()
+    monkeypatch.setattr(store, "_create_session", lambda _thread_id: session)
+    try:
+        preparation = asyncio.create_task(store.ensure_schema())
+        await session.cleanup_started.wait()
+        preparation.cancel()
+        session.cleanup_release.set()
+
+        with pytest.raises(asyncio.CancelledError):
+            await preparation
+
+        assert session.cleared is True
+        assert store._schema_prepared is False  # noqa: SLF001
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_schema_probe_cleanup_does_not_mask_write_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    """Cleanup failure should not replace the original probe-write error."""
+
+    class _FailingProbeSession:
+        async def add_items(self, items: list[object]) -> None:
+            raise ValueError("probe write failed")
+
+        async def clear_session(self) -> None:
+            raise RuntimeError("probe cleanup failed")
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(
+            backend="sqlalchemy",
+            database_url=f"sqlite+aiosqlite:///{tmp_path / 'sessions.db'}",
+        )
+    )
+    monkeypatch.setattr(
+        store, "_create_session", lambda _thread_id: _FailingProbeSession()
+    )
+    try:
+        with pytest.raises(ValueError, match="probe write failed"):
+            await store.ensure_schema()
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
 async def test_sqlite_schema_preparation_is_a_noop(tmp_path) -> None:
     """SDK SQLite remains lazy and credential-free during startup."""
 
