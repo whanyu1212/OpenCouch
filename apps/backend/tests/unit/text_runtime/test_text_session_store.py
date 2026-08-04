@@ -136,22 +136,36 @@ async def test_uncached_history_read_does_not_retain_session(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_uncached_history_read_reuses_cached_session(tmp_path) -> None:
-    """An active thread's history read should not create a parallel session."""
+async def test_uncached_history_read_does_not_use_cached_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unlocked history reads must not race cached-session eviction."""
 
-    store = TextSessionStore(
-        TextSessionStoreConfig(backend="sqlite", sqlite_path=tmp_path / "sessions.db")
-    )
-    try:
-        session = store.session_for_thread("thread-1")
-        await session.add_items([{"role": "user", "content": "hello"}])
+    class _CachedSession:
+        async def get_items(self, *, limit: int | None = None) -> list[dict[str, str]]:
+            raise AssertionError("uncached history read used the cached session")
 
-        history = await store.get_history("thread-1", cache=False)
+    class _TransientSession:
+        def __init__(self) -> None:
+            self.closed = False
 
-        assert [message.content for message in history] == ["hello"]
-        assert store.session_for_thread("thread-1") is session
-    finally:
-        await store.aclose()
+        async def get_items(self, *, limit: int | None = None) -> list[dict[str, str]]:
+            return [{"role": "user", "content": "hello"}]
+
+        async def close(self) -> None:
+            self.closed = True
+
+    store = TextSessionStore(TextSessionStoreConfig())
+    cached_session = _CachedSession()
+    transient_session = _TransientSession()
+    store._sessions["thread-1"] = cached_session  # noqa: SLF001
+    monkeypatch.setattr(store, "_create_session", lambda _thread_id: transient_session)
+
+    history = await store.get_history("thread-1", cache=False)
+
+    assert [message.content for message in history] == ["hello"]
+    assert store._sessions["thread-1"] is cached_session  # noqa: SLF001
+    assert transient_session.closed is True
 
 
 @pytest.mark.asyncio

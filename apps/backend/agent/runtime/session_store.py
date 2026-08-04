@@ -154,14 +154,11 @@ class TextSessionStore:
         """Materialize SDK session items as public transcript messages."""
 
         normalized_thread_id = self._normalize_thread_id(thread_id)
-        session = self._sessions.get(normalized_thread_id)
-        close_after_read = False
-        if session is None:
-            if cache:
-                session = self.session_for_thread(normalized_thread_id)
-            else:
-                session = self._create_session(normalized_thread_id)
-                close_after_read = True
+        close_after_read = not cache
+        if cache:
+            session = self.session_for_thread(normalized_thread_id)
+        else:
+            session = self._create_session(normalized_thread_id)
         try:
             items = await session.get_items(limit=limit)
         finally:
