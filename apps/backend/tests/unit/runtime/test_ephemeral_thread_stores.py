@@ -29,6 +29,7 @@ async def test_in_memory_state_round_trip_is_detached() -> None:
     }
 
     await store.save_state("thread-1", state)
+    assert store._states["thread-1"][2]["schema_version"] == 1  # noqa: SLF001
     state["transcript"].append({"role": "assistant", "content": "mutated"})
     loaded = await store.load_state("thread-1")
 
@@ -41,6 +42,34 @@ async def test_in_memory_state_round_trip_is_detached() -> None:
     reloaded = await store.load_state("thread-1")
     assert reloaded is not None
     assert reloaded["transcript"] == [{"role": "user", "content": "hello"}]
+
+
+@pytest.mark.asyncio
+async def test_in_memory_state_store_reads_legacy_unversioned_snapshot() -> None:
+    store = InMemoryRuntimeStateStore()
+    store._states["legacy-thread"] = (  # noqa: SLF001
+        "legacy",
+        1,
+        {"channel": "voice", "unknown": {"preserved": True}},
+    )
+
+    loaded = await store.load_state("legacy-thread")
+
+    assert loaded == {
+        "channel": Channel.VOICE,
+        "unknown": {"preserved": True},
+    }
+
+
+@pytest.mark.asyncio
+async def test_in_memory_state_store_rejects_invalid_save_without_overwrite() -> None:
+    store = InMemoryRuntimeStateStore()
+    await store.save_state("thread-1", {"channel": Channel.WEB})
+
+    with pytest.raises(ValueError, match="state.channel"):
+        await store.save_state("thread-1", {"channel": "browser"})
+
+    assert await store.load_state("thread-1") == {"channel": Channel.WEB}
 
 
 @pytest.mark.asyncio

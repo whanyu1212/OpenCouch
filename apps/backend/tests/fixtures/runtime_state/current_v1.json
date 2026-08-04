@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "state": {
+    "channel": "web",
+    "crisis": {
+      "level": 1,
+      "confidence": "high",
+      "reason": "fixture assessment",
+      "needs_crisis_response": false,
+      "needs_clarification": false
+    },
+    "session_progress": {
+      "turn_count": 2,
+      "session_stage": "deepening",
+      "future_progress_field": "preserved"
+    },
+    "future_state_field": {
+      "enabled": true
+    }
+  }
+}

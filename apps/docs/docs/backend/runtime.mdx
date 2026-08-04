@@ -76,6 +76,20 @@ Turn-scoped fields (`crisis`, `crisis_audit`, `route`, `response_text`,
 are overwritten fresh each turn because they describe one turn's
 decisions and reply.
 
+### Snapshot compatibility
+
+Runtime snapshots use a versioned JSON envelope with `schema_version: 1` and
+the app-owned state under `state`. Existing unversioned snapshots are read as
+version 0 and migrated in memory; the next state save writes the current
+envelope. Unknown state fields are preserved so independent runtime features
+can evolve without a central field registry.
+
+The codec validates persistence-critical channel, routing, safety, and
+lifecycle values before writes and when snapshots are loaded. Malformed
+snapshots and unsupported future schema versions fail explicitly rather than
+being silently mapped to test behavior. The Postgres table schema is unchanged
+because the envelope is stored inside the existing JSONB value.
+
 ---
 
 ## Thread lifecycle

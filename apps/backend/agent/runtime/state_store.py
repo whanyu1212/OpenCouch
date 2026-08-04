@@ -9,16 +9,19 @@ API/CLI/debug surfaces.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 from collections.abc import Mapping
-from typing import Any, Literal, Protocol, cast
+from typing import Any, Literal, Protocol
 import psycopg
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from agent.memory.hashing import iso_now
 from agent.runtime.postgres import require_postgres_database_url
+from agent.runtime.state_codec import (
+    decode_agent_state_snapshot,
+    encode_agent_state_snapshot,
+)
 from agent.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -83,11 +86,11 @@ class InMemoryRuntimeStateStore:
         stored = self._states.get(thread_id)
         if stored is None:
             return None
-        return _state_from_payload(json.loads(json.dumps(stored[2])))
+        return decode_agent_state_snapshot(stored[2])
 
     async def save_state(self, thread_id: str, state: Mapping[str, Any]) -> None:
         self._ensure_open()
-        payload = json.loads(json.dumps(_state_payload(state)))
+        payload = encode_agent_state_snapshot(state)
         async with self._lock:
             self._ensure_open()
             self._write_sequence += 1
@@ -197,11 +200,11 @@ class PostgresRuntimeStateStore:
             row = await cursor.fetchone()
         if row is None:
             return None
-        return _state_from_payload(row["value"])
+        return decode_agent_state_snapshot(row["value"])
 
     async def save_state(self, thread_id: str, state: Mapping[str, Any]) -> None:
         conn = await self._ensure_connection()
-        payload = _state_payload(state)
+        payload = encode_agent_state_snapshot(state)
         try:
             async with conn.cursor() as cursor:
                 await cursor.execute(
@@ -216,7 +219,7 @@ class PostgresRuntimeStateStore:
                     (
                         thread_id,
                         iso_now(),
-                        _turn_count(payload),
+                        _turn_count(state),
                         Jsonb(payload),
                     ),
                 )
@@ -275,32 +278,6 @@ def create_runtime_state_store(
     if backend == "postgres":
         return PostgresRuntimeStateStore(require_postgres_database_url(database_url))
     raise ValueError(f"Unsupported runtime-state backend: {backend}")
-
-
-def _state_payload(state: Mapping[str, Any]) -> dict[str, Any]:
-    payload: dict[str, Any] = {}
-    for key, value in state.items():
-        if hasattr(value, "model_dump"):
-            payload[str(key)] = value.model_dump(mode="json")
-        else:
-            payload[str(key)] = value
-    return payload
-
-
-def _state_from_payload(payload: Any) -> AgentState:
-    from agent.models import Channel, CrisisAssessment
-
-    raw = dict(payload or {})
-    crisis = raw.get("crisis")
-    if isinstance(crisis, Mapping):
-        raw["crisis"] = CrisisAssessment.model_validate(crisis)
-    channel = raw.get("channel")
-    if isinstance(channel, str):
-        try:
-            raw["channel"] = Channel(channel)
-        except ValueError:
-            raw["channel"] = Channel.TEST
-    return cast(AgentState, raw)
 
 
 def _turn_count(payload: Mapping[str, Any]) -> int:

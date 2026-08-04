@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "state": {
+    "channel": "browser",
+    "transcript": [
+      {
+        "role": "user",
+        "content": "private fixture sentinel"
+      }
+    ]
+  }
+}

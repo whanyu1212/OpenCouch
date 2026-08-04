@@ -1,0 +1,14 @@
+{
+  "channel": "voice",
+  "crisis": {
+    "level": 0,
+    "confidence": "low",
+    "reason": "legacy fixture assessment",
+    "needs_crisis_response": false,
+    "needs_clarification": false
+  },
+  "session_progress": {
+    "turn_count": 1
+  },
+  "legacy_unknown_field": "preserved"
+}
