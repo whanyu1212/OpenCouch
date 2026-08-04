@@ -18,6 +18,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 
 from agent.feedback.models import FeedbackLabel, FeedbackModality
+from agent.models import AgentRoute
 from config import ResponseModelTier
 
 
@@ -167,7 +168,7 @@ class VoiceTurnRecordRequest(BaseModel):
         "completed"
     )
     interruption_token: str | None = Field(default=None, min_length=1, max_length=2048)
-    route: str | None = None
+    route: AgentRoute | None = None
     response_style: str | None = None
     tool_calls: list[VoiceRecordedToolCall] = Field(default_factory=list)
 

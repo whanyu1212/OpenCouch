@@ -1505,6 +1505,18 @@ async def test_turn_endpoint_rejects_a_retired_pending_retry(
     }
 
 
+def test_voice_turn_request_rejects_an_unknown_persisted_route() -> None:
+    with pytest.raises(ValueError):
+        VoiceTurnRecordRequest.model_validate(
+            {
+                "thread_id": "voice-route-contract",
+                "user_text": "hello",
+                "assistant_text": "hi",
+                "route": "custom_route",
+            }
+        )
+
+
 @pytest.mark.asyncio
 async def test_legacy_pending_turn_retries_reuse_post_turn_safety_identity(
     monkeypatch: pytest.MonkeyPatch,
