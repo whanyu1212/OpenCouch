@@ -208,6 +208,49 @@ async def test_prepared_text_session_runs_no_ddl_on_first_thread_read() -> None:
         await store.aclose()
 
 
+async def test_text_session_preparation_uses_postgres_advisory_lock() -> None:
+    """Cross-process SDK table creation should serialize in PostgreSQL."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(
+            backend="sqlalchemy",
+            database_url=require_postgres_database_url(),
+            create_tables=True,
+        )
+    )
+    try:
+        assert store._engine is not None  # noqa: SLF001
+        statements: list[str] = []
+
+        def _record_statement(
+            _conn: Any,
+            _cursor: Any,
+            statement: str,
+            _parameters: Any,
+            _context: Any,
+            _executemany: bool,
+        ) -> None:
+            statements.append(statement)
+
+        event.listen(
+            store._engine.sync_engine,  # noqa: SLF001
+            "before_cursor_execute",
+            _record_statement,
+        )
+        try:
+            await store.ensure_schema()
+        finally:
+            event.remove(
+                store._engine.sync_engine,  # noqa: SLF001
+                "before_cursor_execute",
+                _record_statement,
+            )
+
+        assert any("pg_advisory_xact_lock" in statement for statement in statements)
+    finally:
+        await store.aclose()
+
+
 async def test_preparation_creates_schema_for_every_durable_backend() -> None:
     """Each backend's tables exist after preparation, before any operation."""
 

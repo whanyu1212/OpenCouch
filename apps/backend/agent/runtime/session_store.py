@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from inspect import isawaitable
 import logging
@@ -26,6 +27,7 @@ TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
 ActiveTextSessionBackend = Literal["sqlite", "sqlalchemy"]
 
 _SCHEMA_PREPARATION_SESSION_ID_PREFIX = "__opencouch_schema_preparation__"
+_SCHEMA_PREPARATION_ADVISORY_LOCK_ID = 0x4F50454E434F5543
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,14 +120,39 @@ class TextSessionStore:
                 raise RuntimeError("SQLAlchemy text session engine is not initialized.")
             if self._schema_prepared:
                 return
-            session = self._create_session(
-                f"{_SCHEMA_PREPARATION_SESSION_ID_PREFIX}:{uuid4().hex}"
+            async with self._schema_preparation_database_lock():
+                session = self._create_session(
+                    f"{_SCHEMA_PREPARATION_SESSION_ID_PREFIX}:{uuid4().hex}"
+                )
+                await session.add_items(
+                    [
+                        {
+                            "role": "user",
+                            "content": "OpenCouch schema preparation probe.",
+                        }
+                    ]
+                )
+                await session.clear_session()
+                self._schema_prepared = True
+
+    @asynccontextmanager
+    async def _schema_preparation_database_lock(self) -> AsyncIterator[None]:
+        """Serialize PostgreSQL SDK table creation across startup processes."""
+
+        if self._engine is None:
+            raise RuntimeError("SQLAlchemy text session engine is not initialized.")
+        if self._engine.dialect.name != "postgresql":
+            yield
+            return
+
+        from sqlalchemy import text
+
+        async with self._engine.begin() as connection:
+            await connection.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_id)"),
+                {"lock_id": _SCHEMA_PREPARATION_ADVISORY_LOCK_ID},
             )
-            await session.add_items(
-                [{"role": "user", "content": "OpenCouch schema preparation probe."}]
-            )
-            await session.clear_session()
-            self._schema_prepared = True
+            yield
 
     async def evict_thread(self, thread_id: str) -> None:
         """Evict one cached SDK session without deleting its history."""
