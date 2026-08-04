@@ -20,11 +20,13 @@ import logging
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 from uuid import uuid4
 
 from agent.audit.capture import capture_crisis_outcome
 from agent.audit.models import CrisisResourceLookupStatus
+from agent.memory.hashing import iso_now
 from agent.memory.modes import MemoryMode
 from agent.memory.operations.procedural_profile import aget_procedural_profile
 from agent.memory.store import MemoryStore
@@ -38,6 +40,7 @@ from agent.observability.decorators import trace_event, trace_span
 from agent.observability.events import (
     RUNTIME_VOICE_SESSION,
     VOICE_CRISIS_RESOURCE_LOOKUP_PERSISTED,
+    VOICE_PENDING_TURNS_RETIRED,
     VOICE_RESPONSE_FINALIZED,
     VOICE_SAFETY_INTERRUPTED_TURN_RECORDED,
     VOICE_TURN_COMPLETION_METADATA_PERSIST_FAILED,
@@ -76,6 +79,31 @@ logger = logging.getLogger(__name__)
 
 _MAX_RECORDED_VOICE_TURN_HASHES = 256
 _MAX_PENDING_VOICE_RESOURCE_LOOKUPS = 32
+_MAX_PENDING_VOICE_TURNS = 32
+_MAX_RETIRED_PENDING_VOICE_TURNS = 256
+_PENDING_VOICE_TURN_RETRY_WINDOW = timedelta(hours=2)
+_PENDING_SAFETY_VOICE_TURN_RETRY_WINDOW = timedelta(days=7)
+
+
+class VoicePendingTurnCapacityError(ValueError):
+    """Raised when a thread cannot retain another unresolved voice turn."""
+
+
+class VoicePendingTurnHandleBusyError(ValueError):
+    """Raised when one browser retry handle already owns a pending turn."""
+
+
+class VoicePendingTurnRetiredError(ValueError):
+    """Raised when a retry references a safely retired voice turn."""
+
+
+@dataclass(frozen=True, slots=True)
+class VoicePendingTurnRetirement:
+    """Privacy-safe summary of one persisted pending-turn cleanup."""
+
+    count: int = 0
+    safety_count: int = 0
+    max_age_seconds: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -910,9 +938,11 @@ class VoiceRuntimeFacade:
 
         async with self._lock_for(thread_id):
             state = await self._state_store.load_state(thread_id)
-            if state is None or not _voice_turn_hash_recorded(state, correlation_hash):
+            if state is None:
                 return None
             _validate_voice_turn_request_hash(state, correlation_hash, request_hash)
+            if not _voice_turn_hash_recorded(state, correlation_hash):
+                return None
             diagnostics = state.get("diagnostics", {})
             receipts = (
                 diagnostics.get("voice_recorded_turn_receipts", {})
@@ -963,15 +993,68 @@ class VoiceRuntimeFacade:
             state = await self._state_store.load_state(thread_id)
             if state is None:
                 return False
+            _validate_voice_turn_request_hash(state, correlation_hash, request_hash)
             pending_turn = _pending_voice_turn(state, correlation_hash)
             if pending_turn is None:
                 return False
-            _validate_voice_turn_request_hash(
-                state,
-                correlation_hash,
-                request_hash,
-            )
             return pending_turn.get("safety_interruption_verified") is True
+
+    async def touch_pending_voice_retry_handle(
+        self,
+        *,
+        thread_id: str,
+        retry_handle_id: str,
+    ) -> None:
+        """Renew a browser handle's ownership of its pending voice retries."""
+
+        async with self._lock_for(thread_id):
+            state = await self._state_store.load_state(thread_id)
+            if state is None:
+                return
+            diagnostics = state.get("diagnostics", {})
+            if not isinstance(diagnostics, Mapping):
+                return
+
+            updated_diagnostics = dict(diagnostics)
+            retirement = _retire_expired_pending_voice_turns(
+                updated_diagnostics,
+                now=_pending_voice_turn_now(),
+            )
+            pending_turns = _pending_voice_turns(updated_diagnostics)
+            updated_turns = dict(pending_turns)
+            touched = False
+            timestamp = iso_now()
+            for correlation_hash, pending_turn in pending_turns.items():
+                if not isinstance(pending_turn, Mapping):
+                    continue
+                if pending_turn.get("retry_handle_id") != retry_handle_id:
+                    continue
+                updated_turn = dict(pending_turn)
+                updated_turn["retry_handle_seen_at"] = timestamp
+                updated_turns[str(correlation_hash)] = updated_turn
+                touched = True
+            if not touched and not retirement.count:
+                return
+
+            if touched:
+                updated_diagnostics["voice_pending_turns"] = updated_turns
+            updated_state = cast(AgentState, dict(state))
+            updated_state["diagnostics"] = updated_diagnostics
+            await self._state_store.save_state(thread_id, updated_state)
+            if retirement.count:
+                trace_event(
+                    VOICE_PENDING_TURNS_RETIRED,
+                    {
+                        "voice_runtime": "openai_realtime",
+                        "reason": "retry_window_expired",
+                        "retired_count": retirement.count,
+                        "retired_safety_count": retirement.safety_count,
+                        "retired_non_safety_count": (
+                            retirement.count - retirement.safety_count
+                        ),
+                        "max_age_seconds": retirement.max_age_seconds,
+                    },
+                )
 
     # ── record_voice_turn ────────────────────────────────────────
 
@@ -995,6 +1078,7 @@ class VoiceRuntimeFacade:
         llm_client: BaseLLMClient | None = None,
         correlation_hash: str | None = None,
         request_hash: str | None = None,
+        retry_handle_id: str | None = None,
         safety_assessment: CrisisAssessment | None = None,
     ) -> AgentState:
         """Persist a finalized voice turn without running the text agent."""
@@ -1040,6 +1124,64 @@ class VoiceRuntimeFacade:
                 if prior_state is not None and correlation_hash is not None
                 else None
             )
+            if (
+                prior_state is not None
+                and correlation_hash is not None
+                and request_hash is not None
+            ):
+                _validate_voice_turn_request_hash(
+                    prior_state,
+                    correlation_hash,
+                    request_hash,
+                )
+                retention_diagnostics = dict(prior_state.get("diagnostics", {}) or {})
+                retirement = _retire_expired_pending_voice_turns(
+                    retention_diagnostics,
+                    now=_pending_voice_turn_now(),
+                )
+                if retirement.count:
+                    retained_prior_state = cast(AgentState, dict(prior_state))
+                    retained_prior_state["diagnostics"] = retention_diagnostics
+                    await self._state_store.save_state(thread_id, retained_prior_state)
+                    prior_state = retained_prior_state
+                    trace_event(
+                        VOICE_PENDING_TURNS_RETIRED,
+                        {
+                            "voice_runtime": "openai_realtime",
+                            "reason": "retry_window_expired",
+                            "retired_count": retirement.count,
+                            "retired_safety_count": retirement.safety_count,
+                            "retired_non_safety_count": (
+                                retirement.count - retirement.safety_count
+                            ),
+                            "max_age_seconds": retirement.max_age_seconds,
+                        },
+                    )
+                _validate_voice_turn_request_hash(
+                    prior_state,
+                    correlation_hash,
+                    request_hash,
+                )
+                pending_turn = _pending_voice_turn(prior_state, correlation_hash)
+                if pending_turn is None:
+                    if (
+                        len(_pending_voice_turns(retention_diagnostics))
+                        >= _MAX_PENDING_VOICE_TURNS
+                    ):
+                        raise VoicePendingTurnCapacityError(
+                            "The thread has too many unresolved voice turns. "
+                            "Retry an existing turn before recording another."
+                        )
+                    if retry_handle_id is not None and any(
+                        pending_turn.get("retry_handle_id") == retry_handle_id
+                        for pending_turn in _pending_voice_turns(
+                            retention_diagnostics
+                        ).values()
+                    ):
+                        raise VoicePendingTurnHandleBusyError(
+                            "This voice connection has an unresolved turn. "
+                            "Retry it before recording another."
+                        )
             if pending_turn is not None:
                 pending_turn_instance_id = pending_turn.get("turn_instance_id")
                 legacy_request_hash = pending_turn.get("request_hash")
@@ -1064,7 +1206,23 @@ class VoiceRuntimeFacade:
                         correlation_hash,
                         request_hash,
                     )
-                state = prior_state
+                if retry_handle_id is not None and any(
+                    candidate_correlation_hash != correlation_hash
+                    and candidate_turn.get("retry_handle_id") == retry_handle_id
+                    for candidate_correlation_hash, candidate_turn in _pending_voice_turns(
+                        dict(prior_state.get("diagnostics", {}) or {})
+                    ).items()
+                ):
+                    raise VoicePendingTurnHandleBusyError(
+                        "This voice connection has an unresolved turn. "
+                        "Retry it before recording another."
+                    )
+                state = cast(AgentState, dict(prior_state))
+                _touch_pending_voice_turn(
+                    state,
+                    correlation_hash=correlation_hash,
+                    retry_handle_id=retry_handle_id,
+                )
                 prior_message_count = int(pending_turn.get("prior_message_count") or 0)
                 safety_prior_state = cast(
                     AgentState,
@@ -1119,9 +1277,8 @@ class VoiceRuntimeFacade:
                 turn_response_style = transition.metadata.response_style
                 if correlation_hash is not None and request_hash is not None:
                     diagnostics = dict(state.get("diagnostics", {}) or {})
-                    pending_turns = dict(
-                        diagnostics.get("voice_pending_turns", {}) or {}
-                    )
+                    pending_turns = _pending_voice_turns(diagnostics)
+                    timestamp = iso_now()
                     pending_turns[correlation_hash] = {
                         "request_hash": request_hash,
                         "prior_message_count": len(
@@ -1133,6 +1290,16 @@ class VoiceRuntimeFacade:
                         "safety_interruption_verified": (
                             outcome == "safety_interrupted"
                             and safety_assessment is not None
+                        ),
+                        "created_at": timestamp,
+                        "last_attempted_at": timestamp,
+                        **(
+                            {
+                                "retry_handle_id": retry_handle_id,
+                                "retry_handle_seen_at": timestamp,
+                            }
+                            if retry_handle_id is not None
+                            else {}
                         ),
                     }
                     diagnostics["voice_pending_turns"] = pending_turns
@@ -1334,6 +1501,161 @@ def _pending_voice_turn(
     return pending_turn if isinstance(pending_turn, Mapping) else None
 
 
+def _pending_voice_turns(diagnostics: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return the valid pending-turn records from mutable diagnostics."""
+
+    raw_pending_turns = diagnostics.get("voice_pending_turns", {})
+    if not isinstance(raw_pending_turns, Mapping):
+        return {}
+    return {
+        str(correlation_hash): dict(pending_turn)
+        for correlation_hash, pending_turn in raw_pending_turns.items()
+        if isinstance(correlation_hash, str) and isinstance(pending_turn, Mapping)
+    }
+
+
+def _touch_pending_voice_turn(
+    state: AgentState,
+    *,
+    correlation_hash: str | None,
+    retry_handle_id: str | None,
+) -> None:
+    """Record a retry handle's latest observation without changing turn identity."""
+
+    if correlation_hash is None:
+        return
+    diagnostics = dict(state.get("diagnostics", {}) or {})
+    pending_turns = _pending_voice_turns(diagnostics)
+    pending_turn = pending_turns.get(correlation_hash)
+    if pending_turn is None:
+        return
+    if retry_handle_id is not None:
+        pending_turn["retry_handle_id"] = retry_handle_id
+        pending_turn["retry_handle_seen_at"] = iso_now()
+    pending_turn["last_attempted_at"] = iso_now()
+    pending_turns[correlation_hash] = pending_turn
+    diagnostics["voice_pending_turns"] = pending_turns
+    state["diagnostics"] = diagnostics
+
+
+def _pending_voice_turn_now() -> datetime:
+    """Return the clock used for pending voice-turn retention decisions."""
+
+    return datetime.now(UTC)
+
+
+def _retire_expired_pending_voice_turns(
+    diagnostics: dict[str, Any],
+    *,
+    now: datetime,
+) -> VoicePendingTurnRetirement:
+    """Retire stale pending turns and retain bounded duplicate-suppression tombstones."""
+
+    pending_turns = _pending_voice_turns(diagnostics)
+    retired_turns = _retired_pending_voice_turns(diagnostics)
+    retired_count = 0
+    retired_safety_count = 0
+    max_age_seconds = 0
+
+    for correlation_hash, pending_turn in tuple(pending_turns.items()):
+        created_at = _pending_turn_timestamp(pending_turn.get("created_at"), now)
+        pending_turn.setdefault("created_at", _timestamp_string(created_at))
+        pending_turn.setdefault("last_attempted_at", _timestamp_string(created_at))
+        is_safety_turn = pending_turn.get("safety_interruption_verified") is True
+        retry_window = (
+            _PENDING_SAFETY_VOICE_TURN_RETRY_WINDOW
+            if is_safety_turn
+            else _PENDING_VOICE_TURN_RETRY_WINDOW
+        )
+        reference_time = (
+            created_at
+            if is_safety_turn
+            else _pending_turn_timestamp(
+                pending_turn.get("retry_handle_seen_at")
+                or pending_turn.get("last_attempted_at"),
+                created_at,
+            )
+        )
+        age = now - reference_time
+        if age < retry_window:
+            pending_turns[correlation_hash] = pending_turn
+            continue
+
+        pending_turns.pop(correlation_hash, None)
+        retired_turns[correlation_hash] = {
+            "request_hash": pending_turn.get("request_hash"),
+            "retired_at": _timestamp_string(now),
+        }
+        retired_count += 1
+        retired_safety_count += int(is_safety_turn)
+        max_age_seconds = max(max_age_seconds, max(0, int(age.total_seconds())))
+
+    if pending_turns:
+        diagnostics["voice_pending_turns"] = pending_turns
+    else:
+        diagnostics.pop("voice_pending_turns", None)
+    _store_bounded_retired_pending_voice_turns(diagnostics, retired_turns, now=now)
+    return VoicePendingTurnRetirement(
+        count=retired_count,
+        safety_count=retired_safety_count,
+        max_age_seconds=max_age_seconds,
+    )
+
+
+def _retired_pending_voice_turns(
+    diagnostics: Mapping[str, Any],
+) -> dict[str, dict[str, Any]]:
+    """Return valid retired-turn tombstones from diagnostics."""
+
+    raw_retired_turns = diagnostics.get("voice_retired_pending_turns", {})
+    if not isinstance(raw_retired_turns, Mapping):
+        return {}
+    return {
+        str(correlation_hash): dict(tombstone)
+        for correlation_hash, tombstone in raw_retired_turns.items()
+        if isinstance(correlation_hash, str) and isinstance(tombstone, Mapping)
+    }
+
+
+def _store_bounded_retired_pending_voice_turns(
+    diagnostics: dict[str, Any],
+    retired_turns: dict[str, dict[str, Any]],
+    *,
+    now: datetime,
+) -> None:
+    """Store only the newest duplicate-suppression tombstones."""
+
+    if not retired_turns:
+        diagnostics.pop("voice_retired_pending_turns", None)
+        return
+    retained = sorted(
+        retired_turns.items(),
+        key=lambda item: _pending_turn_timestamp(item[1].get("retired_at"), now),
+        reverse=True,
+    )[:_MAX_RETIRED_PENDING_VOICE_TURNS]
+    diagnostics["voice_retired_pending_turns"] = dict(retained)
+
+
+def _pending_turn_timestamp(value: object, fallback: datetime) -> datetime:
+    """Parse a persisted UTC timestamp, falling back safely for legacy records."""
+
+    if not isinstance(value, str):
+        return fallback
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return fallback
+    if parsed.tzinfo is None:
+        return fallback
+    return parsed.astimezone(UTC)
+
+
+def _timestamp_string(value: datetime) -> str:
+    """Serialize a UTC datetime in the state-store timestamp format."""
+
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
 def _validate_voice_turn_request_hash(
     state: Mapping[str, Any],
     correlation_hash: str,
@@ -1355,6 +1677,15 @@ def _validate_voice_turn_request_hash(
         )
     if isinstance(existing, str) and existing != request_hash:
         raise ValueError("client_turn_id was already used for a different voice turn")
+    retired_turn = _retired_pending_voice_turns(diagnostics).get(correlation_hash)
+    if retired_turn is None:
+        return
+    retired_request_hash = retired_turn.get("request_hash")
+    if isinstance(retired_request_hash, str) and retired_request_hash != request_hash:
+        raise ValueError("client_turn_id was already used for a different voice turn")
+    raise VoicePendingTurnRetiredError(
+        "The retry window for this voice turn has expired. Start a new turn instead."
+    )
 
 
 __all__ = ["VoiceRuntimeFacade"]

@@ -291,6 +291,58 @@ test("records realtime voice turns with tool metadata", async () => {
   });
 });
 
+test("keeps a pending turn associated with its retry handle", async () => {
+  const captured = [];
+  globalThis.fetch = async (url, init) => {
+    captured.push({
+      url: String(url),
+      body: JSON.parse(String(init.body)),
+    });
+    return new Response(JSON.stringify(null), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+
+  await api.recordRealtimeVoiceTurn({
+    threadId: "voice-thread",
+    clientTurnId: "client-turn-1",
+    userText: "current guidance",
+    assistantText: "verified answer",
+    memoryMode: "persistent",
+    retryHandleId: "retry-handle-1",
+  });
+  await api.heartbeatRealtimeVoiceRetryHandle({
+    threadId: "voice-thread",
+    memoryMode: "persistent",
+    retryHandleId: "retry-handle-1",
+  });
+
+  assert.deepEqual(captured, [
+    {
+      url: "http://backend.test/api/voice/realtime/turn",
+      body: {
+        thread_id: "voice-thread",
+        user_text: "current guidance",
+        assistant_text: "verified answer",
+        memory_mode: "persistent",
+        client_turn_id: "client-turn-1",
+        tool_calls: [],
+        outcome: "completed",
+        retry_handle_id: "retry-handle-1",
+      },
+    },
+    {
+      url: "http://backend.test/api/voice/realtime/retry-handle/heartbeat",
+      body: {
+        thread_id: "voice-thread",
+        memory_mode: "persistent",
+        retry_handle_id: "retry-handle-1",
+      },
+    },
+  ]);
+});
+
 test("forwards abort signals to realtime voice tool requests", async () => {
   let capturedSignal;
   let capturedBody = {};

@@ -162,6 +162,7 @@ class VoiceTurnRecordRequest(BaseModel):
     assistant_text: str = ""
     memory_mode: ApiMemoryMode | None = None
     client_turn_id: str | None = Field(default=None, min_length=1, max_length=128)
+    retry_handle_id: str | None = Field(default=None, min_length=1, max_length=128)
     outcome: Literal["completed", "connection_interrupted", "safety_interrupted"] = (
         "completed"
     )
@@ -198,6 +199,14 @@ class VoiceEndSessionRequest(BaseModel):
             "as usual."
         ),
     )
+
+
+class VoicePendingTurnRetryHandleRequest(BaseModel):
+    """POST /api/voice/realtime/retry-handle/heartbeat request body."""
+
+    thread_id: str = Field(min_length=1)
+    memory_mode: ApiMemoryMode | None = None
+    retry_handle_id: str = Field(min_length=1, max_length=128)
 
 
 class VoiceSafetyTranscriptEntry(BaseModel):

@@ -1,8 +1,10 @@
 import {
+  ApiError,
   checkRealtimeVoiceSafety,
   createRealtimeVoiceSession,
   endRealtimeVoiceSession,
   executeRealtimeVoiceTool,
+  heartbeatRealtimeVoiceRetryHandle,
   recordRealtimeVoiceTurn,
   type RealtimeVoiceEndSessionResponse,
   type RealtimeVoiceSessionResponse,
@@ -110,6 +112,11 @@ const FOLLOW_UP_RESPONSE_TIMEOUT_MS = 10_000;
 const VOICE_TOOL_EXECUTION_TIMEOUT_MS = 30_000;
 const VOICE_SAFETY_REQUEST_TIMEOUT_MS = 10_000;
 const VOICE_PERSISTENCE_REQUEST_TIMEOUT_MS = 30_000;
+const VOICE_RETRY_HANDLE_HEARTBEAT_MS = 5 * 60_000;
+
+function createRetryHandleId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+}
 
 export async function connectRealtimeVoiceSession(
   options: RealtimeVoiceSessionOptions
@@ -122,6 +129,7 @@ export async function connectRealtimeVoiceSession(
   let safetyInterrupted = false;
   let safetyGenerationActive = true;
   const safetyConnectionToken = Symbol("realtime-voice-connection");
+  const retryHandleId = createRetryHandleId();
   const disconnectCoordinator = new RealtimeVoiceDisconnectCoordinator();
 
   const handledCallIds = new Set<string>();
@@ -136,6 +144,7 @@ export async function connectRealtimeVoiceSession(
   >();
   let priorMessageCount = 0;
   let pendingTurnRecording: Promise<void> | null = null;
+  let retryHandleHeartbeat: ReturnType<typeof setInterval> | null = null;
   const pendingSafetyRequests = new Map<
     string,
     {
@@ -147,6 +156,25 @@ export async function connectRealtimeVoiceSession(
 
   const setStatus = (status: RealtimeVoiceConnectionStatus) => {
     options.onStatus?.(status);
+  };
+
+  const startRetryHandleHeartbeat = () => {
+    if (retryHandleHeartbeat) return;
+    const heartbeat = () => {
+      void heartbeatRealtimeVoiceRetryHandle({
+        threadId: options.threadId,
+        memoryMode: options.memoryMode,
+        retryHandleId,
+      }).catch(() => undefined);
+    };
+    heartbeat();
+    retryHandleHeartbeat = setInterval(heartbeat, VOICE_RETRY_HANDLE_HEARTBEAT_MS);
+  };
+
+  const stopRetryHandleHeartbeat = () => {
+    if (!retryHandleHeartbeat) return;
+    clearInterval(retryHandleHeartbeat);
+    retryHandleHeartbeat = null;
   };
 
   const markTransportClosed = () => {
@@ -199,6 +227,7 @@ export async function connectRealtimeVoiceSession(
         options.onReadyToSpeak?.(false);
         setStatus("disconnected");
       } finally {
+        if (!finalize || finalized) stopRetryHandleHeartbeat();
         disconnecting = false;
       }
     });
@@ -469,6 +498,7 @@ export async function connectRealtimeVoiceSession(
                 toolCalls: turn.toolCalls,
                 outcome: turn.outcome,
                 interruptionToken: turn.interruptionToken,
+                retryHandleId,
               }),
               signal: abortController.signal,
             });
@@ -477,6 +507,9 @@ export async function connectRealtimeVoiceSession(
           }
         } catch (error) {
           turnTracker.recordingFailed(turn.clientTurnId);
+          if (!(error instanceof ApiError) || error.status >= 500) {
+            startRetryHandleHeartbeat();
+          }
           const normalized =
             error instanceof Error
               ? error
@@ -489,6 +522,7 @@ export async function connectRealtimeVoiceSession(
         options.onTurnRecorded?.(response);
         turn = turnTracker.markNextRecordableTurn();
       }
+      stopRetryHandleHeartbeat();
     })();
     pendingTurnRecording = recording;
     onRealtimeVoiceTurnRecordingSettled(recording, (settledRecording) => {

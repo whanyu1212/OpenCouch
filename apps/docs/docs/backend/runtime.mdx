@@ -34,6 +34,16 @@ through `run_turn` / `run_turn_stream`; finalized Realtime transcripts
 are recorded through `record_voice_turn(...)`, and persistent voice
 sessions end through the same `end_session(...)` summarization path as
 text. The 20-min inactivity sweeper remains text-session oriented.
+
+Failed transcript finalizations retain a bounded retry marker keyed by the
+OpenCouch client turn ID and request hash. The browser renews a retained retry
+handle while it remains available. Non-safety retries expire after two hours
+without that renewal; verified safety interruptions have a seven-day retry
+window. Expired markers become bounded tombstones, so a stale client turn ID
+cannot be replayed as a new transcript, and new turns are rejected when a
+retry handle already owns a pending turn or a thread already holds 32 protected
+pending markers.
+
 See [Voice](/docs/voice) for the full picture.
 :::
 

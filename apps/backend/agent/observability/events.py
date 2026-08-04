@@ -17,6 +17,7 @@ VOICE_RESPONSE_FINALIZED = "voice.response.finalized"
 VOICE_TURN_COMPLETION_METADATA_PERSIST_FAILED = (
     "voice.turn.completion_metadata_persist_failed"
 )
+VOICE_PENDING_TURNS_RETIRED = "voice.pending_turns.retired"
 VOICE_SAFETY_INTERRUPTION_DECIDED = "voice.safety_interruption.decided"
 VOICE_SAFETY_INTERRUPTED_TURN_RECORDED = "voice.safety_interrupted_turn.recorded"
 VOICE_SAFETY_RESOURCES_RESOLVED = "voice.safety_resources.resolved"
