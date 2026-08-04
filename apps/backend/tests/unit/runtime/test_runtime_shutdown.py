@@ -143,7 +143,9 @@ async def test_shutdown_times_out_a_cancelled_stuck_stage_and_continues(
         asyncio.CancelledError,
         TimeoutError,
     ]
-    assert events[-6:] == [
+    assert events == [
+        "background_tasks:start",
+        "background_tasks:done",
         "active_sessions:start",
         "active_sessions:done",
         "voice:start",

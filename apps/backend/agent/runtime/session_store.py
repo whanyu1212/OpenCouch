@@ -46,6 +46,7 @@ class TextSessionStore:
 
         self._config = config
         self._sessions: dict[str, Any] = {}
+        self._failed_close_sessions: list[Any] = []
         self._engine: Any | None = None
 
         if config.backend == "sqlalchemy":
@@ -170,6 +171,7 @@ class TextSessionStore:
                 try:
                     await self._close_session(session)
                 except Exception:
+                    self._failed_close_sessions.append(session)
                     logger.warning(
                         "TextSessionStore: transient history session close failed; "
                         "preserving the history outcome.",
@@ -228,6 +230,16 @@ class TextSessionStore:
             try:
                 await self.evict_thread(thread_id)
             except BaseException as exc:
+                if first_failure is None:
+                    first_failure = exc
+
+        failed_close_sessions = self._failed_close_sessions
+        self._failed_close_sessions = []
+        for session in failed_close_sessions:
+            try:
+                await self._close_session(session)
+            except BaseException as exc:
+                self._failed_close_sessions.append(session)
                 if first_failure is None:
                     first_failure = exc
 

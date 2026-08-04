@@ -291,6 +291,38 @@ async def test_uncached_history_read_preserves_result_when_close_fails(
 
 
 @pytest.mark.asyncio
+async def test_uncached_history_read_retries_failed_close_during_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failed transient cleanup should be retried during store shutdown."""
+
+    class _CloseFailingSession:
+        def __init__(self) -> None:
+            self.close_attempts = 0
+
+        async def get_items(self, *, limit: int | None = None) -> list[dict[str, str]]:
+            return [{"role": "user", "content": "hello"}]
+
+        async def close(self) -> None:
+            self.close_attempts += 1
+            if self.close_attempts == 1:
+                raise RuntimeError("close failed")
+
+    store = TextSessionStore(TextSessionStoreConfig())
+    session = _CloseFailingSession()
+    monkeypatch.setattr(store, "_create_session", lambda _thread_id: session)
+
+    await store.get_history("thread-1", cache=False)
+
+    assert store._failed_close_sessions == [session]  # noqa: SLF001
+
+    await store.aclose()
+
+    assert session.close_attempts == 2
+    assert store._failed_close_sessions == []  # noqa: SLF001
+
+
+@pytest.mark.asyncio
 async def test_uncached_history_read_preserves_read_failure_when_close_fails(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,

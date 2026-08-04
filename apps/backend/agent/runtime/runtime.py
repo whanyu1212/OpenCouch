@@ -102,26 +102,35 @@ async def _run_shutdown_stage(
     task = asyncio.create_task(invoke(), name=f"opencouch-shutdown:{name}")
     cancellation: asyncio.CancelledError | None = None
     deadline = asyncio.get_running_loop().time() + _SHUTDOWN_STAGE_TIMEOUT_SECONDS
+    timeout_failure: TimeoutError | None = None
     while True:
         if task.done():
-            failure = task.result()
+            try:
+                task_failure = task.result()
+            except BaseException as exc:
+                task_failure = exc
+            failure = timeout_failure or task_failure
             break
         try:
-            failure = await asyncio.wait_for(
-                asyncio.shield(task),
-                timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
-            )
+            if timeout_failure is None:
+                failure = await asyncio.wait_for(
+                    asyncio.shield(task),
+                    timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
+                )
+            else:
+                await asyncio.shield(task)
+                continue
         except asyncio.CancelledError as exc:
             if cancellation is None:
                 cancellation = exc
             continue
         except TimeoutError:
             task.cancel()
-            task.add_done_callback(_consume_shutdown_task_result)
-            failure = TimeoutError(
+            timeout_failure = TimeoutError(
                 f"PersistentAgentRuntime shutdown stage {name!r} timed out after "
                 f"{_SHUTDOWN_STAGE_TIMEOUT_SECONDS} seconds."
             )
+            continue
         break
 
     if failure is not None:
@@ -132,15 +141,6 @@ async def _run_shutdown_stage(
             exc_info=(type(failure), failure, failure.__traceback__),
         )
     return failure, cancellation
-
-
-def _consume_shutdown_task_result(task: asyncio.Task[BaseException | None]) -> None:
-    """Retrieve an abandoned timed-out stage result to avoid task warnings."""
-
-    try:
-        task.result()
-    except BaseException:
-        pass
 
 
 @dataclass(slots=True)
