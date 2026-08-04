@@ -83,12 +83,14 @@ from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
 
+_SHUTDOWN_STAGE_TIMEOUT_SECONDS = 30.0
+
 
 async def _run_shutdown_stage(
     name: str,
     operation: Callable[[], Awaitable[None]],
 ) -> tuple[BaseException | None, asyncio.CancelledError | None]:
-    """Run one shutdown stage to completion despite caller cancellation."""
+    """Run one shutdown stage despite caller cancellation, with a deadline."""
 
     async def invoke() -> BaseException | None:
         try:
@@ -99,13 +101,27 @@ async def _run_shutdown_stage(
 
     task = asyncio.create_task(invoke(), name=f"opencouch-shutdown:{name}")
     cancellation: asyncio.CancelledError | None = None
+    deadline = asyncio.get_running_loop().time() + _SHUTDOWN_STAGE_TIMEOUT_SECONDS
     while True:
+        if task.done():
+            failure = task.result()
+            break
         try:
-            failure = await asyncio.shield(task)
+            failure = await asyncio.wait_for(
+                asyncio.shield(task),
+                timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
+            )
         except asyncio.CancelledError as exc:
             if cancellation is None:
                 cancellation = exc
             continue
+        except TimeoutError:
+            task.cancel()
+            task.add_done_callback(_consume_shutdown_task_result)
+            failure = TimeoutError(
+                f"PersistentAgentRuntime shutdown stage {name!r} timed out after "
+                f"{_SHUTDOWN_STAGE_TIMEOUT_SECONDS} seconds."
+            )
         break
 
     if failure is not None:
@@ -116,6 +132,15 @@ async def _run_shutdown_stage(
             exc_info=(type(failure), failure, failure.__traceback__),
         )
     return failure, cancellation
+
+
+def _consume_shutdown_task_result(task: asyncio.Task[BaseException | None]) -> None:
+    """Retrieve an abandoned timed-out stage result to avoid task warnings."""
+
+    try:
+        task.result()
+    except BaseException:
+        pass
 
 
 @dataclass(slots=True)

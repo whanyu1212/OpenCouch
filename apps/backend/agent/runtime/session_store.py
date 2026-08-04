@@ -106,7 +106,11 @@ class TextSessionStore:
         if session is None:
             return
 
-        await self._close_session(session)
+        try:
+            await self._close_session(session)
+        except BaseException:
+            self._sessions[normalized_thread_id] = session
+            raise
 
     def turn_session_for_thread(
         self,

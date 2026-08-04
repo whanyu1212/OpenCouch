@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from agent.runtime import runtime as runtime_module
 from agent.runtime.runtime import PersistentAgentRuntime
 
 
@@ -106,6 +107,45 @@ async def test_shutdown_skips_optional_finalization_when_disabled() -> None:
     assert events == [
         "background_tasks:start",
         "background_tasks:done",
+        "voice:start",
+        "voice:done",
+        "resources:start",
+        "resources:done",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_shutdown_times_out_a_cancelled_stuck_stage_and_continues(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stuck stage must not prevent later runtime resources from closing."""
+
+    events: list[str] = []
+    started = asyncio.Event()
+    release = asyncio.Event()
+    runtime = _shutdown_runtime(
+        events,
+        cancellation_stage="background_tasks",
+        cancellation_started=started,
+        cancellation_release=release,
+    )
+    monkeypatch.setattr(runtime_module, "_SHUTDOWN_STAGE_TIMEOUT_SECONDS", 0.01)
+
+    shutdown_task = asyncio.create_task(runtime.__aexit__(None, None, None))
+    await started.wait()
+    shutdown_task.cancel()
+
+    with pytest.raises(BaseExceptionGroup) as exc_info:
+        await shutdown_task
+
+    assert started.is_set()
+    assert [type(error) for error in exc_info.value.exceptions] == [
+        asyncio.CancelledError,
+        TimeoutError,
+    ]
+    assert events[-6:] == [
+        "active_sessions:start",
+        "active_sessions:done",
         "voice:start",
         "voice:done",
         "resources:start",

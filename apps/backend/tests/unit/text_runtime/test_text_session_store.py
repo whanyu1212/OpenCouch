@@ -208,6 +208,34 @@ async def test_evict_thread_awaits_async_sdk_close() -> None:
 
 
 @pytest.mark.asyncio
+async def test_evict_thread_retains_session_when_close_fails() -> None:
+    """A failed close should remain available for a later cleanup retry."""
+
+    class _CloseFailingSession:
+        def __init__(self) -> None:
+            self.close_attempts = 0
+
+        async def close(self) -> None:
+            self.close_attempts += 1
+            if self.close_attempts == 1:
+                raise RuntimeError("close failed")
+
+    store = TextSessionStore(TextSessionStoreConfig())
+    session = _CloseFailingSession()
+    store._sessions["thread-1"] = session  # noqa: SLF001
+
+    with pytest.raises(RuntimeError, match="close failed"):
+        await store.evict_thread("thread-1")
+
+    assert store._sessions["thread-1"] is session  # noqa: SLF001
+
+    await store.evict_thread("thread-1")
+
+    assert session.close_attempts == 2
+    assert store._sessions == {}  # noqa: SLF001
+
+
+@pytest.mark.asyncio
 async def test_uncached_history_read_awaits_async_sdk_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
