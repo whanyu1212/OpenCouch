@@ -61,9 +61,7 @@ class TextSessionStore:
     def session_for_thread(self, thread_id: str) -> Any:
         """Return the SDK session object for a thread."""
 
-        normalized_thread_id = thread_id.strip()
-        if not normalized_thread_id:
-            raise ValueError("thread_id must not be empty.")
+        normalized_thread_id = self._normalize_thread_id(thread_id)
 
         existing = self._sessions.get(normalized_thread_id)
         if existing is not None:
@@ -94,6 +92,18 @@ class TextSessionStore:
 
         self._sessions[normalized_thread_id] = session
         return session
+
+    def evict_thread(self, thread_id: str) -> None:
+        """Evict one cached SDK session without deleting its history."""
+
+        normalized_thread_id = self._normalize_thread_id(thread_id)
+        session = self._sessions.pop(normalized_thread_id, None)
+        if session is None:
+            return
+
+        close = getattr(session, "close", None)
+        if callable(close):
+            close()
 
     def turn_session_for_thread(
         self,
@@ -144,10 +154,13 @@ class TextSessionStore:
         return messages_from_sdk_session_items(items)
 
     async def clear_thread(self, thread_id: str) -> None:
-        """Clear the SDK session for a thread."""
+        """Clear and evict the SDK session for a thread."""
 
         session = self.session_for_thread(thread_id)
-        await session.clear_session()
+        try:
+            await session.clear_session()
+        finally:
+            self.evict_thread(thread_id)
 
     async def ensure_turn_recorded(
         self,
@@ -186,15 +199,32 @@ class TextSessionStore:
     async def aclose(self) -> None:
         """Close cached SDK session resources."""
 
-        for session in self._sessions.values():
-            close = getattr(session, "close", None)
-            if close is not None:
-                close()
-        self._sessions.clear()
+        first_failure: BaseException | None = None
+        for thread_id in tuple(self._sessions):
+            try:
+                self.evict_thread(thread_id)
+            except BaseException as exc:
+                if first_failure is None:
+                    first_failure = exc
 
         if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
+            try:
+                await self._engine.dispose()
+            except BaseException as exc:
+                if first_failure is None:
+                    first_failure = exc
+            finally:
+                self._engine = None
+
+        if first_failure is not None:
+            raise first_failure
+
+    @staticmethod
+    def _normalize_thread_id(thread_id: str) -> str:
+        normalized_thread_id = thread_id.strip()
+        if not normalized_thread_id:
+            raise ValueError("thread_id must not be empty.")
+        return normalized_thread_id
 
 
 def create_text_session_store(

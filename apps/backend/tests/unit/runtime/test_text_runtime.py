@@ -8,6 +8,7 @@ from agent.memory.modes import MemoryMode
 from agent.runtime import (
     OpenAITextRuntime,
     PersistentAgentRuntime,
+    RuntimeBehaviorConfig,
     RuntimePersistenceConfig,
     RuntimeStoragePaths,
 )
@@ -82,7 +83,88 @@ async def test_runtime_reset_clears_runtime_and_sdk_session_state(tmp_path) -> N
         await runtime.reset_thread("thread-1")
 
         assert await runtime.get_state("thread-1") is None
+        assert "thread-1" not in runtime._text_session_store._sessions  # noqa: SLF001
         assert await runtime._text_session_store.get_history("thread-1") == []
+
+
+@pytest.mark.asyncio
+async def test_successful_session_finalization_evicts_sdk_session_without_history_loss(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Finalization should release the cache while preserving SDK history."""
+
+    async with _runtime(
+        storage_paths=RuntimeStoragePaths(
+            text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
+        ),
+        persistence_config=RuntimePersistenceConfig(
+            thread_persistence_backend="memory",
+            text_session_backend="sqlite",
+            allow_legacy_sqlite=True,
+        ),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    ) as runtime:
+        assert runtime._text_session_store is not None
+        session = runtime._text_session_store.session_for_thread("thread-1")
+        await session.add_items([{"role": "user", "content": "hello"}])
+
+        async def fake_end_session(*args: object, **kwargs: object) -> None:
+            return None
+
+        monkeypatch.setattr(
+            runtime._session_lifecycle,
+            "end_session_unlocked",
+            fake_end_session,
+        )
+
+        await runtime._end_session_unlocked("thread-1")  # noqa: SLF001
+
+        replacement = runtime._text_session_store.session_for_thread("thread-1")
+        history = await runtime._text_session_store.get_history("thread-1")
+
+        assert replacement is not session
+        assert [message.content for message in history] == ["hello"]
+
+
+@pytest.mark.asyncio
+async def test_failed_session_finalization_keeps_sdk_session_for_retry(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed finalization must not evict the session needed for retry."""
+
+    async with _runtime(
+        storage_paths=RuntimeStoragePaths(
+            text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
+        ),
+        persistence_config=RuntimePersistenceConfig(
+            thread_persistence_backend="memory",
+            text_session_backend="sqlite",
+            allow_legacy_sqlite=True,
+        ),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    ) as runtime:
+        assert runtime._text_session_store is not None
+        session = runtime._text_session_store.session_for_thread("thread-1")
+
+        async def failing_end_session(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("finalization failed")
+
+        monkeypatch.setattr(
+            runtime._session_lifecycle,
+            "end_session_unlocked",
+            failing_end_session,
+        )
+
+        with pytest.raises(RuntimeError, match="finalization failed"):
+            await runtime._end_session_unlocked("thread-1")  # noqa: SLF001
+
+        assert runtime._text_session_store.session_for_thread("thread-1") is session
 
 
 @pytest.mark.asyncio

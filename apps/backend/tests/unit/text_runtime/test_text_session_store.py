@@ -85,7 +85,48 @@ async def test_clear_thread_removes_sdk_session_items(tmp_path) -> None:
 
         await store.clear_thread("thread-1")
 
+        assert "thread-1" not in store._sessions  # noqa: SLF001
         assert await store.get_history("thread-1") == []
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_evict_thread_releases_cache_without_deleting_history(tmp_path) -> None:
+    """Eviction should close the object while retaining persisted history."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(backend="sqlite", sqlite_path=tmp_path / "sessions.db")
+    )
+    try:
+        session = store.session_for_thread("thread-1")
+        await session.add_items([{"role": "user", "content": "hello"}])
+
+        store.evict_thread(" thread-1 ")
+
+        replacement = store.session_for_thread("thread-1")
+        history = await store.get_history("thread-1")
+    finally:
+        await store.aclose()
+
+    assert replacement is not session
+    assert [message.content for message in history] == ["hello"]
+
+
+@pytest.mark.asyncio
+async def test_evicting_many_threads_does_not_retain_session_objects(tmp_path) -> None:
+    """Historical threads should not make the in-process cache unbounded."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(backend="sqlite", sqlite_path=tmp_path / "sessions.db")
+    )
+    try:
+        for index in range(100):
+            thread_id = f"thread-{index}"
+            store.session_for_thread(thread_id)
+            store.evict_thread(thread_id)
+
+        assert store._sessions == {}  # noqa: SLF001
     finally:
         await store.aclose()
 
