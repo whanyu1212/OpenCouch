@@ -34,6 +34,56 @@ def test_interruption_proof_binds_trigger_identity_and_memory_mode() -> None:
     assert proof.risk_level == 3
 
 
+def test_interruption_proof_allows_expiry_only_for_authorized_retry() -> None:
+    now = 100.0
+    service = VoiceSafetyInterruptionProofService(
+        secret=b"test-secret",
+        ttl_seconds=1,
+        clock=lambda: now,
+    )
+    token = service.issue(
+        thread_id="thread-1",
+        client_turn_id="trigger-turn",
+        user_text="I might hurt myself.",
+        user_id="user-1",
+        memory_mode="persistent",
+        risk_level=3,
+    )
+    now = 102.0
+
+    with pytest.raises(InvalidVoiceSafetyInterruptionProof, match="expired proof"):
+        service.verify(
+            token,
+            thread_id="thread-1",
+            client_turn_id="trigger-turn",
+            user_text="I might hurt myself.",
+            user_id="user-1",
+            memory_mode="persistent",
+        )
+
+    proof = service.verify(
+        token,
+        thread_id="thread-1",
+        client_turn_id="trigger-turn",
+        user_text="I might hurt myself.",
+        user_id="user-1",
+        memory_mode="persistent",
+        allow_expired=True,
+    )
+
+    assert proof.risk_level == 3
+    with pytest.raises(InvalidVoiceSafetyInterruptionProof, match="mismatched proof"):
+        service.verify(
+            token,
+            thread_id="thread-1",
+            client_turn_id="trigger-turn",
+            user_text="Different text.",
+            user_id="user-1",
+            memory_mode="persistent",
+            allow_expired=True,
+        )
+
+
 @pytest.mark.parametrize(
     ("thread_id", "client_turn_id", "user_text", "user_id", "memory_mode"),
     [

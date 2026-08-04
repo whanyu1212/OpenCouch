@@ -950,6 +950,29 @@ class VoiceRuntimeFacade:
                 ),
             )
 
+    async def has_verified_pending_safety_interruption(
+        self,
+        *,
+        thread_id: str,
+        correlation_hash: str,
+        request_hash: str,
+    ) -> bool:
+        """Return whether an exact pending retry was previously safety-authorized."""
+
+        async with self._lock_for(thread_id):
+            state = await self._state_store.load_state(thread_id)
+            if state is None:
+                return False
+            pending_turn = _pending_voice_turn(state, correlation_hash)
+            if pending_turn is None:
+                return False
+            _validate_voice_turn_request_hash(
+                state,
+                correlation_hash,
+                request_hash,
+            )
+            return pending_turn.get("safety_interruption_verified") is True
+
     # ── record_voice_turn ────────────────────────────────────────
 
     @trace_span(
@@ -1107,6 +1130,10 @@ class VoiceRuntimeFacade:
                         if prior_state is not None
                         else 0,
                         "turn_instance_id": turn_instance_id,
+                        "safety_interruption_verified": (
+                            outcome == "safety_interrupted"
+                            and safety_assessment is not None
+                        ),
                     }
                     diagnostics["voice_pending_turns"] = pending_turns
                     state["diagnostics"] = diagnostics

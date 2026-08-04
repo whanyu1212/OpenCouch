@@ -84,6 +84,7 @@ class VoiceSafetyInterruptionProofService:
         user_text: str,
         user_id: str | None,
         memory_mode: str,
+        allow_expired: bool = False,
     ) -> VoiceSafetyInterruptionProof:
         """Validate a proof for its thread and identify the triggering turn."""
 
@@ -102,7 +103,9 @@ class VoiceSafetyInterruptionProofService:
         except Exception as exc:
             raise InvalidVoiceSafetyInterruptionProof("malformed proof") from exc
 
-        if payload.get("v") != 1 or expires_at < int(self._clock()):
+        if payload.get("v") != 1 or (
+            expires_at < int(self._clock()) and not allow_expired
+        ):
             raise InvalidVoiceSafetyInterruptionProof("expired proof")
         if (
             payload.get("thread") != _digest(thread_id)

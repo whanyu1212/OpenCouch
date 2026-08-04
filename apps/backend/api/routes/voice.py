@@ -198,6 +198,14 @@ async def record_voice_realtime_turn(
         safety_assessment = None
         if body.outcome == "safety_interrupted":
             try:
+                allow_expired_proof = (
+                    correlation_hash is not None
+                    and await selection.runtime.voice.has_verified_pending_safety_interruption(
+                        thread_id=body.thread_id,
+                        correlation_hash=correlation_hash,
+                        request_hash=request_hash,
+                    )
+                )
                 proof = _VOICE_SAFETY_PROOFS.verify(
                     body.interruption_token or "",
                     thread_id=body.thread_id,
@@ -205,6 +213,7 @@ async def record_voice_realtime_turn(
                     user_text=body.user_text,
                     user_id=body.user_id,
                     memory_mode=str(selection.memory_mode),
+                    allow_expired=allow_expired_proof,
                 )
             except InvalidVoiceSafetyInterruptionProof as exc:
                 raise HTTPException(
@@ -217,6 +226,16 @@ async def record_voice_realtime_turn(
                         ),
                     },
                 ) from exc
+            except ValueError as exc:
+                if "client_turn_id was already used" in str(exc):
+                    raise HTTPException(
+                        status_code=409,
+                        detail={
+                            "code": "voice_realtime_turn_idempotency_conflict",
+                            "message": str(exc),
+                        },
+                    ) from exc
+                raise
             safety_assessment = CrisisAssessment(
                 level=proof.risk_level,
                 confidence="high",

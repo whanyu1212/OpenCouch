@@ -23,6 +23,7 @@ from agent.observability.events import (
 )
 from agent.observability.recorder import InMemoryTraceRecorder
 from agent.runtime import PersistentAgentRuntime, RuntimeBehaviorConfig
+from agent.voice.safety_proof import VoiceSafetyInterruptionProofService
 from api.dependencies import get_llm_client
 from api.router import api_router
 from api.routes import voice as voice_routes
@@ -569,6 +570,87 @@ async def test_safety_interrupted_turn_retry_is_idempotent(
     ]
     assert len(audit_records) == 1
     assert llm.crisis_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_safety_interrupted_pending_retry_accepts_expired_proof(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    )
+    sdk_attempts = 0
+
+    async def fail_sdk_history_once(*args: Any, **kwargs: Any) -> None:
+        nonlocal sdk_attempts
+        sdk_attempts += 1
+        if sdk_attempts == 1:
+            raise RuntimeError("simulated retryable SDK history failure")
+
+    monkeypatch.setattr(
+        runtime.voice,
+        "_collaboration",
+        replace(
+            runtime.voice._collaboration,
+            ensure_sdk_turn_recorded=fail_sdk_history_once,
+        ),
+    )
+    now = 100.0
+    proofs = VoiceSafetyInterruptionProofService(
+        secret=b"expired-retry-test",
+        ttl_seconds=1,
+        clock=lambda: now,
+    )
+    monkeypatch.setattr(voice_routes, "_VOICE_SAFETY_PROOFS", proofs)
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    app.dependency_overrides[get_llm_client] = lambda: None
+    payload = {
+        "thread_id": "expired-proof-retry-thread",
+        "client_turn_id": "expired-proof-retry-turn",
+        "outcome": "safety_interrupted",
+        "user_text": "I might hurt myself.",
+    }
+    payload["interruption_token"] = proofs.issue(
+        thread_id=payload["thread_id"],
+        client_turn_id=payload["client_turn_id"],
+        user_text=payload["user_text"],
+        user_id=None,
+        memory_mode="persistent",
+        risk_level=3,
+    )
+
+    async with runtime:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            first = await client.post("/api/voice/realtime/turn", json=payload)
+            now = 102.0
+            retry = await client.post("/api/voice/realtime/turn", json=payload)
+            conflict = await client.post(
+                "/api/voice/realtime/turn",
+                json={**payload, "user_text": "Different text."},
+            )
+        history = await runtime.get_history(payload["thread_id"])
+
+    assert first.status_code == 500
+    assert retry.status_code == 200
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == (
+        "voice_realtime_turn_idempotency_conflict"
+    )
+    assert sdk_attempts == 2
+    assert [message.content for message in history] == [payload["user_text"]]
 
 
 @pytest.mark.asyncio
