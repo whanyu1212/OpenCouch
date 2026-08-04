@@ -565,6 +565,31 @@ class TestCrisisLogNode:
         assert "safety event capture failed" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_deterministic_audit_falls_back_for_legacy_backend(self) -> None:
+        class LegacyBackend:
+            def __init__(self) -> None:
+                self.records: list[CrisisLogRecord] = []
+
+            async def aappend(self, record: CrisisLogRecord) -> None:
+                self.records.append(record)
+
+        backend = LegacyBackend()
+        context = WorkflowContext(
+            llm_client=None,
+            memory_store=OpenCouchMemoryStore(),
+            crisis_log_backend=cast(Any, backend),
+            memory_mode=MemoryMode.LOCAL,
+        )
+        state = _build_crisis_state(level=3)
+        state["diagnostics"] = {"voice_crisis_audit_id": "voice-crisis:legacy-backend"}
+
+        await write_crisis_log(state, context, raise_on_failure=True)
+
+        assert [record.id for record in backend.records] == [
+            "voice-crisis:legacy-backend"
+        ]
+
+    @pytest.mark.asyncio
     async def test_voice_missed_crisis_deduplication_is_observable(self) -> None:
         backend = InMemoryCrisisLogBackend()
         runtime = _MockRuntime(crisis_log_backend=backend)

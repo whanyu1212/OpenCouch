@@ -222,8 +222,13 @@ async def write_crisis_log(
                 enabled_trace_context.runtime_mode if enabled_trace_context else None
             ),
         )
-        if isinstance(deterministic_audit_id, str) and deterministic_audit_id:
-            audit_recorded = await backend.aappend_once(record)
+        append_once = getattr(backend, "aappend_once", None)
+        if (
+            isinstance(deterministic_audit_id, str)
+            and deterministic_audit_id
+            and callable(append_once)
+        ):
+            audit_recorded = await append_once(record)
         else:
             await backend.aappend(record)
             audit_recorded = True
@@ -345,8 +350,13 @@ async def record_voice_missed_crisis(
                 enabled_trace_context.runtime_mode if enabled_trace_context else "voice"
             ),
         )
-        if isinstance(deterministic_audit_id, str) and deterministic_audit_id:
-            audit_recorded = await backend.aappend_once(record)
+        append_once = getattr(backend, "aappend_once", None)
+        if (
+            isinstance(deterministic_audit_id, str)
+            and deterministic_audit_id
+            and callable(append_once)
+        ):
+            audit_recorded = await append_once(record)
         else:
             await backend.aappend(record)
             audit_recorded = True
