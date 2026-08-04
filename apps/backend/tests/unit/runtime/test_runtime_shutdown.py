@@ -156,6 +156,39 @@ async def test_shutdown_times_out_a_cancelled_stuck_stage_and_continues(
 
 
 @pytest.mark.asyncio
+async def test_shutdown_stage_waits_for_timed_out_task_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Timed-out cleanup must settle before the next shutdown stage can run."""
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def operation() -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            await release.wait()
+            raise
+
+    monkeypatch.setattr(runtime_module, "_SHUTDOWN_STAGE_TIMEOUT_SECONDS", 0.01)
+    stage_task = asyncio.create_task(
+        runtime_module._run_shutdown_stage("resources", operation)
+    )
+    await started.wait()
+    await asyncio.sleep(0.02)
+
+    assert stage_task.done() is False
+
+    release.set()
+    failure, cancellation = await stage_task
+
+    assert isinstance(failure, TimeoutError)
+    assert cancellation is None
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "cancellation_stage",
     ["background_tasks", "active_sessions", "voice", "resources"],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import pytest
@@ -320,6 +321,29 @@ async def test_uncached_history_read_retries_failed_close_during_shutdown(
 
     assert session.close_attempts == 2
     assert store._failed_close_sessions == []  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_uncached_history_read_retains_session_when_close_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancelled transient cleanup should remain available for shutdown retry."""
+
+    class _CancellationCloseSession:
+        async def get_items(self, *, limit: int | None = None) -> list[dict[str, str]]:
+            return [{"role": "user", "content": "hello"}]
+
+        async def close(self) -> None:
+            raise asyncio.CancelledError()
+
+    store = TextSessionStore(TextSessionStoreConfig())
+    session = _CancellationCloseSession()
+    monkeypatch.setattr(store, "_create_session", lambda _thread_id: session)
+
+    with pytest.raises(asyncio.CancelledError):
+        await store.get_history("thread-1", cache=False)
+
+    assert store._failed_close_sessions == [session]  # noqa: SLF001
 
 
 @pytest.mark.asyncio

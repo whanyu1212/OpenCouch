@@ -90,7 +90,7 @@ async def _run_shutdown_stage(
     name: str,
     operation: Callable[[], Awaitable[None]],
 ) -> tuple[BaseException | None, asyncio.CancelledError | None]:
-    """Run one shutdown stage despite caller cancellation, with a deadline."""
+    """Run a shutdown stage despite caller cancellation and await timeout cleanup."""
 
     async def invoke() -> BaseException | None:
         try:
@@ -130,6 +130,8 @@ async def _run_shutdown_stage(
                 f"PersistentAgentRuntime shutdown stage {name!r} timed out after "
                 f"{_SHUTDOWN_STAGE_TIMEOUT_SECONDS} seconds."
             )
+            # asyncio cannot force-stop a task, so wait for cancellation before
+            # closing resources that the stage may still be using.
             continue
         break
 

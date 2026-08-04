@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from inspect import isawaitable
@@ -170,6 +171,9 @@ class TextSessionStore:
             if close_after_read:
                 try:
                     await self._close_session(session)
+                except asyncio.CancelledError:
+                    self._failed_close_sessions.append(session)
+                    raise
                 except Exception:
                     self._failed_close_sessions.append(session)
                     logger.warning(
