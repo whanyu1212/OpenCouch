@@ -48,6 +48,7 @@ class TextSessionStore:
         self._config = config
         self._sessions: dict[str, Any] = {}
         self._failed_close_sessions: list[Any] = []
+        self._session_lock = asyncio.Lock()
         self._engine: Any | None = None
 
         if config.backend == "sqlalchemy":
@@ -104,6 +105,12 @@ class TextSessionStore:
         """Evict one cached SDK session without deleting its history."""
 
         normalized_thread_id = self._normalize_thread_id(thread_id)
+        async with self._session_lock:
+            await self._evict_thread(normalized_thread_id)
+
+    async def _evict_thread(self, normalized_thread_id: str) -> None:
+        """Close one cached session while the caller owns ``_session_lock``."""
+
         session = self._sessions.pop(normalized_thread_id, None)
         if session is None:
             return
@@ -160,6 +167,17 @@ class TextSessionStore:
         """Materialize SDK session items as public transcript messages."""
 
         normalized_thread_id = self._normalize_thread_id(thread_id)
+        if (
+            not cache
+            and self._config.backend == "sqlite"
+            and str(self._config.sqlite_path) == ":memory:"
+        ):
+            async with self._session_lock:
+                session = self._sessions.get(normalized_thread_id)
+                if session is not None:
+                    items = await session.get_items(limit=limit)
+                    return messages_from_sdk_session_items(items)
+
         close_after_read = not cache
         if cache:
             session = self.session_for_thread(normalized_thread_id)
@@ -186,11 +204,20 @@ class TextSessionStore:
     async def clear_thread(self, thread_id: str) -> None:
         """Clear and evict the SDK session for a thread."""
 
-        session = self.session_for_thread(thread_id)
-        try:
-            await session.clear_session()
-        finally:
-            await self.evict_thread(thread_id)
+        normalized_thread_id = self._normalize_thread_id(thread_id)
+        async with self._session_lock:
+            session = self.session_for_thread(normalized_thread_id)
+            try:
+                await session.clear_session()
+            finally:
+                try:
+                    await self._evict_thread(normalized_thread_id)
+                except Exception:
+                    logger.warning(
+                        "TextSessionStore: session close failed after clearing; "
+                        "preserving the reset outcome.",
+                        exc_info=True,
+                    )
 
     async def ensure_turn_recorded(
         self,

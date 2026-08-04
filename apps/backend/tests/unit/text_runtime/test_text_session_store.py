@@ -139,6 +139,7 @@ async def test_uncached_history_read_does_not_retain_session(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_uncached_history_read_does_not_use_cached_session(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
 ) -> None:
     """Unlocked history reads must not race cached-session eviction."""
 
@@ -156,7 +157,9 @@ async def test_uncached_history_read_does_not_use_cached_session(
         async def close(self) -> None:
             self.closed = True
 
-    store = TextSessionStore(TextSessionStoreConfig())
+    store = TextSessionStore(
+        TextSessionStoreConfig(backend="sqlite", sqlite_path=tmp_path / "sessions.db")
+    )
     cached_session = _CachedSession()
     transient_session = _TransientSession()
     store._sessions["thread-1"] = cached_session  # noqa: SLF001
@@ -167,6 +170,23 @@ async def test_uncached_history_read_does_not_use_cached_session(
     assert [message.content for message in history] == ["hello"]
     assert store._sessions["thread-1"] is cached_session  # noqa: SLF001
     assert transient_session.closed is True
+
+
+@pytest.mark.asyncio
+async def test_uncached_in_memory_history_read_uses_active_session() -> None:
+    """Incognito history reads must retain active in-memory SDK history."""
+
+    store = TextSessionStore(TextSessionStoreConfig())
+    try:
+        session = store.session_for_thread("thread-1")
+        await session.add_items([{"role": "user", "content": "hello"}])
+
+        history = await store.get_history("thread-1", cache=False)
+
+        assert [message.content for message in history] == ["hello"]
+        assert store.session_for_thread("thread-1") is session
+    finally:
+        await store.aclose()
 
 
 @pytest.mark.asyncio
@@ -234,6 +254,34 @@ async def test_evict_thread_retains_session_when_close_fails() -> None:
 
     assert session.close_attempts == 2
     assert store._sessions == {}  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_clear_thread_preserves_reset_outcome_when_close_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A post-clear close failure should remain retryable without failing reset."""
+
+    class _CloseFailingSession:
+        def __init__(self) -> None:
+            self.cleared = False
+
+        async def clear_session(self) -> None:
+            self.cleared = True
+
+        async def close(self) -> None:
+            raise RuntimeError("close failed")
+
+    store = TextSessionStore(TextSessionStoreConfig())
+    session = _CloseFailingSession()
+    store._sessions["thread-1"] = session  # noqa: SLF001
+
+    with caplog.at_level(logging.WARNING, logger="agent.runtime.session_store"):
+        await store.clear_thread("thread-1")
+
+    assert session.cleared is True
+    assert store._sessions["thread-1"] is session  # noqa: SLF001
+    assert "session close failed after clearing" in caplog.text
 
 
 @pytest.mark.asyncio
