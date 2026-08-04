@@ -131,7 +131,7 @@ class ThreadStateReader:
 
         state = await self.get_state(thread_id)
         if self._text_session_store is not None:
-            history = await self._text_session_store.get_history(thread_id)
+            history = await self._text_session_store.get_history(thread_id, cache=False)
             if history:
                 return merge_history_response_styles(history, state)
             if state is None:

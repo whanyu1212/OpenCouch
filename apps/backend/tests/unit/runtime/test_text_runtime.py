@@ -122,11 +122,10 @@ async def test_successful_session_finalization_evicts_sdk_session_without_histor
 
         await runtime._end_session_unlocked("thread-1")  # noqa: SLF001
 
-        replacement = runtime._text_session_store.session_for_thread("thread-1")
-        history = await runtime._text_session_store.get_history("thread-1")
+        history = await runtime.get_history("thread-1")
 
-        assert replacement is not session
         assert [message.content for message in history] == ["hello"]
+        assert "thread-1" not in runtime._text_session_store._sessions  # noqa: SLF001
 
 
 @pytest.mark.asyncio

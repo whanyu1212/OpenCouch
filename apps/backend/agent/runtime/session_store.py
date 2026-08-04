@@ -68,31 +68,32 @@ class TextSessionStore:
         if existing is not None:
             return existing
 
+        session = self._create_session(normalized_thread_id)
+        self._sessions[normalized_thread_id] = session
+        return session
+
+    def _create_session(self, normalized_thread_id: str) -> Any:
+        """Construct one SDK session without adding it to the cache."""
+
         settings = SessionSettings(limit=self._config.history_limit)
         if self._config.backend == "sqlite":
-            session = SQLiteSession(
+            return SQLiteSession(
                 normalized_thread_id,
                 db_path=self._config.sqlite_path,
                 session_settings=settings,
             )
-        elif self._config.backend == "sqlalchemy":
+        if self._config.backend == "sqlalchemy":
             from agents.extensions.memory.sqlalchemy_session import SQLAlchemySession
 
             if self._engine is None:
                 raise RuntimeError("SQLAlchemy text session engine is not initialized.")
-            session = SQLAlchemySession(
+            return SQLAlchemySession(
                 normalized_thread_id,
                 engine=self._engine,
                 create_tables=self._config.create_tables,
                 session_settings=settings,
             )
-        else:
-            raise ValueError(
-                f"Unsupported text session backend {self._config.backend!r}."
-            )
-
-        self._sessions[normalized_thread_id] = session
-        return session
+        raise ValueError(f"Unsupported text session backend {self._config.backend!r}.")
 
     async def evict_thread(self, thread_id: str) -> None:
         """Evict one cached SDK session without deleting its history."""
@@ -102,11 +103,7 @@ class TextSessionStore:
         if session is None:
             return
 
-        close = getattr(session, "close", None)
-        if callable(close):
-            close_result = close()
-            if isawaitable(close_result):
-                await close_result
+        await self._close_session(session)
 
     def turn_session_for_thread(
         self,
@@ -149,11 +146,24 @@ class TextSessionStore:
         thread_id: str,
         *,
         limit: int | None = None,
+        cache: bool = True,
     ) -> list[Message]:
         """Materialize SDK session items as public transcript messages."""
 
-        session = self.session_for_thread(thread_id)
-        items = await session.get_items(limit=limit)
+        normalized_thread_id = self._normalize_thread_id(thread_id)
+        session = self._sessions.get(normalized_thread_id)
+        close_after_read = False
+        if session is None:
+            if cache:
+                session = self.session_for_thread(normalized_thread_id)
+            else:
+                session = self._create_session(normalized_thread_id)
+                close_after_read = True
+        try:
+            items = await session.get_items(limit=limit)
+        finally:
+            if close_after_read:
+                await self._close_session(session)
         return messages_from_sdk_session_items(items)
 
     async def clear_thread(self, thread_id: str) -> None:
@@ -221,6 +231,14 @@ class TextSessionStore:
 
         if first_failure is not None:
             raise first_failure
+
+    @staticmethod
+    async def _close_session(session: Any) -> None:
+        close = getattr(session, "close", None)
+        if callable(close):
+            close_result = close()
+            if isawaitable(close_result):
+                await close_result
 
     @staticmethod
     def _normalize_thread_id(thread_id: str) -> str:

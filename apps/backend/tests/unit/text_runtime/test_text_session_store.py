@@ -114,6 +114,45 @@ async def test_evict_thread_releases_cache_without_deleting_history(tmp_path) ->
 
 
 @pytest.mark.asyncio
+async def test_uncached_history_read_does_not_retain_session(tmp_path) -> None:
+    """Completed-thread history reads should close their transient SDK session."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(backend="sqlite", sqlite_path=tmp_path / "sessions.db")
+    )
+    try:
+        session = store.session_for_thread("thread-1")
+        await session.add_items([{"role": "user", "content": "hello"}])
+        await store.evict_thread("thread-1")
+
+        history = await store.get_history("thread-1", cache=False)
+
+        assert [message.content for message in history] == ["hello"]
+        assert store._sessions == {}  # noqa: SLF001
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_uncached_history_read_reuses_cached_session(tmp_path) -> None:
+    """An active thread's history read should not create a parallel session."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(backend="sqlite", sqlite_path=tmp_path / "sessions.db")
+    )
+    try:
+        session = store.session_for_thread("thread-1")
+        await session.add_items([{"role": "user", "content": "hello"}])
+
+        history = await store.get_history("thread-1", cache=False)
+
+        assert [message.content for message in history] == ["hello"]
+        assert store.session_for_thread("thread-1") is session
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
 async def test_evicting_many_threads_does_not_retain_session_objects(tmp_path) -> None:
     """Historical threads should not make the in-process cache unbounded."""
 
@@ -148,6 +187,33 @@ async def test_evict_thread_awaits_async_sdk_close() -> None:
 
     await store.evict_thread("thread-1")
 
+    assert session.closed is True
+    assert store._sessions == {}  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_uncached_history_read_awaits_async_sdk_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Transient history reads should await async SDK cleanup."""
+
+    class _AsyncReadSession:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def get_items(self, *, limit: int | None = None) -> list[dict[str, str]]:
+            return [{"role": "user", "content": "hello"}]
+
+        async def close(self) -> None:
+            self.closed = True
+
+    store = TextSessionStore(TextSessionStoreConfig())
+    session = _AsyncReadSession()
+    monkeypatch.setattr(store, "_create_session", lambda _thread_id: session)
+
+    history = await store.get_history("thread-1", cache=False)
+
+    assert [message.content for message in history] == ["hello"]
     assert session.closed is True
     assert store._sessions == {}  # noqa: SLF001
 
