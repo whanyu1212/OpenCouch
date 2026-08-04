@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from agent.memory.modes import MemoryMode
@@ -216,6 +218,62 @@ async def test_uncached_history_read_awaits_async_sdk_close(
     assert [message.content for message in history] == ["hello"]
     assert session.closed is True
     assert store._sessions == {}  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_uncached_history_read_preserves_result_when_close_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Transient cleanup should not invalidate a completed history read."""
+
+    class _CloseFailingSession:
+        async def get_items(self, *, limit: int | None = None) -> list[dict[str, str]]:
+            return [{"role": "user", "content": "hello"}]
+
+        async def close(self) -> None:
+            raise RuntimeError("close failed")
+
+    store = TextSessionStore(TextSessionStoreConfig())
+    monkeypatch.setattr(
+        store,
+        "_create_session",
+        lambda _thread_id: _CloseFailingSession(),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="agent.runtime.session_store"):
+        history = await store.get_history("thread-1", cache=False)
+
+    assert [message.content for message in history] == ["hello"]
+    assert "transient history session close failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_uncached_history_read_preserves_read_failure_when_close_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Transient cleanup should not mask the original history read failure."""
+
+    class _ReadAndCloseFailingSession:
+        async def get_items(self, *, limit: int | None = None) -> list[dict[str, str]]:
+            raise ValueError("history read failed")
+
+        async def close(self) -> None:
+            raise RuntimeError("close failed")
+
+    store = TextSessionStore(TextSessionStoreConfig())
+    monkeypatch.setattr(
+        store,
+        "_create_session",
+        lambda _thread_id: _ReadAndCloseFailingSession(),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="agent.runtime.session_store"):
+        with pytest.raises(ValueError, match="history read failed"):
+            await store.get_history("thread-1", cache=False)
+
+    assert "transient history session close failed" in caplog.text
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from inspect import isawaitable
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,6 +17,8 @@ from agent.runtime.session.history import (
     content_to_text,
     messages_from_sdk_session_items,
 )
+
+logger = logging.getLogger(__name__)
 
 TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
 ActiveTextSessionBackend = Literal["sqlite", "sqlalchemy"]
@@ -163,7 +166,14 @@ class TextSessionStore:
             items = await session.get_items(limit=limit)
         finally:
             if close_after_read:
-                await self._close_session(session)
+                try:
+                    await self._close_session(session)
+                except Exception:
+                    logger.warning(
+                        "TextSessionStore: transient history session close failed; "
+                        "preserving the history outcome.",
+                        exc_info=True,
+                    )
         return messages_from_sdk_session_items(items)
 
     async def clear_thread(self, thread_id: str) -> None:
