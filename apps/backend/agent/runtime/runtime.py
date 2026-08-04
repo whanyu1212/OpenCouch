@@ -1088,7 +1088,7 @@ class PersistentAgentRuntime:
             self._text_session_store is not None
             and not self._session_tracker.has_tracking(thread_id)
         ):
-            self._text_session_store.evict_thread(thread_id)
+            await self._text_session_store.evict_thread(thread_id)
         return stored_arc
 
     async def end_transcript_session(

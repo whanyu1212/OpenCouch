@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Literal
 
@@ -93,7 +94,7 @@ class TextSessionStore:
         self._sessions[normalized_thread_id] = session
         return session
 
-    def evict_thread(self, thread_id: str) -> None:
+    async def evict_thread(self, thread_id: str) -> None:
         """Evict one cached SDK session without deleting its history."""
 
         normalized_thread_id = self._normalize_thread_id(thread_id)
@@ -103,7 +104,9 @@ class TextSessionStore:
 
         close = getattr(session, "close", None)
         if callable(close):
-            close()
+            close_result = close()
+            if isawaitable(close_result):
+                await close_result
 
     def turn_session_for_thread(
         self,
@@ -160,7 +163,7 @@ class TextSessionStore:
         try:
             await session.clear_session()
         finally:
-            self.evict_thread(thread_id)
+            await self.evict_thread(thread_id)
 
     async def ensure_turn_recorded(
         self,
@@ -202,7 +205,7 @@ class TextSessionStore:
         first_failure: BaseException | None = None
         for thread_id in tuple(self._sessions):
             try:
-                self.evict_thread(thread_id)
+                await self.evict_thread(thread_id)
             except BaseException as exc:
                 if first_failure is None:
                     first_failure = exc

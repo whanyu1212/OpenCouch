@@ -102,7 +102,7 @@ async def test_evict_thread_releases_cache_without_deleting_history(tmp_path) ->
         session = store.session_for_thread("thread-1")
         await session.add_items([{"role": "user", "content": "hello"}])
 
-        store.evict_thread(" thread-1 ")
+        await store.evict_thread(" thread-1 ")
 
         replacement = store.session_for_thread("thread-1")
         history = await store.get_history("thread-1")
@@ -124,11 +124,32 @@ async def test_evicting_many_threads_does_not_retain_session_objects(tmp_path) -
         for index in range(100):
             thread_id = f"thread-{index}"
             store.session_for_thread(thread_id)
-            store.evict_thread(thread_id)
+            await store.evict_thread(thread_id)
 
         assert store._sessions == {}  # noqa: SLF001
     finally:
         await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_evict_thread_awaits_async_sdk_close() -> None:
+    """Eviction should support SDK session implementations with async close."""
+
+    class _AsyncCloseSession:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    store = TextSessionStore(TextSessionStoreConfig())
+    session = _AsyncCloseSession()
+    store._sessions["thread-1"] = session  # noqa: SLF001
+
+    await store.evict_thread("thread-1")
+
+    assert session.closed is True
+    assert store._sessions == {}  # noqa: SLF001
 
 
 @pytest.mark.asyncio
