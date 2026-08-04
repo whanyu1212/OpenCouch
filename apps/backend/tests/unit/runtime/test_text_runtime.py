@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
 from agent.memory.modes import MemoryMode
@@ -164,6 +166,54 @@ async def test_failed_session_finalization_keeps_sdk_session_for_retry(
             await runtime._end_session_unlocked("thread-1")  # noqa: SLF001
 
         assert runtime._text_session_store.session_for_thread("thread-1") is session
+
+
+@pytest.mark.asyncio
+async def test_finalization_retains_result_when_sdk_eviction_fails(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Post-finalization cache cleanup should not change the end-session result."""
+
+    async with _runtime(
+        storage_paths=RuntimeStoragePaths(
+            text_session_sqlite_path=tmp_path / "text-sessions.sqlite3",
+        ),
+        persistence_config=RuntimePersistenceConfig(
+            thread_persistence_backend="memory",
+            text_session_backend="sqlite",
+            allow_legacy_sqlite=True,
+        ),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    ) as runtime:
+        assert runtime._text_session_store is not None
+        finalization_result = object()
+
+        async def fake_end_session(*args: object, **kwargs: object) -> object:
+            return finalization_result
+
+        async def failing_evict_thread(thread_id: str) -> None:
+            raise RuntimeError(f"SDK close failed for {thread_id}")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(
+                runtime._session_lifecycle,
+                "end_session_unlocked",
+                fake_end_session,
+            )
+            patch.setattr(
+                runtime._text_session_store,
+                "evict_thread",
+                failing_evict_thread,
+            )
+            with caplog.at_level(logging.WARNING, logger="agent.runtime.runtime"):
+                result = await runtime._end_session_unlocked("thread-1")  # noqa: SLF001
+
+    assert result is finalization_result
+    assert "SDK session eviction failed after finalizing thread thread-1" in caplog.text
 
 
 @pytest.mark.asyncio
