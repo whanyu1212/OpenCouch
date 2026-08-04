@@ -191,7 +191,7 @@ class RuntimeResources:
             None: Closes every runtime-owned resource.
 
         Raises:
-            Exception: Re-raises the first close failure, if any.
+            BaseException: Re-raises the first close failure, if any.
         """
 
         closables: list[tuple[str, _Closable]] = [
@@ -208,7 +208,7 @@ class RuntimeResources:
         for name, closable in closables:
             try:
                 await closable.aclose()
-            except Exception as exc:
+            except BaseException as exc:
                 logger.warning(
                     "RuntimeResources.aclose: closing %s raised; continuing "
                     "so remaining resources are still released.",

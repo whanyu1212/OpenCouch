@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
+from inspect import isawaitable
+import logging
 from pathlib import Path
 from typing import Any, Literal
 
@@ -15,6 +18,8 @@ from agent.runtime.session.history import (
     content_to_text,
     messages_from_sdk_session_items,
 )
+
+logger = logging.getLogger(__name__)
 
 TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
 ActiveTextSessionBackend = Literal["sqlite", "sqlalchemy"]
@@ -42,6 +47,8 @@ class TextSessionStore:
 
         self._config = config
         self._sessions: dict[str, Any] = {}
+        self._failed_close_sessions: list[Any] = []
+        self._session_lock = asyncio.Lock()
         self._engine: Any | None = None
 
         if config.backend == "sqlalchemy":
@@ -61,39 +68,58 @@ class TextSessionStore:
     def session_for_thread(self, thread_id: str) -> Any:
         """Return the SDK session object for a thread."""
 
-        normalized_thread_id = thread_id.strip()
-        if not normalized_thread_id:
-            raise ValueError("thread_id must not be empty.")
+        normalized_thread_id = self._normalize_thread_id(thread_id)
 
         existing = self._sessions.get(normalized_thread_id)
         if existing is not None:
             return existing
 
+        session = self._create_session(normalized_thread_id)
+        self._sessions[normalized_thread_id] = session
+        return session
+
+    def _create_session(self, normalized_thread_id: str) -> Any:
+        """Construct one SDK session without adding it to the cache."""
+
         settings = SessionSettings(limit=self._config.history_limit)
         if self._config.backend == "sqlite":
-            session = SQLiteSession(
+            return SQLiteSession(
                 normalized_thread_id,
                 db_path=self._config.sqlite_path,
                 session_settings=settings,
             )
-        elif self._config.backend == "sqlalchemy":
+        if self._config.backend == "sqlalchemy":
             from agents.extensions.memory.sqlalchemy_session import SQLAlchemySession
 
             if self._engine is None:
                 raise RuntimeError("SQLAlchemy text session engine is not initialized.")
-            session = SQLAlchemySession(
+            return SQLAlchemySession(
                 normalized_thread_id,
                 engine=self._engine,
                 create_tables=self._config.create_tables,
                 session_settings=settings,
             )
-        else:
-            raise ValueError(
-                f"Unsupported text session backend {self._config.backend!r}."
-            )
+        raise ValueError(f"Unsupported text session backend {self._config.backend!r}.")
 
-        self._sessions[normalized_thread_id] = session
-        return session
+    async def evict_thread(self, thread_id: str) -> None:
+        """Evict one cached SDK session without deleting its history."""
+
+        normalized_thread_id = self._normalize_thread_id(thread_id)
+        async with self._session_lock:
+            await self._evict_thread(normalized_thread_id)
+
+    async def _evict_thread(self, normalized_thread_id: str) -> None:
+        """Close one cached session while the caller owns ``_session_lock``."""
+
+        session = self._sessions.pop(normalized_thread_id, None)
+        if session is None:
+            return
+
+        try:
+            await self._close_session(session)
+        except BaseException:
+            self._sessions[normalized_thread_id] = session
+            raise
 
     def turn_session_for_thread(
         self,
@@ -136,18 +162,62 @@ class TextSessionStore:
         thread_id: str,
         *,
         limit: int | None = None,
+        cache: bool = True,
     ) -> list[Message]:
         """Materialize SDK session items as public transcript messages."""
 
-        session = self.session_for_thread(thread_id)
-        items = await session.get_items(limit=limit)
+        normalized_thread_id = self._normalize_thread_id(thread_id)
+        if (
+            not cache
+            and self._config.backend == "sqlite"
+            and str(self._config.sqlite_path) == ":memory:"
+        ):
+            async with self._session_lock:
+                session = self._sessions.get(normalized_thread_id)
+                if session is not None:
+                    items = await session.get_items(limit=limit)
+                    return messages_from_sdk_session_items(items)
+
+        close_after_read = not cache
+        if cache:
+            session = self.session_for_thread(normalized_thread_id)
+        else:
+            session = self._create_session(normalized_thread_id)
+        try:
+            items = await session.get_items(limit=limit)
+        finally:
+            if close_after_read:
+                try:
+                    await self._close_session(session)
+                except asyncio.CancelledError:
+                    self._failed_close_sessions.append(session)
+                    raise
+                except Exception:
+                    self._failed_close_sessions.append(session)
+                    logger.warning(
+                        "TextSessionStore: transient history session close failed; "
+                        "preserving the history outcome.",
+                        exc_info=True,
+                    )
         return messages_from_sdk_session_items(items)
 
     async def clear_thread(self, thread_id: str) -> None:
-        """Clear the SDK session for a thread."""
+        """Clear and evict the SDK session for a thread."""
 
-        session = self.session_for_thread(thread_id)
-        await session.clear_session()
+        normalized_thread_id = self._normalize_thread_id(thread_id)
+        async with self._session_lock:
+            session = self.session_for_thread(normalized_thread_id)
+            try:
+                await session.clear_session()
+            finally:
+                try:
+                    await self._evict_thread(normalized_thread_id)
+                except Exception:
+                    logger.warning(
+                        "TextSessionStore: session close failed after clearing; "
+                        "preserving the reset outcome.",
+                        exc_info=True,
+                    )
 
     async def ensure_turn_recorded(
         self,
@@ -186,15 +256,50 @@ class TextSessionStore:
     async def aclose(self) -> None:
         """Close cached SDK session resources."""
 
-        for session in self._sessions.values():
-            close = getattr(session, "close", None)
-            if close is not None:
-                close()
-        self._sessions.clear()
+        first_failure: BaseException | None = None
+        for thread_id in tuple(self._sessions):
+            try:
+                await self.evict_thread(thread_id)
+            except BaseException as exc:
+                if first_failure is None:
+                    first_failure = exc
+
+        failed_close_sessions = self._failed_close_sessions
+        self._failed_close_sessions = []
+        for session in failed_close_sessions:
+            try:
+                await self._close_session(session)
+            except BaseException as exc:
+                self._failed_close_sessions.append(session)
+                if first_failure is None:
+                    first_failure = exc
 
         if self._engine is not None:
-            await self._engine.dispose()
-            self._engine = None
+            try:
+                await self._engine.dispose()
+            except BaseException as exc:
+                if first_failure is None:
+                    first_failure = exc
+            finally:
+                self._engine = None
+
+        if first_failure is not None:
+            raise first_failure
+
+    @staticmethod
+    async def _close_session(session: Any) -> None:
+        close = getattr(session, "close", None)
+        if callable(close):
+            close_result = close()
+            if isawaitable(close_result):
+                await close_result
+
+    @staticmethod
+    def _normalize_thread_id(thread_id: str) -> str:
+        normalized_thread_id = thread_id.strip()
+        if not normalized_thread_id:
+            raise ValueError("thread_id must not be empty.")
+        return normalized_thread_id
 
 
 def create_text_session_store(

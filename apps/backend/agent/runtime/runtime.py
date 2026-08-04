@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator, Callable
+from builtins import BaseExceptionGroup
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any, cast
@@ -81,6 +82,67 @@ from agent.state import AgentState, AgentTurnInputState
 from llm.base import BaseLLMClient
 
 logger = logging.getLogger(__name__)
+
+_SHUTDOWN_STAGE_TIMEOUT_SECONDS = 30.0
+
+
+async def _run_shutdown_stage(
+    name: str,
+    operation: Callable[[], Awaitable[None]],
+) -> tuple[BaseException | None, asyncio.CancelledError | None]:
+    """Run a shutdown stage despite caller cancellation and await timeout cleanup."""
+
+    async def invoke() -> BaseException | None:
+        try:
+            await operation()
+        except BaseException as exc:
+            return exc
+        return None
+
+    task = asyncio.create_task(invoke(), name=f"opencouch-shutdown:{name}")
+    cancellation: asyncio.CancelledError | None = None
+    deadline = asyncio.get_running_loop().time() + _SHUTDOWN_STAGE_TIMEOUT_SECONDS
+    timeout_failure: TimeoutError | None = None
+    while True:
+        if task.done():
+            try:
+                task_failure = task.result()
+            except BaseException as exc:
+                task_failure = exc
+            failure = timeout_failure or task_failure
+            break
+        try:
+            if timeout_failure is None:
+                failure = await asyncio.wait_for(
+                    asyncio.shield(task),
+                    timeout=max(0.0, deadline - asyncio.get_running_loop().time()),
+                )
+            else:
+                await asyncio.shield(task)
+                continue
+        except asyncio.CancelledError as exc:
+            if cancellation is None:
+                cancellation = exc
+            continue
+        except TimeoutError:
+            task.cancel()
+            timeout_failure = TimeoutError(
+                f"PersistentAgentRuntime shutdown stage {name!r} timed out after "
+                f"{_SHUTDOWN_STAGE_TIMEOUT_SECONDS} seconds."
+            )
+            # asyncio cannot force-stop a task, so wait for cancellation before
+            # closing resources that the stage may still be using.
+            continue
+        break
+
+    if failure is not None:
+        logger.warning(
+            "PersistentAgentRuntime shutdown stage %s failed with %s.",
+            name,
+            type(failure).__name__,
+            exc_info=(type(failure), failure, failure.__traceback__),
+        )
+    return failure, cancellation
 
 
 @dataclass(slots=True)
@@ -282,11 +344,47 @@ class PersistentAgentRuntime:
             tb: The active traceback, if any.
         """
 
-        await self._session_lifecycle.stop_background_tasks()
+        stages: list[tuple[str, Callable[[], Awaitable[None]]]] = [
+            (
+                "background_tasks",
+                self._session_lifecycle.stop_background_tasks,
+            ),
+        ]
         if self._finalize_active_sessions_on_close:
-            await self.finalize_active_sessions(llm_client=self._default_llm_client)
-        await self.voice.aclose()
-        await self._resources.aclose()
+            stages.append(
+                (
+                    "active_sessions",
+                    lambda: self.finalize_active_sessions(
+                        llm_client=self._default_llm_client
+                    ),
+                )
+            )
+        stages.extend(
+            [
+                ("voice", self.voice.aclose),
+                ("resources", self._resources.aclose),
+            ]
+        )
+
+        failures: list[BaseException] = []
+        cancellation: asyncio.CancelledError | None = None
+        for name, operation in stages:
+            failure, stage_cancellation = await _run_shutdown_stage(name, operation)
+            if failure is not None:
+                failures.append(failure)
+            if cancellation is None and stage_cancellation is not None:
+                cancellation = stage_cancellation
+
+        if cancellation is not None:
+            failures.insert(0, cancellation)
+        if not failures:
+            return
+        if len(failures) == 1:
+            raise failures[0]
+        raise BaseExceptionGroup(
+            "PersistentAgentRuntime shutdown failed",
+            failures,
+        )
 
     async def _ensure_runtime_schema(self) -> None:
         """Create runtime-owned tables.
@@ -1005,7 +1103,7 @@ class PersistentAgentRuntime:
     ) -> StoredSessionArc | None:
         """Summarize an active session while the caller owns the thread lock."""
 
-        return await self._session_lifecycle.end_session_unlocked(
+        stored_arc = await self._session_lifecycle.end_session_unlocked(
             thread_id,
             llm_client=llm_client,
             effective_llm_client=self._effective_llm_client,
@@ -1013,6 +1111,20 @@ class PersistentAgentRuntime:
             get_state=self.get_state,
             finalize_only_if_expired=finalize_only_if_expired,
         )
+        if (
+            self._text_session_store is not None
+            and not self._session_tracker.has_tracking(thread_id)
+        ):
+            try:
+                await self._text_session_store.evict_thread(thread_id)
+            except Exception:
+                logger.warning(
+                    "PersistentAgentRuntime: SDK session eviction failed after "
+                    "finalizing thread %s; retaining the finalized result.",
+                    thread_id,
+                    exc_info=True,
+                )
+        return stored_arc
 
     async def end_transcript_session(
         self,
