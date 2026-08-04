@@ -903,6 +903,7 @@ export async function recordRealtimeVoiceTurn({
   toolCalls,
   outcome = "completed",
   interruptionToken,
+  retryHandleId,
   signal,
 }: {
   threadId: string;
@@ -914,6 +915,7 @@ export async function recordRealtimeVoiceTurn({
   toolCalls?: RealtimeVoiceRecordedToolCall[];
   outcome?: RealtimeVoiceTurnOutcome;
   interruptionToken?: string;
+  retryHandleId?: string;
   signal?: AbortSignal;
 }): Promise<RealtimeVoiceTurnRecordResponse> {
   return apiRequest<RealtimeVoiceTurnRecordResponse>(
@@ -934,9 +936,34 @@ export async function recordRealtimeVoiceTurn({
         ...(interruptionToken
           ? { interruption_token: interruptionToken }
           : {}),
+        ...(retryHandleId ? { retry_handle_id: retryHandleId } : {}),
       }),
     },
     "Realtime voice turn record"
+  );
+}
+
+export async function heartbeatRealtimeVoiceRetryHandle({
+  threadId,
+  memoryMode,
+  retryHandleId,
+}: {
+  threadId: string;
+  memoryMode: VoiceMemoryMode;
+  retryHandleId: string;
+}): Promise<void> {
+  await apiRequest<void>(
+    `${API_BASE}/voice/realtime/retry-handle/heartbeat`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        thread_id: threadId,
+        memory_mode: memoryMode,
+        retry_handle_id: retryHandleId,
+      }),
+    },
+    "Realtime voice retry handle heartbeat"
   );
 }
 

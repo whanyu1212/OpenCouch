@@ -11,6 +11,11 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from agent.voice import realtime
 from agent.voice import tools as voice_tools
+from agent.voice.runtime_facade import (
+    VoicePendingTurnCapacityError,
+    VoicePendingTurnHandleBusyError,
+    VoicePendingTurnRetiredError,
+)
 from agent.models import CrisisAssessment
 from agent.observability.decorators import trace_event
 from agent.observability.events import (
@@ -40,6 +45,7 @@ from api.models import (
     VoiceTurnRecordResponse,
     VoiceEndSessionRequest,
     VoiceEndSessionResponse,
+    VoicePendingTurnRetryHandleRequest,
 )
 from llm.base import BaseLLMClient
 
@@ -178,6 +184,14 @@ async def record_voice_realtime_turn(
             else None
         )
     except ValueError as exc:
+        if isinstance(exc, VoicePendingTurnRetiredError):
+            raise HTTPException(
+                status_code=410,
+                detail={
+                    "code": "voice_realtime_turn_retry_expired",
+                    "message": str(exc),
+                },
+            ) from exc
         raise HTTPException(
             status_code=409,
             detail={
@@ -255,9 +269,34 @@ async def record_voice_realtime_turn(
                 llm_client=llm_client,
                 correlation_hash=correlation_hash,
                 request_hash=request_hash,
+                retry_handle_id=body.retry_handle_id,
                 safety_assessment=safety_assessment,
             )
         except ValueError as exc:
+            if isinstance(exc, VoicePendingTurnRetiredError):
+                raise HTTPException(
+                    status_code=410,
+                    detail={
+                        "code": "voice_realtime_turn_retry_expired",
+                        "message": str(exc),
+                    },
+                ) from exc
+            if isinstance(exc, VoicePendingTurnCapacityError):
+                raise HTTPException(
+                    status_code=429,
+                    detail={
+                        "code": "voice_realtime_pending_turn_capacity_reached",
+                        "message": str(exc),
+                    },
+                ) from exc
+            if isinstance(exc, VoicePendingTurnHandleBusyError):
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "voice_realtime_retry_handle_pending_turn",
+                        "message": str(exc),
+                    },
+                ) from exc
             if "client_turn_id was already used" in str(exc):
                 raise HTTPException(
                     status_code=409,
@@ -316,6 +355,19 @@ async def record_voice_realtime_turn(
         thread_id=body.thread_id,
         message_count=len(state.get("transcript", []) or []),
         post_turn_safety=post_turn_safety,
+    )
+
+
+@router.post("/realtime/retry-handle/heartbeat")
+async def heartbeat_voice_realtime_retry_handle(
+    body: VoicePendingTurnRetryHandleRequest,
+) -> None:
+    """Renew a live browser handle's ownership of unresolved voice retries."""
+
+    selection = get_runtime_selection(body.memory_mode)
+    await selection.runtime.voice.touch_pending_voice_retry_handle(
+        thread_id=body.thread_id,
+        retry_handle_id=body.retry_handle_id,
     )
 
 
@@ -512,6 +564,9 @@ def _voice_turn_correlation_hash(*, thread_id: str, client_turn_id: str) -> str:
 
 
 def _voice_turn_request_hash(body: VoiceTurnRecordRequest) -> str:
-    payload = body.model_dump(mode="json", exclude={"interruption_token"})
+    payload = body.model_dump(
+        mode="json",
+        exclude={"interruption_token", "retry_handle_id"},
+    )
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
