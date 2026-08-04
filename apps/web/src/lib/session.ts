@@ -160,8 +160,7 @@ export function voiceFinalizationBlocksSessionActions(
 ): boolean {
   return (
     finalization.threadId === threadId &&
-    (finalization.status === "in_progress" ||
-      (finalization.status === "failed" && finalization.blocksTextTurns))
+    (finalization.status === "in_progress" || finalization.status === "failed")
   );
 }
 

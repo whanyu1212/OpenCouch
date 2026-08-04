@@ -207,7 +207,7 @@ test("only interrupted voice settlement blocks text turns", () => {
   );
 });
 
-test("session actions block only for current pending or safety-failed finalization", () => {
+test("session actions block for current pending or retryable failed finalization", () => {
   const finalization = {
     threadId: "voice-thread",
     status: "in_progress",
@@ -225,7 +225,7 @@ test("session actions block only for current pending or safety-failed finalizati
       { ...finalization, status: "failed" },
       "voice-thread"
     ),
-    false
+    true
   );
   assert.equal(
     voiceFinalizationBlocksSessionActions(
