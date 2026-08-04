@@ -9,6 +9,7 @@ from inspect import isawaitable
 import logging
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 from agents.memory import SQLiteSession, SessionSettings
 
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
 ActiveTextSessionBackend = Literal["sqlite", "sqlalchemy"]
 
-_SCHEMA_PREPARATION_SESSION_ID = "__opencouch_schema_preparation__"
+_SCHEMA_PREPARATION_SESSION_ID_PREFIX = "__opencouch_schema_preparation__"
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,8 +118,13 @@ class TextSessionStore:
                 raise RuntimeError("SQLAlchemy text session engine is not initialized.")
             if self._schema_prepared:
                 return
-            session = self._create_session(_SCHEMA_PREPARATION_SESSION_ID)
-            await session.get_items(limit=1)
+            session = self._create_session(
+                f"{_SCHEMA_PREPARATION_SESSION_ID_PREFIX}:{uuid4().hex}"
+            )
+            await session.add_items(
+                [{"role": "user", "content": "OpenCouch schema preparation probe."}]
+            )
+            await session.clear_session()
             self._schema_prepared = True
 
     async def evict_thread(self, thread_id: str) -> None:

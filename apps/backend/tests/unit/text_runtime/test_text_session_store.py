@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 import pytest
+from sqlalchemy import text
 
 from agent.memory.modes import MemoryMode
 from agent.models import Message, MessageRole
@@ -570,6 +571,17 @@ async def test_sqlalchemy_schema_preparation_disables_later_lazy_ddl(tmp_path) -
     try:
         await store.ensure_schema()
 
+        assert store._engine is not None  # noqa: SLF001
+        async with store._engine.connect() as connection:  # noqa: SLF001
+            session_count = await connection.execute(
+                text("SELECT COUNT(*) FROM agent_sessions")
+            )
+            message_count = await connection.execute(
+                text("SELECT COUNT(*) FROM agent_messages")
+            )
+        assert session_count.scalar_one() == 0
+        assert message_count.scalar_one() == 0
+
         session = store.session_for_thread("thread-1")
         await session.add_items([{"role": "user", "content": "hello"}])
         history = await store.get_history("thread-1")
@@ -625,6 +637,43 @@ async def test_failed_sqlalchemy_schema_preparation_does_not_mark_store_prepared
         )
     )
     try:
+        with pytest.raises(Exception):
+            await store.ensure_schema()
+
+        assert store._schema_prepared is False  # noqa: SLF001
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_schema_preparation_validates_session_write_table(
+    tmp_path,
+) -> None:
+    """A messages-only schema must fail before the first session write."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(
+            backend="sqlalchemy",
+            database_url=f"sqlite+aiosqlite:///{tmp_path / 'partial-schema.db'}",
+            create_tables=False,
+        )
+    )
+    try:
+        assert store._engine is not None  # noqa: SLF001
+        async with store._engine.begin() as connection:  # noqa: SLF001
+            await connection.execute(
+                text(
+                    """
+                    CREATE TABLE agent_messages (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        session_id VARCHAR NOT NULL,
+                        message_data TEXT NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
+                    )
+                    """
+                )
+            )
+
         with pytest.raises(Exception):
             await store.ensure_schema()
 
