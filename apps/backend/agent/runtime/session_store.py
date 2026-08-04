@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 TextSessionBackend = Literal["auto", "disabled", "sqlite", "sqlalchemy"]
 ActiveTextSessionBackend = Literal["sqlite", "sqlalchemy"]
 
+_SCHEMA_PREPARATION_SESSION_ID = "__opencouch_schema_preparation__"
+
 
 @dataclass(frozen=True, slots=True)
 class TextSessionStoreConfig:
@@ -50,6 +52,7 @@ class TextSessionStore:
         self._failed_close_sessions: list[Any] = []
         self._session_lock = asyncio.Lock()
         self._engine: Any | None = None
+        self._schema_prepared = False
 
         if config.backend == "sqlalchemy":
             from sqlalchemy.ext.asyncio import create_async_engine
@@ -96,10 +99,27 @@ class TextSessionStore:
             return SQLAlchemySession(
                 normalized_thread_id,
                 engine=self._engine,
-                create_tables=self._config.create_tables,
+                create_tables=(
+                    self._config.create_tables and not self._schema_prepared
+                ),
                 session_settings=settings,
             )
         raise ValueError(f"Unsupported text session backend {self._config.backend!r}.")
+
+    async def ensure_schema(self) -> None:
+        """Prepare and validate SQLAlchemy text-session storage at startup."""
+
+        if self._config.backend != "sqlalchemy":
+            return
+
+        async with self._session_lock:
+            if self._engine is None:
+                raise RuntimeError("SQLAlchemy text session engine is not initialized.")
+            if self._schema_prepared:
+                return
+            session = self._create_session(_SCHEMA_PREPARATION_SESSION_ID)
+            await session.get_items(limit=1)
+            self._schema_prepared = True
 
     async def evict_thread(self, thread_id: str) -> None:
         """Evict one cached SDK session without deleting its history."""

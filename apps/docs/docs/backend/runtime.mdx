@@ -248,7 +248,9 @@ OpenAI Agents SDK text sessions are a separate, model-visible short-term history
 surface. The SDK `SQLiteSession` option may use `text_sessions.sqlite3`; it is
 not OpenCouch long-term memory and remains guarded by
 `allow_legacy_sqlite=True` when it writes to disk. The TUI exposes that path as
-`--text-session-sqlite-path`.
+`--text-session-sqlite-path`. When the SQLAlchemy SDK backend is selected, the
+runtime validates connectivity and prepares or verifies its schema during
+startup so the first text request does not perform lazy DDL.
 
 ## Key files
 

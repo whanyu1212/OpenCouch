@@ -532,6 +532,8 @@ async def test_incognito_text_session_store_uses_memory_sqlite() -> None:
     try:
         assert store is not None
         assert store.backend == "sqlite"
+        await store.ensure_schema()
+        assert store._sessions == {}  # noqa: SLF001
     finally:
         if store is not None:
             await store.aclose()
@@ -552,6 +554,100 @@ async def test_auto_text_session_store_uses_sqlite_without_database_url() -> Non
     finally:
         if store is not None:
             await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_schema_preparation_disables_later_lazy_ddl(tmp_path) -> None:
+    """Startup preparation should keep per-thread sessions off the DDL path."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(
+            backend="sqlalchemy",
+            database_url=f"sqlite+aiosqlite:///{tmp_path / 'sessions.db'}",
+            create_tables=True,
+        )
+    )
+    try:
+        await store.ensure_schema()
+
+        session = store.session_for_thread("thread-1")
+        await session.add_items([{"role": "user", "content": "hello"}])
+        history = await store.get_history("thread-1")
+    finally:
+        await store.aclose()
+
+    assert session._create_tables is False  # noqa: SLF001
+    assert [message.content for message in history] == ["hello"]
+
+
+@pytest.mark.asyncio
+async def test_sqlalchemy_schema_preparation_validates_externally_managed_schema(
+    tmp_path,
+) -> None:
+    """Disabling SDK DDL should still validate connectivity and table presence."""
+
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'sessions.db'}"
+    preparing_store = TextSessionStore(
+        TextSessionStoreConfig(
+            backend="sqlalchemy",
+            database_url=database_url,
+            create_tables=True,
+        )
+    )
+    await preparing_store.ensure_schema()
+    await preparing_store.aclose()
+
+    validating_store = TextSessionStore(
+        TextSessionStoreConfig(
+            backend="sqlalchemy",
+            database_url=database_url,
+            create_tables=False,
+        )
+    )
+    try:
+        await validating_store.ensure_schema()
+        assert validating_store._schema_prepared is True  # noqa: SLF001
+    finally:
+        await validating_store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_failed_sqlalchemy_schema_preparation_does_not_mark_store_prepared(
+    tmp_path,
+) -> None:
+    """A failed preflight must not mark the shared store as prepared."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(
+            backend="sqlalchemy",
+            database_url=f"sqlite+aiosqlite:///{tmp_path / 'missing-schema.db'}",
+            create_tables=False,
+        )
+    )
+    try:
+        with pytest.raises(Exception):
+            await store.ensure_schema()
+
+        assert store._schema_prepared is False  # noqa: SLF001
+    finally:
+        await store.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_schema_preparation_is_a_noop(tmp_path) -> None:
+    """SDK SQLite remains lazy and credential-free during startup."""
+
+    database_path = tmp_path / "sessions.db"
+    store = TextSessionStore(
+        TextSessionStoreConfig(backend="sqlite", sqlite_path=database_path)
+    )
+    try:
+        await store.ensure_schema()
+
+        assert store._sessions == {}  # noqa: SLF001
+        assert database_path.exists() is False
+    finally:
+        await store.aclose()
 
 
 def test_sqlalchemy_backend_requires_database_url() -> None:

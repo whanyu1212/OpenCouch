@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import psycopg
 import pytest
+from sqlalchemy import event
 
 from agent.audit.capture import (
     DEFAULT_SAFETY_EVENT_CAPTURE_TIMEOUT_SECONDS,
@@ -21,6 +22,7 @@ from agent.audit.models import CrisisLogRecord
 from agent.audit.postgres_crisis_log import PostgresCrisisLogBackend
 from agent.feedback.postgres_session_feedback import PostgresSessionFeedbackBackend
 from agent.memory.store.postgres import PostgresMemoryStore
+from agent.runtime.session_store import TextSessionStore, TextSessionStoreConfig
 from tests.support.persistence_contracts import require_postgres_database_url
 
 pytestmark = pytest.mark.asyncio
@@ -152,6 +154,60 @@ async def test_memory_preparation_runs_backfill_before_serving_traffic() -> None
         await store.aclose()
 
 
+async def test_prepared_text_session_runs_no_ddl_on_first_thread_read() -> None:
+    """Startup preparation removes SDK table creation from the request path."""
+
+    store = TextSessionStore(
+        TextSessionStoreConfig(
+            backend="sqlalchemy",
+            database_url=require_postgres_database_url(),
+            create_tables=True,
+        )
+    )
+    try:
+        await store.ensure_schema()
+        assert store._engine is not None  # noqa: SLF001
+
+        statements: list[str] = []
+
+        def _record_statement(
+            _conn: Any,
+            _cursor: Any,
+            statement: str,
+            _parameters: Any,
+            _context: Any,
+            _executemany: bool,
+        ) -> None:
+            statements.append(statement)
+
+        event.listen(
+            store._engine.sync_engine,  # noqa: SLF001
+            "before_cursor_execute",
+            _record_statement,
+        )
+        try:
+            await store.session_for_thread("startup-prepared-thread").get_items()
+        finally:
+            event.remove(
+                store._engine.sync_engine,  # noqa: SLF001
+                "before_cursor_execute",
+                _record_statement,
+            )
+
+        assert statements, "expected the history read to issue a SELECT"
+        migration_statements = [
+            statement
+            for statement in statements
+            if any(
+                keyword in statement.upper()
+                for keyword in ("CREATE TABLE", "CREATE INDEX", "ALTER TABLE")
+            )
+        ]
+        assert migration_statements == []
+    finally:
+        await store.aclose()
+
+
 async def test_preparation_creates_schema_for_every_durable_backend() -> None:
     """Each backend's tables exist after preparation, before any operation."""
 
@@ -159,14 +215,28 @@ async def test_preparation_creates_schema_for_every_durable_backend() -> None:
     memory_store = PostgresMemoryStore(dsn)
     crisis_backend = PostgresCrisisLogBackend(dsn)
     feedback_backend = PostgresSessionFeedbackBackend(dsn)
+    text_session_store = TextSessionStore(
+        TextSessionStoreConfig(
+            backend="sqlalchemy",
+            database_url=dsn,
+            create_tables=True,
+        )
+    )
     try:
         await memory_store.ensure_schema()
         await crisis_backend.ensure_schema()
         await feedback_backend.ensure_schema()
+        await text_session_store.ensure_schema()
 
         async with await psycopg.AsyncConnection.connect(dsn) as conn:
             async with conn.cursor() as cursor:
-                for table in ("memory_records", "crisis_log", "session_feedback"):
+                for table in (
+                    "memory_records",
+                    "crisis_log",
+                    "session_feedback",
+                    "agent_sessions",
+                    "agent_messages",
+                ):
                     await cursor.execute("SELECT to_regclass(%s)", (table,))
                     row = await cursor.fetchone()
                     assert row is not None and row[0] is not None, (
@@ -176,3 +246,4 @@ async def test_preparation_creates_schema_for_every_durable_backend() -> None:
         await memory_store.aclose()
         await crisis_backend.aclose()
         await feedback_backend.aclose()
+        await text_session_store.aclose()
