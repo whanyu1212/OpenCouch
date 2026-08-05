@@ -16,7 +16,7 @@ jobs:
     name: Deploy private development API
     runs-on: ubuntu-latest
     environment: development
-    timeout-minutes: 30
+    timeout-minutes: 90
 
     env:
       PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
