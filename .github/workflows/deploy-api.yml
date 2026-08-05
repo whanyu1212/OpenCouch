@@ -157,14 +157,29 @@ jobs:
             --project "${PROJECT_ID}" \
             --region "${REGION}" \
             --format='value(metadata.name)' >/dev/null 2>&1; then
-            current_timeout="$(gcloud run services describe "${SERVICE_NAME}" \
+            mapfile -t traffic_revisions < <(gcloud run services describe "${SERVICE_NAME}" \
               --project "${PROJECT_ID}" \
               --region "${REGION}" \
-              --format='value(spec.template.spec.timeoutSeconds)')"
-            if [[ ! "${current_timeout}" =~ ^[1-9][0-9]*$ ]]; then
-              echo "Could not resolve the current Cloud Run request timeout." >&2
+              --format=json | jq -r '.status.traffic[] | select((.percent // 0) > 0 or (.tag // "") != "") | .revisionName' | sort -u)
+            if (( ${#traffic_revisions[@]} == 0 )); then
+              echo "Could not resolve the Cloud Run revisions currently receiving traffic." >&2
               exit 1
             fi
+
+            max_timeout=0
+            for revision in "${traffic_revisions[@]}"; do
+              revision_timeout="$(gcloud run revisions describe "${revision}" \
+                --project "${PROJECT_ID}" \
+                --region "${REGION}" \
+                --format='value(spec.timeoutSeconds)')"
+              if [[ ! "${revision_timeout}" =~ ^[1-9][0-9]*$ ]]; then
+                echo "Could not resolve the request timeout for traffic-serving revision ${revision}." >&2
+                exit 1
+              fi
+              if (( revision_timeout > max_timeout )); then
+                max_timeout="${revision_timeout}"
+              fi
+            done
 
             gcloud run services update-traffic "${SERVICE_NAME}" \
               --project "${PROJECT_ID}" \
@@ -178,8 +193,8 @@ jobs:
               --scaling=0 \
               --quiet
 
-            drain_seconds="$((current_timeout + 10))"
-            echo "Waiting ${drain_seconds}s for requests admitted under the ${current_timeout}s timeout to finish."
+            drain_seconds="$((max_timeout + 10))"
+            echo "Waiting ${drain_seconds}s for requests admitted under the maximum ${max_timeout}s traffic-revision timeout to finish."
             sleep "${drain_seconds}"
           fi
 
