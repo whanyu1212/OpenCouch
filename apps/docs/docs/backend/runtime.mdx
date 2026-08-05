@@ -34,6 +34,16 @@ through `run_turn` / `run_turn_stream`; finalized Realtime transcripts
 are recorded through `record_voice_turn(...)`, and persistent voice
 sessions end through the same `end_session(...)` summarization path as
 text. The 20-min inactivity sweeper remains text-session oriented.
+
+Failed transcript finalizations retain a bounded retry marker keyed by the
+OpenCouch client turn ID and request hash. The browser renews a retained retry
+handle while it remains available. Non-safety retries expire after two hours
+without that renewal; verified safety interruptions have a seven-day retry
+window. Expired markers become bounded tombstones, so a stale client turn ID
+cannot be replayed as a new transcript, and new turns are rejected when a
+retry handle already owns a pending turn or a thread already holds 32 protected
+pending markers.
+
 See [Voice](/docs/voice) for the full picture.
 :::
 
@@ -65,6 +75,20 @@ Turn-scoped fields (`crisis`, `crisis_audit`, `route`, `response_text`,
 `response_style`, `therapeutic_approach`, and lookup scratch fields)
 are overwritten fresh each turn because they describe one turn's
 decisions and reply.
+
+### Snapshot compatibility
+
+Runtime snapshots use a versioned JSON envelope with `schema_version: 1` and
+the app-owned state under `state`. Existing unversioned snapshots are read as
+version 0 and migrated in memory; the next state save writes the current
+envelope. Unknown state fields are preserved so independent runtime features
+can evolve without a central field registry.
+
+The codec validates persistence-critical channel, routing, safety, and
+lifecycle values before writes and when snapshots are loaded. Malformed
+snapshots and unsupported future schema versions fail explicitly rather than
+being silently mapped to test behavior. The Postgres table schema is unchanged
+because the envelope is stored inside the existing JSONB value.
 
 ---
 
@@ -248,7 +272,9 @@ OpenAI Agents SDK text sessions are a separate, model-visible short-term history
 surface. The SDK `SQLiteSession` option may use `text_sessions.sqlite3`; it is
 not OpenCouch long-term memory and remains guarded by
 `allow_legacy_sqlite=True` when it writes to disk. The TUI exposes that path as
-`--text-session-sqlite-path`.
+`--text-session-sqlite-path`. When the SQLAlchemy SDK backend is selected, the
+runtime validates connectivity and prepares or verifies its schema during
+startup so the first text request does not perform lazy DDL.
 
 ## Key files
 

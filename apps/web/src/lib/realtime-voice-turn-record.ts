@@ -14,6 +14,7 @@ export function buildRealtimeVoiceTurnRecordInput({
   toolCalls,
   outcome = "completed",
   interruptionToken,
+  retryHandleId,
 }: {
   threadId: string;
   userId?: string;
@@ -24,6 +25,7 @@ export function buildRealtimeVoiceTurnRecordInput({
   toolCalls?: RealtimeVoiceRecordedToolCall[];
   outcome?: RealtimeVoiceTurnOutcome;
   interruptionToken?: string;
+  retryHandleId?: string;
 }) {
   return {
     threadId,
@@ -35,6 +37,7 @@ export function buildRealtimeVoiceTurnRecordInput({
     toolCalls: toolCalls || [],
     outcome,
     ...(interruptionToken ? { interruptionToken } : {}),
+    ...(retryHandleId ? { retryHandleId } : {}),
   };
 }
 

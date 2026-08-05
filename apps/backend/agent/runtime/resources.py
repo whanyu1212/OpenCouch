@@ -123,6 +123,9 @@ class RuntimeResources:
             prepared.append("state_store")
             await self.active_session_manager.ensure_schema()
             prepared.append("active_session_manager")
+            if self.text_session_store is not None:
+                await self.text_session_store.ensure_schema()
+                prepared.append("text_session_store")
             for name, backend in (
                 ("memory_store", self.memory_store),
                 ("crisis_log_backend", self.crisis_log_backend),
@@ -191,7 +194,7 @@ class RuntimeResources:
             None: Closes every runtime-owned resource.
 
         Raises:
-            Exception: Re-raises the first close failure, if any.
+            BaseException: Re-raises the first close failure, if any.
         """
 
         closables: list[tuple[str, _Closable]] = [
@@ -208,7 +211,7 @@ class RuntimeResources:
         for name, closable in closables:
             try:
                 await closable.aclose()
-            except Exception as exc:
+            except BaseException as exc:
                 logger.warning(
                     "RuntimeResources.aclose: closing %s raised; continuing "
                     "so remaining resources are still released.",

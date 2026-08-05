@@ -4,11 +4,16 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
 import agent.runtime.state_store as runtime_state_store_module
 from agent.models import Channel, CrisisAssessment
-from tests.support.persistence_contracts import open_postgres_runtime_state_store
+from tests.support.persistence_contracts import (
+    open_postgres_runtime_state_store,
+    require_postgres_database_url,
+)
 
 pytestmark = pytest.mark.asyncio
 
@@ -106,3 +111,63 @@ async def test_runtime_state_store_delete_is_idempotent() -> None:
         assert await store.load_state(thread_id) is None
         await store.delete_thread(thread_id)
         assert await store.load_state(thread_id) is None
+
+
+async def test_runtime_state_store_persists_v1_and_reads_legacy_v0() -> None:
+    dsn = require_postgres_database_url()
+    current_thread_id = _thread_id("postgres-v1-envelope")
+    legacy_thread_id = _thread_id("postgres-v0-legacy")
+
+    async with open_postgres_runtime_state_store() as store:
+        try:
+            await store.save_state(
+                current_thread_id,
+                {"channel": Channel.WEB, "session_progress": {"turn_count": 1}},
+            )
+
+            async with await psycopg.AsyncConnection.connect(
+                dsn, autocommit=True
+            ) as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(
+                        """
+                        SELECT value, turn_count
+                        FROM opencouch_thread_state
+                        WHERE thread_id = %s
+                        """,
+                        (current_thread_id,),
+                    )
+                    row = await cursor.fetchone()
+                    assert row is not None
+                    assert row[0]["schema_version"] == 1
+                    assert row[0]["state"]["channel"] == "web"
+                    assert row[1] == 1
+
+                    await cursor.execute(
+                        """
+                        INSERT INTO opencouch_thread_state(
+                            thread_id, updated_at, turn_count, value
+                        )
+                        VALUES (%s, %s, %s, %s)
+                        """,
+                        (
+                            legacy_thread_id,
+                            "2026-08-04T00:00:00Z",
+                            1,
+                            Jsonb(
+                                {
+                                    "channel": "voice",
+                                    "session_progress": {"turn_count": 1},
+                                    "unknown": {"preserved": True},
+                                }
+                            ),
+                        ),
+                    )
+
+            loaded = await store.load_state(legacy_thread_id)
+            assert loaded is not None
+            assert loaded["channel"] is Channel.VOICE
+            assert loaded["unknown"] == {"preserved": True}
+        finally:
+            await store.delete_thread(current_thread_id)
+            await store.delete_thread(legacy_thread_id)

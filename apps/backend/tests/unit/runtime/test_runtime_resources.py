@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import timedelta
 
 import pytest
@@ -80,6 +81,7 @@ async def test_runtime_resources_ensure_schema_prepares_every_durable_backend() 
 
     state_store = _CountingStateStore()
     active_session_manager = _CountingActiveSessionManager()
+    text_session_store = _CountingClosable()
     memory_store = _CountingClosable()
     crisis_log_backend = _CountingClosable()
     session_feedback_backend = _CountingClosable()
@@ -87,7 +89,7 @@ async def test_runtime_resources_ensure_schema_prepares_every_durable_backend() 
         thread_persistence_backend="memory",
         thread_database_url=None,
         state_store=state_store,  # type: ignore[arg-type]
-        text_session_store=None,
+        text_session_store=text_session_store,  # type: ignore[arg-type]
         memory_store=memory_store,  # type: ignore[arg-type]
         crisis_log_backend=crisis_log_backend,  # type: ignore[arg-type]
         session_feedback_backend=session_feedback_backend,  # type: ignore[arg-type]
@@ -100,12 +102,48 @@ async def test_runtime_resources_ensure_schema_prepares_every_durable_backend() 
 
     assert state_store.ensure_schema_calls == 1
     assert active_session_manager.ensure_schema_calls == 1
+    assert text_session_store.ensure_schema_calls == 1
     assert memory_store.ensure_schema_calls == 1
     assert crisis_log_backend.ensure_schema_calls == 1
     assert session_feedback_backend.ensure_schema_calls == 1
     # Preparation alone must not close anything.
     assert memory_store.close_calls == 0
     assert crisis_log_backend.close_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_text_session_preparation_failure_unwinds_runtime_resources() -> None:
+    """A text-session startup failure closes every runtime-owned resource."""
+
+    state_store = _CountingStateStore()
+    text_session_store = _FailingSchemaBackend()
+    memory_store = _CountingClosable()
+    crisis_log_backend = _CountingClosable()
+    session_feedback_backend = _CountingClosable()
+    active_session_store = _CountingClosable()
+    resources = RuntimeResources(
+        thread_persistence_backend="memory",
+        thread_database_url=None,
+        state_store=state_store,  # type: ignore[arg-type]
+        text_session_store=text_session_store,  # type: ignore[arg-type]
+        memory_store=memory_store,  # type: ignore[arg-type]
+        crisis_log_backend=crisis_log_backend,  # type: ignore[arg-type]
+        session_feedback_backend=session_feedback_backend,  # type: ignore[arg-type]
+        embedding_provider=NullEmbeddingProvider(),
+        active_session_store=active_session_store,  # type: ignore[arg-type]
+        active_session_manager=_CountingActiveSessionManager(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError, match="simulated schema preparation failure"):
+        await resources.ensure_schema()
+
+    assert text_session_store.close_calls == 1
+    assert state_store.close_calls == 1
+    assert active_session_store.close_calls == 1
+    assert memory_store.ensure_schema_calls == 0
+    assert memory_store.close_calls == 1
+    assert crisis_log_backend.close_calls == 1
+    assert session_feedback_backend.close_calls == 1
 
 
 @pytest.mark.asyncio
@@ -250,6 +288,42 @@ async def test_runtime_resources_aclose_releases_every_resource_despite_failure(
         await resources.aclose()
 
     # Every resource after the failing one is still released.
+    assert crisis_log_backend.close_calls == 1
+    assert session_feedback_backend.close_calls == 1
+    assert state_store.close_calls == 1
+    assert active_session_store.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_resources_aclose_releases_every_resource_despite_cancellation() -> (
+    None
+):
+    """Cancellation from one closer must not strand the remaining resources."""
+
+    class _CancellingClosable:
+        async def aclose(self) -> None:
+            raise asyncio.CancelledError()
+
+    crisis_log_backend = _CountingClosable()
+    session_feedback_backend = _CountingClosable()
+    state_store = _CountingStateStore()
+    active_session_store = _CountingClosable()
+    resources = RuntimeResources(
+        thread_persistence_backend="memory",
+        thread_database_url=None,
+        state_store=state_store,  # type: ignore[arg-type]
+        text_session_store=None,
+        memory_store=_CancellingClosable(),  # type: ignore[arg-type]
+        crisis_log_backend=crisis_log_backend,  # type: ignore[arg-type]
+        session_feedback_backend=session_feedback_backend,  # type: ignore[arg-type]
+        embedding_provider=NullEmbeddingProvider(),
+        active_session_store=active_session_store,  # type: ignore[arg-type]
+        active_session_manager=_CountingActiveSessionManager(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(asyncio.CancelledError):
+        await resources.aclose()
+
     assert crisis_log_backend.close_calls == 1
     assert session_feedback_backend.close_calls == 1
     assert state_store.close_calls == 1

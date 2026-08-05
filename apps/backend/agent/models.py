@@ -33,6 +33,17 @@ class ResponseCategory(str, Enum):
 
 SessionAction = Literal["none", "suggest_end_session"]
 
+AgentRoute = Literal[
+    "",
+    "crisis",
+    "grounded_lookup",
+    "guided_exercise",
+    "memory_control",
+    "therapeutic",
+    "voice_connection_interrupted",
+    "voice_safety_interrupted",
+]
+
 SessionIntent = Literal[
     "vent",
     "understand",

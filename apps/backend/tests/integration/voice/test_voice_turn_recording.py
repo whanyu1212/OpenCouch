@@ -4,7 +4,7 @@ from dataclasses import replace
 
 import asyncio
 import hashlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
@@ -17,14 +17,21 @@ from agent.models import CrisisAssessment, MessageRole
 from agent.observability.config import TraceConfig
 from agent.observability.context import TraceContext, use_trace_context
 from agent.observability.events import (
+    VOICE_PENDING_TURNS_RETIRED,
     VOICE_RESPONSE_FINALIZED,
     VOICE_SAFETY_INTERRUPTED_TURN_RECORDED,
     VOICE_TURN_COMPLETION_METADATA_PERSIST_FAILED,
 )
 from agent.observability.recorder import InMemoryTraceRecorder
 from agent.runtime import PersistentAgentRuntime, RuntimeBehaviorConfig
+from agent.voice.runtime_facade import (
+    VoicePendingTurnCapacityError,
+    VoicePendingTurnHandleBusyError,
+    VoicePendingTurnRetiredError,
+)
 from agent.voice.safety_proof import VoiceSafetyInterruptionProofService
 from api.dependencies import get_llm_client
+from api.models import VoiceTurnRecordRequest
 from api.router import api_router
 from api.routes import voice as voice_routes
 from tests.support.api_selection import runtime_selection
@@ -32,7 +39,9 @@ from tests.support.persistence import (
     FakeCrossRestartLLM,
     in_memory_audit_feedback_dependencies,
     in_memory_runtime_storage_paths,
+    postgres_thread_persistence_config,
     runtime_persistence_config,
+    runtime_storage_paths,
 )
 from tests.support.safety_capture import (
     CRISIS_VOICE_RESPONSE_TEXT,
@@ -950,6 +959,562 @@ async def test_voice_turn_retry_resumes_failed_lifecycle_without_duplicate_trans
     assert receipt.message_count == 2
     assert correlation_hash in state["diagnostics"]["voice_recorded_turn_hashes"]
     assert "voice_pending_turns" not in state["diagnostics"]
+
+
+@pytest.mark.asyncio
+async def test_pending_voice_turn_capacity_preserves_existing_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    )
+    original_save_state = runtime._state_store.save_state
+
+    async def fail_completion_receipt_save(thread_id: str, state: Any) -> None:
+        diagnostics = state.get("diagnostics", {})
+        if diagnostics.get("voice_recorded_turn_receipts"):
+            raise RuntimeError("simulated pending voice turn failure")
+        await original_save_state(thread_id, state)
+
+    monkeypatch.setattr(
+        runtime._state_store,
+        "save_state",
+        fail_completion_receipt_save,
+    )
+
+    async with runtime:
+        for index in range(32):
+            with pytest.raises(RuntimeError, match="pending voice turn failure"):
+                await runtime.voice.record_voice_turn(
+                    thread_id="voice-pending-capacity",
+                    user_id="user-1",
+                    user_text=f"user turn {index}",
+                    assistant_text=f"assistant turn {index}",
+                    correlation_hash=f"pending-correlation-{index}",
+                    request_hash=f"pending-request-{index}",
+                    retry_handle_id=f"retry-handle-{index}",
+                    llm_client=None,
+                )
+
+        with pytest.raises(VoicePendingTurnCapacityError):
+            await runtime.voice.record_voice_turn(
+                thread_id="voice-pending-capacity",
+                user_id="user-1",
+                user_text="overflow user turn",
+                assistant_text="overflow assistant turn",
+                correlation_hash="pending-correlation-overflow",
+                request_hash="pending-request-overflow",
+                retry_handle_id="retry-handle-overflow",
+                llm_client=None,
+            )
+
+        pending_state = await runtime.get_state("voice-pending-capacity")
+        assert pending_state is not None
+        assert len(pending_state["diagnostics"]["voice_pending_turns"]) == 32
+
+        monkeypatch.setattr(runtime._state_store, "save_state", original_save_state)
+        await runtime.voice.record_voice_turn(
+            thread_id="voice-pending-capacity",
+            user_id="user-1",
+            user_text="user turn 0",
+            assistant_text="assistant turn 0",
+            correlation_hash="pending-correlation-0",
+            request_hash="pending-request-0",
+            retry_handle_id="retry-handle-0",
+            llm_client=None,
+        )
+        state = await runtime.get_state("voice-pending-capacity")
+
+    assert state is not None
+    assert len(state["diagnostics"]["voice_pending_turns"]) == 31
+    assert "pending-correlation-0" not in state["diagnostics"]["voice_pending_turns"]
+
+
+@pytest.mark.asyncio
+async def test_pending_voice_turn_retry_cannot_claim_another_handles_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    )
+    original_save_state = runtime._state_store.save_state
+
+    async def fail_completion_receipt_save(thread_id: str, state: Any) -> None:
+        diagnostics = state.get("diagnostics", {})
+        if diagnostics.get("voice_recorded_turn_receipts"):
+            raise RuntimeError("simulated pending voice turn failure")
+        await original_save_state(thread_id, state)
+
+    monkeypatch.setattr(
+        runtime._state_store,
+        "save_state",
+        fail_completion_receipt_save,
+    )
+
+    async with runtime:
+        for correlation_hash, request_hash, retry_handle_id in (
+            ("first-pending-correlation", "first-pending-request", "first-handle"),
+            ("second-pending-correlation", "second-pending-request", "second-handle"),
+        ):
+            with pytest.raises(RuntimeError, match="pending voice turn failure"):
+                await runtime.voice.record_voice_turn(
+                    thread_id="voice-pending-handle-ownership",
+                    user_id="user-1",
+                    user_text=correlation_hash,
+                    assistant_text="assistant turn",
+                    correlation_hash=correlation_hash,
+                    request_hash=request_hash,
+                    retry_handle_id=retry_handle_id,
+                    llm_client=None,
+                )
+
+        with pytest.raises(VoicePendingTurnHandleBusyError):
+            await runtime.voice.record_voice_turn(
+                thread_id="voice-pending-handle-ownership",
+                user_id="user-1",
+                user_text="first-pending-correlation",
+                assistant_text="assistant turn",
+                correlation_hash="first-pending-correlation",
+                request_hash="first-pending-request",
+                retry_handle_id="second-handle",
+                llm_client=None,
+            )
+
+        state = await runtime.get_state("voice-pending-handle-ownership")
+
+    assert state is not None
+    pending_turns = state["diagnostics"]["voice_pending_turns"]
+    assert (
+        pending_turns["first-pending-correlation"]["retry_handle_id"] == "first-handle"
+    )
+    assert (
+        pending_turns["second-pending-correlation"]["retry_handle_id"]
+        == "second-handle"
+    )
+
+
+@pytest.mark.asyncio
+async def test_expired_pending_voice_turn_is_retired_without_replay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    )
+    original_save_state = runtime._state_store.save_state
+    completion_receipt_attempts = 0
+
+    async def fail_completion_receipt_save_once(thread_id: str, state: Any) -> None:
+        nonlocal completion_receipt_attempts
+        diagnostics = state.get("diagnostics", {})
+        if diagnostics.get("voice_recorded_turn_receipts"):
+            completion_receipt_attempts += 1
+            if completion_receipt_attempts <= 2:
+                raise RuntimeError("simulated stale pending turn failure")
+        await original_save_state(thread_id, state)
+
+    monkeypatch.setattr(
+        runtime._state_store,
+        "save_state",
+        fail_completion_receipt_save_once,
+    )
+    recorder = InMemoryTraceRecorder()
+    trace_context = TraceContext(
+        trace_id="voice-pending-turn-retirement",
+        config=TraceConfig(enabled=True),
+    )
+
+    async with runtime:
+        with pytest.raises(RuntimeError, match="stale pending turn failure"):
+            await runtime.voice.record_voice_turn(
+                thread_id="voice-pending-retirement",
+                user_id="user-1",
+                user_text="expired user turn",
+                assistant_text="expired assistant turn",
+                correlation_hash="expired-correlation",
+                request_hash="expired-request",
+                llm_client=None,
+            )
+
+        pending_state = await runtime.get_state("voice-pending-retirement")
+        assert pending_state is not None
+        pending_turn = pending_state["diagnostics"]["voice_pending_turns"][
+            "expired-correlation"
+        ]
+        pending_turn["last_attempted_at"] = "2000-01-01T00:00:00Z"
+        await runtime._state_store.save_state("voice-pending-retirement", pending_state)
+
+        with use_trace_context(trace_context, recorder):
+            with pytest.raises(VoicePendingTurnRetiredError):
+                await runtime.voice.record_voice_turn(
+                    thread_id="voice-pending-retirement",
+                    user_id="user-1",
+                    user_text="expired user turn",
+                    assistant_text="expired assistant turn",
+                    correlation_hash="expired-correlation",
+                    request_hash="expired-request",
+                    llm_client=None,
+                )
+
+        await runtime.voice.record_voice_turn(
+            thread_id="voice-pending-retirement",
+            user_id="user-1",
+            user_text="current user turn",
+            assistant_text="current assistant turn",
+            correlation_hash="current-correlation",
+            request_hash="current-request",
+            llm_client=None,
+        )
+        state = await runtime.get_state("voice-pending-retirement")
+
+    assert state is not None
+    diagnostics = state["diagnostics"]
+    assert "expired-correlation" not in diagnostics.get("voice_pending_turns", {})
+    tombstone = diagnostics["voice_retired_pending_turns"]["expired-correlation"]
+    assert tombstone["request_hash"] == "expired-request"
+    assert isinstance(tombstone["retired_at"], str)
+    retirement_event = next(
+        event for event in recorder.events if event.name == VOICE_PENDING_TURNS_RETIRED
+    )
+    assert retirement_event.attributes["retired_count"] == 1
+    assert retirement_event.attributes["retired_safety_count"] == 0
+    assert retirement_event.attributes["retired_non_safety_count"] == 1
+    assert retirement_event.attributes["max_age_seconds"] > 0
+    assert "expired user turn" not in str(retirement_event.attributes)
+
+
+@pytest.mark.asyncio
+async def test_pending_voice_retry_survives_postgres_runtime_restart(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    storage_paths = runtime_storage_paths(tmp_path)
+    persistence_config = postgres_thread_persistence_config()
+    thread_id = "voice-pending-restart"
+    correlation_hash = "restart-correlation"
+    request_hash = "restart-request"
+
+    async with PersistentAgentRuntime(
+        storage_paths=storage_paths,
+        persistence_config=persistence_config,
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    ) as runtime_a:
+        original_save_state = runtime_a._state_store.save_state
+
+        async def fail_completion_receipt_save(thread_id: str, state: Any) -> None:
+            diagnostics = state.get("diagnostics", {})
+            if diagnostics.get("voice_recorded_turn_receipts"):
+                raise RuntimeError("simulated restart receipt failure")
+            await original_save_state(thread_id, state)
+
+        monkeypatch.setattr(
+            runtime_a._state_store,
+            "save_state",
+            fail_completion_receipt_save,
+        )
+
+        with pytest.raises(RuntimeError, match="restart receipt failure"):
+            await runtime_a.voice.record_voice_turn(
+                thread_id=thread_id,
+                user_id="user-1",
+                user_text="restart user turn",
+                assistant_text="restart assistant turn",
+                correlation_hash=correlation_hash,
+                request_hash=request_hash,
+                retry_handle_id="restart-handle",
+                llm_client=None,
+            )
+        state = await runtime_a.get_state(thread_id)
+        assert state is not None
+        assert correlation_hash in state["diagnostics"]["voice_pending_turns"]
+
+    async with PersistentAgentRuntime(
+        storage_paths=storage_paths,
+        persistence_config=persistence_config,
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    ) as runtime_b:
+        state = await runtime_b.voice.record_voice_turn(
+            thread_id=thread_id,
+            user_id="user-1",
+            user_text="restart user turn",
+            assistant_text="restart assistant turn",
+            correlation_hash=correlation_hash,
+            request_hash=request_hash,
+            retry_handle_id="restart-handle",
+            llm_client=None,
+        )
+        history = await runtime_b.get_history(thread_id)
+
+    assert "voice_pending_turns" not in state["diagnostics"]
+    assert [message.content for message in history] == [
+        "restart user turn",
+        "restart assistant turn",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_retry_handle_heartbeat_protects_pending_voice_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    )
+    original_save_state = runtime._state_store.save_state
+
+    async def fail_completion_receipt_save(thread_id: str, state: Any) -> None:
+        diagnostics = state.get("diagnostics", {})
+        if diagnostics.get("voice_recorded_turn_receipts"):
+            raise RuntimeError("simulated live retry failure")
+        await original_save_state(thread_id, state)
+
+    monkeypatch.setattr(
+        runtime._state_store,
+        "save_state",
+        fail_completion_receipt_save,
+    )
+    stale_timestamp = "2000-01-01T00:00:00Z"
+
+    async with runtime:
+        with pytest.raises(RuntimeError, match="live retry failure"):
+            await runtime.voice.record_voice_turn(
+                thread_id="voice-retry-handle",
+                user_id="user-1",
+                user_text="live user turn",
+                assistant_text="live assistant turn",
+                correlation_hash="live-correlation",
+                request_hash="live-request",
+                retry_handle_id="live-handle",
+                llm_client=None,
+            )
+
+        pending_state = await runtime.get_state("voice-retry-handle")
+        assert pending_state is not None
+        pending_turn = pending_state["diagnostics"]["voice_pending_turns"][
+            "live-correlation"
+        ]
+        pending_turn["last_attempted_at"] = stale_timestamp
+        await runtime._state_store.save_state("voice-retry-handle", pending_state)
+        await runtime.voice.touch_pending_voice_retry_handle(
+            thread_id="voice-retry-handle",
+            retry_handle_id="live-handle",
+        )
+
+        with pytest.raises(VoicePendingTurnHandleBusyError):
+            await runtime.voice.record_voice_turn(
+                thread_id="voice-retry-handle",
+                user_id="user-1",
+                user_text="competing user turn",
+                assistant_text="competing assistant turn",
+                correlation_hash="competing-correlation",
+                request_hash="competing-request",
+                retry_handle_id="live-handle",
+                llm_client=None,
+            )
+
+        with pytest.raises(RuntimeError, match="live retry failure"):
+            await runtime.voice.record_voice_turn(
+                thread_id="voice-retry-handle",
+                user_id="user-1",
+                user_text="new user turn",
+                assistant_text="new assistant turn",
+                correlation_hash="new-correlation",
+                request_hash="new-request",
+                retry_handle_id="new-handle",
+                llm_client=None,
+            )
+        pending_state = await runtime.get_state("voice-retry-handle")
+        assert pending_state is not None
+        expired_turn = pending_state["diagnostics"]["voice_pending_turns"][
+            "new-correlation"
+        ]
+        expired_turn["last_attempted_at"] = stale_timestamp
+        expired_turn["retry_handle_seen_at"] = stale_timestamp
+        await runtime._state_store.save_state("voice-retry-handle", pending_state)
+        await runtime.voice.touch_pending_voice_retry_handle(
+            thread_id="voice-retry-handle",
+            retry_handle_id="new-handle",
+        )
+        state = await runtime.get_state("voice-retry-handle")
+
+    assert state is not None
+    diagnostics = state["diagnostics"]
+    assert len(diagnostics["voice_pending_turns"]) == 1
+    assert "new-correlation" not in diagnostics["voice_pending_turns"]
+    assert (
+        diagnostics["voice_retired_pending_turns"]["new-correlation"]["request_hash"]
+        == "new-request"
+    )
+    assert "live-correlation" not in diagnostics.get("voice_retired_pending_turns", {})
+
+
+@pytest.mark.asyncio
+async def test_safety_pending_voice_turn_survives_extended_retry_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+        behavior_config=RuntimeBehaviorConfig(
+            finalize_active_sessions_on_close=False,
+        ),
+    )
+    original_save_state = runtime._state_store.save_state
+
+    async def fail_completion_receipt_save(thread_id: str, state: Any) -> None:
+        diagnostics = state.get("diagnostics", {})
+        if diagnostics.get("voice_recorded_turn_receipts"):
+            raise RuntimeError("simulated safety retry failure")
+        await original_save_state(thread_id, state)
+
+    monkeypatch.setattr(
+        runtime._state_store,
+        "save_state",
+        fail_completion_receipt_save,
+    )
+    assessment = CrisisAssessment(
+        level=3,
+        confidence="high",
+        reason="verified safety interruption",
+        needs_crisis_response=True,
+        needs_clarification=False,
+    )
+    extended_outage = (
+        (datetime.now(timezone.utc) - timedelta(days=3))
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+
+    async with runtime:
+        with pytest.raises(RuntimeError, match="safety retry failure"):
+            await runtime.voice.record_voice_turn(
+                thread_id="voice-safety-retention",
+                user_id="user-1",
+                user_text="I might hurt myself.",
+                assistant_text="",
+                outcome="safety_interrupted",
+                correlation_hash="safety-correlation",
+                request_hash="safety-request",
+                retry_handle_id="safety-handle",
+                safety_assessment=assessment,
+                llm_client=None,
+            )
+
+        pending_state = await runtime.get_state("voice-safety-retention")
+        assert pending_state is not None
+        safety_pending_turn = pending_state["diagnostics"]["voice_pending_turns"][
+            "safety-correlation"
+        ]
+        safety_pending_turn["created_at"] = extended_outage
+        safety_pending_turn["last_attempted_at"] = extended_outage
+        await runtime._state_store.save_state("voice-safety-retention", pending_state)
+
+        with pytest.raises(RuntimeError, match="safety retry failure"):
+            await runtime.voice.record_voice_turn(
+                thread_id="voice-safety-retention",
+                user_id="user-1",
+                user_text="ordinary user turn",
+                assistant_text="ordinary assistant turn",
+                correlation_hash="ordinary-correlation",
+                request_hash="ordinary-request",
+                retry_handle_id="ordinary-handle",
+                llm_client=None,
+            )
+        state = await runtime.get_state("voice-safety-retention")
+
+    assert state is not None
+    diagnostics = state["diagnostics"]
+    assert "safety-correlation" in diagnostics["voice_pending_turns"]
+    assert "safety-correlation" not in diagnostics.get(
+        "voice_retired_pending_turns", {}
+    )
+
+
+@pytest.mark.asyncio
+async def test_turn_endpoint_rejects_a_retired_pending_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(
+        storage_paths=in_memory_runtime_storage_paths(),
+        persistence_config=runtime_persistence_config(MemoryMode.LOCAL),
+    )
+    payload = {
+        "thread_id": "voice-retired-retry-endpoint",
+        "client_turn_id": "expired-client-turn",
+        "memory_mode": "persistent",
+        "user_text": "expired user turn",
+        "assistant_text": "expired assistant turn",
+    }
+    request = VoiceTurnRecordRequest.model_validate(payload)
+    correlation_hash = voice_routes._voice_turn_correlation_hash(
+        thread_id=request.thread_id,
+        client_turn_id=request.client_turn_id or "",
+    )
+    request_hash = voice_routes._voice_turn_request_hash(request)
+    app = FastAPI()
+    app.include_router(api_router, prefix="/api")
+    monkeypatch.setattr(
+        voice_routes,
+        "get_runtime_selection",
+        lambda mode: runtime_selection(runtime, mode),
+    )
+    app.dependency_overrides[get_llm_client] = lambda: None
+
+    async with runtime:
+        await runtime._state_store.save_state(
+            request.thread_id,
+            {
+                "diagnostics": {
+                    "voice_retired_pending_turns": {
+                        correlation_hash: {
+                            "request_hash": request_hash,
+                            "retired_at": "2000-01-01T00:00:00Z",
+                        }
+                    }
+                }
+            },
+        )
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.post("/api/voice/realtime/turn", json=payload)
+
+    assert response.status_code == 410
+    assert response.json()["detail"] == {
+        "code": "voice_realtime_turn_retry_expired",
+        "message": "The retry window for this voice turn has expired. Start a new turn instead.",
+    }
+
+
+def test_voice_turn_request_rejects_an_unknown_persisted_route() -> None:
+    with pytest.raises(ValueError):
+        VoiceTurnRecordRequest.model_validate(
+            {
+                "thread_id": "voice-route-contract",
+                "user_text": "hello",
+                "assistant_text": "hi",
+                "route": "custom_route",
+            }
+        )
 
 
 @pytest.mark.asyncio
