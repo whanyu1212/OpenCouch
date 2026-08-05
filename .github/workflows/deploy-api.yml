@@ -268,6 +268,12 @@ jobs:
             --scaling=1 \
             --quiet
 
+      - name: Refresh Google Cloud authentication before verification
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
+
       - name: Verify deployment contract
         env:
           EXPECTED_IMAGE: ${{ steps.image.outputs.repo }}@${{ steps.build.outputs.digest }}
