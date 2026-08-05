@@ -149,14 +149,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Refresh Google Cloud authentication before drain
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
+
       - name: Disable and drain the current service
         run: |
           set -euo pipefail
 
-          if gcloud run services describe "${SERVICE_NAME}" \
+          existing_service="$(gcloud run services list \
             --project "${PROJECT_ID}" \
             --region "${REGION}" \
-            --format='value(metadata.name)' >/dev/null 2>&1; then
+            --filter="metadata.name=${SERVICE_NAME}" \
+            --format='value(metadata.name)')"
+          if [[ "${existing_service}" == "${SERVICE_NAME}" ]]; then
             echo "SERVICE_EXISTS=true" >> "${GITHUB_ENV}"
             mapfile -t traffic_revisions < <(gcloud run services describe "${SERVICE_NAME}" \
               --project "${PROJECT_ID}" \
