@@ -157,6 +157,7 @@ jobs:
             --project "${PROJECT_ID}" \
             --region "${REGION}" \
             --format='value(metadata.name)' >/dev/null 2>&1; then
+            echo "SERVICE_EXISTS=true" >> "${GITHUB_ENV}"
             mapfile -t traffic_revisions < <(gcloud run services describe "${SERVICE_NAME}" \
               --project "${PROJECT_ID}" \
               --region "${REGION}" \
@@ -196,6 +197,8 @@ jobs:
             drain_seconds="$((max_timeout + 10))"
             echo "Waiting ${drain_seconds}s for requests admitted under the maximum ${max_timeout}s traffic-revision timeout to finish."
             sleep "${drain_seconds}"
+          else
+            echo "SERVICE_EXISTS=false" >> "${GITHUB_ENV}"
           fi
 
       - name: Deploy disabled revision
@@ -208,6 +211,10 @@ jobs:
           env_value="OPENCOUCH_MEMORY_MODE=persistent##OPENCOUCH_PERSISTENCE_BACKEND=postgres"
           if [[ -n "${OPENCOUCH_CORS_ORIGINS:-}" ]]; then
             env_value+="##OPENCOUCH_CORS_ORIGINS=${OPENCOUCH_CORS_ORIGINS}"
+          fi
+          traffic_args=()
+          if [[ "${SERVICE_EXISTS}" == "true" ]]; then
+            traffic_args+=(--no-traffic)
           fi
 
           gcloud run deploy "${SERVICE_NAME}" \
@@ -224,7 +231,7 @@ jobs:
             --concurrency 8 \
             --timeout "${REQUEST_TIMEOUT_SECONDS}" \
             --scaling=0 \
-            --no-traffic \
+            "${traffic_args[@]}" \
             --set-cloudsql-instances "${CLOUD_SQL_INSTANCE}" \
             --set-secrets "OPENAI_API_KEY=${OPENAI_API_KEY_SECRET_NAME}:${OPENAI_API_KEY_SECRET_VERSION},OPENCOUCH_MEMORY_DATABASE_URL=${DATABASE_URL_SECRET_NAME}:${DATABASE_URL_SECRET_VERSION}" \
             --set-env-vars "^##^${env_value}" \
