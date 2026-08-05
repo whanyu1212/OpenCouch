@@ -120,7 +120,36 @@ jobs:
             --location "${REGION}" \
             --format='value(name)' >/dev/null
 
+          cloud_sql_instance_name="${CLOUD_SQL_INSTANCE##*:}"
+          cloud_sql_region="$(gcloud sql instances describe "${cloud_sql_instance_name}" \
+            --project "${PROJECT_ID}" \
+            --format='value(region)')"
+          if [[ "${cloud_sql_region}" != "${REGION}" ]]; then
+            echo "Cloud SQL instance ${cloud_sql_instance_name} must belong to ${REGION}." >&2
+            exit 1
+          fi
+
           runtime_service_account_member="serviceAccount:${RUNTIME_SERVICE_ACCOUNT}"
+          project_iam_policy="$(gcloud projects get-iam-policy "${PROJECT_ID}" --format=json)"
+          if ! jq -e --arg member "${runtime_service_account_member}" \
+            'any(.bindings[]?; .role == "roles/cloudsql.client" and ((.members // []) | index($member) != null))' \
+            <<< "${project_iam_policy}" >/dev/null; then
+            echo "${RUNTIME_SERVICE_ACCOUNT} needs Cloud SQL Client on ${PROJECT_ID}." >&2
+            exit 1
+          fi
+
+          gcloud iam service-accounts describe "${RUNTIME_SERVICE_ACCOUNT}" \
+            --project "${PROJECT_ID}" \
+            --format='value(email)' >/dev/null
+          deployer_runtime_permissions="$(gcloud iam service-accounts test-iam-permissions "${RUNTIME_SERVICE_ACCOUNT}" \
+            --project "${PROJECT_ID}" \
+            --permissions=iam.serviceAccounts.actAs \
+            --format='value(permissions)')"
+          if [[ "${deployer_runtime_permissions}" != *"iam.serviceAccounts.actAs"* ]]; then
+            echo "The deployer cannot act as ${RUNTIME_SERVICE_ACCOUNT}." >&2
+            exit 1
+          fi
+
           runtime_secrets=(
             "${OPENAI_API_KEY_SECRET_NAME}:${OPENAI_API_KEY_SECRET_VERSION}"
             "${DATABASE_URL_SECRET_NAME}:${DATABASE_URL_SECRET_VERSION}"

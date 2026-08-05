@@ -41,7 +41,9 @@ the deployer service account to mint that smoke test's ID token; grant
 `roles/iam.serviceAccountOpenIdTokenCreator` for this purpose. To preflight
 runtime secrets before disabling the service, it needs the narrowly scoped
 `secretmanager.versions.get` and `secretmanager.secrets.getIamPolicy`
-permissions on both runtime secrets.
+permissions on both runtime secrets. It also needs `cloudsql.instances.get` and
+`resourcemanager.projects.getIamPolicy` to validate the configured Cloud SQL
+instance and the runtime service account's direct Cloud SQL Client grant.
 
 ## GitHub Actions variables
 
