@@ -141,11 +141,15 @@ jobs:
           gcloud iam service-accounts describe "${RUNTIME_SERVICE_ACCOUNT}" \
             --project "${PROJECT_ID}" \
             --format='value(email)' >/dev/null
-          deployer_runtime_permissions="$(gcloud iam service-accounts test-iam-permissions "${RUNTIME_SERVICE_ACCOUNT}" \
-            --project "${PROJECT_ID}" \
-            --permissions=iam.serviceAccounts.actAs \
-            --format='value(permissions)')"
-          if [[ "${deployer_runtime_permissions}" != *"iam.serviceAccounts.actAs"* ]]; then
+          deployer_runtime_permissions="$(curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $(gcloud auth print-access-token)" \
+            --header "Content-Type: application/json" \
+            --data '{"permissions":["iam.serviceAccounts.actAs"]}' \
+            "https://iam.googleapis.com/v1/projects/${PROJECT_ID}/serviceAccounts/${RUNTIME_SERVICE_ACCOUNT}:testIamPermissions")"
+          if ! jq -e \
+            '(.permissions // []) | index("iam.serviceAccounts.actAs") != null' \
+            <<< "${deployer_runtime_permissions}" >/dev/null; then
             echo "The deployer cannot act as ${RUNTIME_SERVICE_ACCOUNT}." >&2
             exit 1
           fi
