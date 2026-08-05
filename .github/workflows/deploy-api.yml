@@ -224,12 +224,29 @@ jobs:
             --format='value(metadata.name)')"
           if [[ "${existing_service}" == "${SERVICE_NAME}" ]]; then
             echo "SERVICE_EXISTS=true" >> "${GITHUB_ENV}"
-            mapfile -t traffic_revisions < <(gcloud run services describe "${SERVICE_NAME}" \
+            service_json="$(gcloud run services describe "${SERVICE_NAME}" \
               --project "${PROJECT_ID}" \
               --region "${REGION}" \
-              --format=json | jq -r '.status.traffic[] | select((.percent // 0) > 0 or (.tag // "") != "") | .revisionName' | sort -u)
+              --format=json)"
+            mapfile -t traffic_revisions < <(jq -r \
+              '(.status.traffic // [])[] | select((.percent // 0) > 0 or (.tag // "") != "") | .revisionName' \
+              <<< "${service_json}" | sort -u)
             if (( ${#traffic_revisions[@]} == 0 )); then
               echo "Could not resolve the Cloud Run revisions currently receiving traffic." >&2
+              exit 1
+            fi
+
+            traffic_assignments="$(jq -r \
+              '[.status.traffic[] | select((.percent // 0) > 0)]
+              | group_by(.revisionName)
+              | map("\(.[0].revisionName)=\(map(.percent // 0) | add)")
+              | join(",")' \
+              <<< "${service_json}")"
+            traffic_percent="$(jq -r \
+              '[.status.traffic[] | .percent // 0] | add // 0' \
+              <<< "${service_json}")"
+            if [[ -z "${traffic_assignments}" || "${traffic_percent}" != "100" ]]; then
+              echo "Could not pin the complete Cloud Run traffic assignment before drain." >&2
               exit 1
             fi
 
@@ -252,6 +269,7 @@ jobs:
               --project "${PROJECT_ID}" \
               --region "${REGION}" \
               --clear-tags \
+              --to-revisions "${traffic_assignments}" \
               --quiet
 
             gcloud run services update "${SERVICE_NAME}" \
