@@ -75,9 +75,21 @@ jobs:
             exit 1
           fi
 
-          if [[ "${OPENCOUCH_CORS_ORIGINS:-}" == "*" ]]; then
-            echo "OPENCOUCH_CORS_ORIGINS must not be '*' for a deployed service." >&2
+          if [[ "${CLOUD_SQL_INSTANCE}" == *,* ]]; then
+            echo "CLOUD_SQL_INSTANCE must name exactly one instance." >&2
             exit 1
+          fi
+
+          if [[ -n "${OPENCOUCH_CORS_ORIGINS:-}" ]]; then
+            IFS=',' read -r -a cors_origins <<< "${OPENCOUCH_CORS_ORIGINS}"
+            for origin in "${cors_origins[@]}"; do
+              origin="${origin#"${origin%%[![:space:]]*}"}"
+              origin="${origin%"${origin##*[![:space:]]}"}"
+              if [[ "${origin}" == "*" ]]; then
+                echo "OPENCOUCH_CORS_ORIGINS must not contain '*' for a deployed service." >&2
+                exit 1
+              fi
+            done
           fi
 
           if [[ ! "${DATABASE_URL_SECRET_VERSION}" =~ ^[1-9][0-9]*$ ]]; then
@@ -190,6 +202,7 @@ jobs:
             --service-account "${RUNTIME_SERVICE_ACCOUNT}" \
             --port 8080 \
             --no-allow-unauthenticated \
+            --invoker-iam-check \
             --ingress all \
             --cpu 1 \
             --memory 1Gi \
@@ -245,6 +258,15 @@ jobs:
             --format="value(metadata.annotations.'run.googleapis.com/manualInstanceCount')")"
           if [[ "${scaling_mode}" != "manual" || "${instance_count}" != "1" ]]; then
             echo "Expected manual scaling at one instance; got mode=${scaling_mode}, count=${instance_count}." >&2
+            exit 1
+          fi
+
+          invoker_iam_disabled="$(gcloud run services describe "${SERVICE_NAME}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format="value(metadata.annotations.'run.googleapis.com/invoker-iam-disabled')")"
+          if [[ "${invoker_iam_disabled}" != "false" ]]; then
+            echo "Expected the Cloud Run Invoker IAM check to be enabled; got invoker-iam-disabled=${invoker_iam_disabled}." >&2
             exit 1
           fi
 
