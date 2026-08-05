@@ -197,9 +197,9 @@ jobs:
             --timeout "${REQUEST_TIMEOUT_SECONDS}" \
             --scaling=0 \
             --no-traffic \
-            --add-cloudsql-instances "${CLOUD_SQL_INSTANCE}" \
-            --update-secrets "OPENAI_API_KEY=${OPENAI_API_KEY_SECRET_NAME}:${OPENAI_API_KEY_SECRET_VERSION},OPENCOUCH_MEMORY_DATABASE_URL=${DATABASE_URL_SECRET_NAME}:${DATABASE_URL_SECRET_VERSION}" \
-            --update-env-vars "^##^${env_value}" \
+            --set-cloudsql-instances "${CLOUD_SQL_INSTANCE}" \
+            --set-secrets "OPENAI_API_KEY=${OPENAI_API_KEY_SECRET_NAME}:${OPENAI_API_KEY_SECRET_VERSION},OPENCOUCH_MEMORY_DATABASE_URL=${DATABASE_URL_SECRET_NAME}:${DATABASE_URL_SECRET_VERSION}" \
+            --set-env-vars "^##^${env_value}" \
             --quiet
 
       - name: Activate only the latest revision
