@@ -37,6 +37,9 @@ Supporting multiple workers would mean replacing every process-local lock with
 a durable equivalent; treat it as a deliberate architectural change rather than
 a configuration flag.
 
+See [DEPLOYMENT.md](DEPLOYMENT.md) for the private Cloud Run deployment
+workflow, required Google Cloud resources, and failure-recovery behavior.
+
 Local CLI:
 
 ```bash
