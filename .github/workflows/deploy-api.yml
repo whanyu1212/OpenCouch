@@ -1,0 +1,388 @@
+name: Deploy API
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-api-development
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy private development API
+    runs-on: ubuntu-latest
+    environment: development
+    timeout-minutes: 90
+
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION }}
+      REPOSITORY: ${{ vars.AR_REPOSITORY }}
+      SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE }}
+      RUNTIME_SERVICE_ACCOUNT: ${{ vars.RUNTIME_SERVICE_ACCOUNT }}
+      CLOUD_SQL_INSTANCE: ${{ vars.CLOUD_SQL_INSTANCE }}
+      DATABASE_URL_SECRET_NAME: ${{ vars.DATABASE_URL_SECRET_NAME }}
+      DATABASE_URL_SECRET_VERSION: ${{ vars.DATABASE_URL_SECRET_VERSION }}
+      OPENAI_API_KEY_SECRET_NAME: ${{ vars.OPENAI_API_KEY_SECRET_NAME }}
+      OPENAI_API_KEY_SECRET_VERSION: ${{ vars.OPENAI_API_KEY_SECRET_VERSION }}
+      OPENCOUCH_CORS_ORIGINS: ${{ vars.OPENCOUCH_CORS_ORIGINS }}
+      REQUEST_TIMEOUT_SECONDS: "300"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Validate deployment configuration
+        env:
+          WORKLOAD_IDENTITY_PROVIDER: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          DEPLOYER_SERVICE_ACCOUNT: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+
+          required_names=(
+            PROJECT_ID
+            REGION
+            REPOSITORY
+            SERVICE_NAME
+            RUNTIME_SERVICE_ACCOUNT
+            CLOUD_SQL_INSTANCE
+            DATABASE_URL_SECRET_NAME
+            DATABASE_URL_SECRET_VERSION
+            OPENAI_API_KEY_SECRET_NAME
+            OPENAI_API_KEY_SECRET_VERSION
+            WORKLOAD_IDENTITY_PROVIDER
+            DEPLOYER_SERVICE_ACCOUNT
+          )
+
+          for name in "${required_names[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required GitHub Actions variable: ${name}" >&2
+              exit 1
+            fi
+          done
+
+          if [[ "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "Deploy API must be dispatched from the main branch." >&2
+            exit 1
+          fi
+
+          if [[ "${CLOUD_SQL_INSTANCE}" != "${PROJECT_ID}:${REGION}:"* ]]; then
+            echo "CLOUD_SQL_INSTANCE must belong to PROJECT_ID and REGION." >&2
+            exit 1
+          fi
+
+          if [[ "${CLOUD_SQL_INSTANCE}" == *,* ]]; then
+            echo "CLOUD_SQL_INSTANCE must name exactly one instance." >&2
+            exit 1
+          fi
+
+          if [[ -n "${OPENCOUCH_CORS_ORIGINS:-}" ]]; then
+            IFS=',' read -r -a cors_origins <<< "${OPENCOUCH_CORS_ORIGINS}"
+            for origin in "${cors_origins[@]}"; do
+              origin="${origin#"${origin%%[![:space:]]*}"}"
+              origin="${origin%"${origin##*[![:space:]]}"}"
+              if [[ "${origin}" == "*" ]]; then
+                echo "OPENCOUCH_CORS_ORIGINS must not contain '*' for a deployed service." >&2
+                exit 1
+              fi
+            done
+          fi
+
+          if [[ ! "${DATABASE_URL_SECRET_VERSION}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "DATABASE_URL_SECRET_VERSION must be a pinned numeric version." >&2
+            exit 1
+          fi
+
+          if [[ ! "${OPENAI_API_KEY_SECRET_VERSION}" =~ ^[1-9][0-9]*$ ]]; then
+            echo "OPENAI_API_KEY_SECRET_VERSION must be a pinned numeric version." >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Validate Google Cloud resources
+        run: |
+          set -euo pipefail
+
+          gcloud artifacts repositories describe "${REPOSITORY}" \
+            --project "${PROJECT_ID}" \
+            --location "${REGION}" \
+            --format='value(name)' >/dev/null
+
+          cloud_sql_instance_name="${CLOUD_SQL_INSTANCE##*:}"
+          cloud_sql_region="$(gcloud sql instances describe "${cloud_sql_instance_name}" \
+            --project "${PROJECT_ID}" \
+            --format='value(region)')"
+          if [[ "${cloud_sql_region}" != "${REGION}" ]]; then
+            echo "Cloud SQL instance ${cloud_sql_instance_name} must belong to ${REGION}." >&2
+            exit 1
+          fi
+
+          runtime_service_account_member="serviceAccount:${RUNTIME_SERVICE_ACCOUNT}"
+          project_iam_policy="$(gcloud projects get-iam-policy "${PROJECT_ID}" --format=json)"
+          if ! jq -e --arg member "${runtime_service_account_member}" \
+            'any(.bindings[]?; .role == "roles/cloudsql.client" and ((.members // []) | index($member) != null))' \
+            <<< "${project_iam_policy}" >/dev/null; then
+            echo "${RUNTIME_SERVICE_ACCOUNT} needs Cloud SQL Client on ${PROJECT_ID}." >&2
+            exit 1
+          fi
+
+          gcloud iam service-accounts describe "${RUNTIME_SERVICE_ACCOUNT}" \
+            --project "${PROJECT_ID}" \
+            --format='value(email)' >/dev/null
+          deployer_runtime_permissions="$(gcloud iam service-accounts test-iam-permissions "${RUNTIME_SERVICE_ACCOUNT}" \
+            --project "${PROJECT_ID}" \
+            --permissions=iam.serviceAccounts.actAs \
+            --format='value(permissions)')"
+          if [[ "${deployer_runtime_permissions}" != *"iam.serviceAccounts.actAs"* ]]; then
+            echo "The deployer cannot act as ${RUNTIME_SERVICE_ACCOUNT}." >&2
+            exit 1
+          fi
+
+          runtime_secrets=(
+            "${OPENAI_API_KEY_SECRET_NAME}:${OPENAI_API_KEY_SECRET_VERSION}"
+            "${DATABASE_URL_SECRET_NAME}:${DATABASE_URL_SECRET_VERSION}"
+          )
+          for secret_ref in "${runtime_secrets[@]}"; do
+            secret_name="${secret_ref%:*}"
+            secret_version="${secret_ref##*:}"
+            secret_state="$(gcloud secrets versions describe "${secret_version}" \
+              --secret "${secret_name}" \
+              --project "${PROJECT_ID}" \
+              --format='value(state)')"
+            if [[ "${secret_state}" != "ENABLED" ]]; then
+              echo "Secret ${secret_name} version ${secret_version} must be enabled." >&2
+              exit 1
+            fi
+            if ! gcloud secrets get-iam-policy "${secret_name}" \
+              --project "${PROJECT_ID}" \
+              --format=json | jq -e --arg member "${runtime_service_account_member}" \
+              'any(.bindings[]?; .role == "roles/secretmanager.secretAccessor" and ((.members // []) | index($member) != null))' >/dev/null; then
+              echo "${RUNTIME_SERVICE_ACCOUNT} needs Secret Manager Secret Accessor on ${secret_name}." >&2
+              exit 1
+            fi
+          done
+
+      - name: Configure Docker authentication
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve image coordinates
+        id: image
+        run: |
+          set -euo pipefail
+          image_repo="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/opencouch-api"
+          echo "repo=${image_repo}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build and push backend image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/backend/Dockerfile
+          target: prod
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.repo }}:${{ github.sha }}
+            ${{ steps.image.outputs.repo }}:development-latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Refresh Google Cloud authentication before drain
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Disable and drain the current service
+        run: |
+          set -euo pipefail
+
+          existing_service="$(gcloud run services list \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --filter="metadata.name=${SERVICE_NAME}" \
+            --format='value(metadata.name)')"
+          if [[ "${existing_service}" == "${SERVICE_NAME}" ]]; then
+            echo "SERVICE_EXISTS=true" >> "${GITHUB_ENV}"
+            mapfile -t traffic_revisions < <(gcloud run services describe "${SERVICE_NAME}" \
+              --project "${PROJECT_ID}" \
+              --region "${REGION}" \
+              --format=json | jq -r '.status.traffic[] | select((.percent // 0) > 0 or (.tag // "") != "") | .revisionName' | sort -u)
+            if (( ${#traffic_revisions[@]} == 0 )); then
+              echo "Could not resolve the Cloud Run revisions currently receiving traffic." >&2
+              exit 1
+            fi
+
+            max_timeout=0
+            for revision in "${traffic_revisions[@]}"; do
+              revision_timeout="$(gcloud run revisions describe "${revision}" \
+                --project "${PROJECT_ID}" \
+                --region "${REGION}" \
+                --format='value(spec.timeoutSeconds)')"
+              if [[ ! "${revision_timeout}" =~ ^[1-9][0-9]*$ ]]; then
+                echo "Could not resolve the request timeout for traffic-serving revision ${revision}." >&2
+                exit 1
+              fi
+              if (( revision_timeout > max_timeout )); then
+                max_timeout="${revision_timeout}"
+              fi
+            done
+
+            gcloud run services update-traffic "${SERVICE_NAME}" \
+              --project "${PROJECT_ID}" \
+              --region "${REGION}" \
+              --clear-tags \
+              --quiet
+
+            gcloud run services update "${SERVICE_NAME}" \
+              --project "${PROJECT_ID}" \
+              --region "${REGION}" \
+              --scaling=0 \
+              --quiet
+
+            drain_seconds="$((max_timeout + 10))"
+            echo "Waiting ${drain_seconds}s for requests admitted under the maximum ${max_timeout}s traffic-revision timeout to finish."
+            sleep "${drain_seconds}"
+          else
+            echo "SERVICE_EXISTS=false" >> "${GITHUB_ENV}"
+          fi
+
+      - name: Refresh Google Cloud authentication
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Deploy disabled revision
+        env:
+          IMAGE_REPO: ${{ steps.image.outputs.repo }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          env_value="OPENCOUCH_MEMORY_MODE=persistent##OPENCOUCH_PERSISTENCE_BACKEND=postgres"
+          if [[ -n "${OPENCOUCH_CORS_ORIGINS:-}" ]]; then
+            env_value+="##OPENCOUCH_CORS_ORIGINS=${OPENCOUCH_CORS_ORIGINS}"
+          fi
+          traffic_args=()
+          if [[ "${SERVICE_EXISTS}" == "true" ]]; then
+            traffic_args+=(--no-traffic)
+          fi
+
+          gcloud run deploy "${SERVICE_NAME}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --image "${IMAGE_REPO}@${IMAGE_DIGEST}" \
+            --service-account "${RUNTIME_SERVICE_ACCOUNT}" \
+            --port 8080 \
+            --no-allow-unauthenticated \
+            --invoker-iam-check \
+            --ingress all \
+            --cpu 1 \
+            --memory 1Gi \
+            --concurrency 8 \
+            --timeout "${REQUEST_TIMEOUT_SECONDS}" \
+            --scaling=0 \
+            "${traffic_args[@]}" \
+            --set-cloudsql-instances "${CLOUD_SQL_INSTANCE}" \
+            --set-secrets "OPENAI_API_KEY=${OPENAI_API_KEY_SECRET_NAME}:${OPENAI_API_KEY_SECRET_VERSION},OPENCOUCH_MEMORY_DATABASE_URL=${DATABASE_URL_SECRET_NAME}:${DATABASE_URL_SECRET_VERSION}" \
+            --set-env-vars "^##^${env_value}" \
+            --quiet
+
+      - name: Refresh Google Cloud authentication before activation
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
+
+      - name: Activate and verify deployment contract
+        env:
+          EXPECTED_IMAGE: ${{ steps.image.outputs.repo }}@${{ steps.build.outputs.digest }}
+        run: |
+          set -Eeuo pipefail
+
+          disable_unverified_service() {
+            echo "Deployment verification failed; disabling ${SERVICE_NAME}." >&2
+            gcloud run services update "${SERVICE_NAME}" \
+              --project "${PROJECT_ID}" \
+              --region "${REGION}" \
+              --scaling=0 \
+              --quiet || true
+          }
+          trap disable_unverified_service ERR
+
+          gcloud run services update-traffic "${SERVICE_NAME}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --clear-tags \
+            --to-latest \
+            --quiet
+
+          gcloud run services update "${SERVICE_NAME}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --scaling=1 \
+            --quiet
+
+          scaling_mode="$(gcloud run services describe "${SERVICE_NAME}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format="value(metadata.annotations.'run.googleapis.com/scalingMode')")"
+          instance_count="$(gcloud run services describe "${SERVICE_NAME}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format="value(metadata.annotations.'run.googleapis.com/manualInstanceCount')")"
+          if [[ "${scaling_mode}" != "manual" || "${instance_count}" != "1" ]]; then
+            echo "Expected manual scaling at one instance; got mode=${scaling_mode}, count=${instance_count}." >&2
+            exit 1
+          fi
+
+          invoker_iam_disabled="$(gcloud run services describe "${SERVICE_NAME}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format="value(metadata.annotations.'run.googleapis.com/invoker-iam-disabled')")"
+          if [[ "${invoker_iam_disabled}" != "false" ]]; then
+            echo "Expected the Cloud Run Invoker IAM check to be enabled; got invoker-iam-disabled=${invoker_iam_disabled}." >&2
+            exit 1
+          fi
+
+          actual_image="$(gcloud run services describe "${SERVICE_NAME}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format='value(spec.template.spec.containers[0].image)')"
+          if [[ "${actual_image}" != "${EXPECTED_IMAGE}" ]]; then
+            echo "Expected image ${EXPECTED_IMAGE}, got ${actual_image}." >&2
+            exit 1
+          fi
+
+          service_url="$(gcloud run services describe "${SERVICE_NAME}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format='value(status.url)')"
+          identity_token="$(gcloud auth print-identity-token --audiences "${service_url}")"
+          curl --fail --silent --show-error \
+            --retry 6 \
+            --retry-all-errors \
+            --retry-delay 10 \
+            --header "Authorization: Bearer ${identity_token}" \
+            "${service_url}/api/health"
+
+          trap - ERR
+          echo
+          echo "Deployed ${SERVICE_NAME} at ${service_url}"

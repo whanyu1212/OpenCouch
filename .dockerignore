@@ -27,6 +27,7 @@ skills
 **/tsconfig.tsbuildinfo
 **/.env
 **/.env.local
+gha-creds-*.json
 **/*.pyc
 
 # macOS AppleDouble sidecar files — created on external/non-HFS volumes.
