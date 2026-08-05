@@ -38,7 +38,10 @@ needs Artifact Registry write access, Cloud Run deployment access, permission
 to act as the runtime service account, and Cloud Run Invoker access for the
 authenticated smoke test. It also needs `iam.serviceAccounts.getOpenIdToken` on
 the deployer service account to mint that smoke test's ID token; grant
-`roles/iam.serviceAccountOpenIdTokenCreator` for this purpose.
+`roles/iam.serviceAccountOpenIdTokenCreator` for this purpose. To preflight
+runtime secrets before disabling the service, it needs the narrowly scoped
+`secretmanager.versions.get` and `secretmanager.secrets.getIamPolicy`
+permissions on both runtime secrets.
 
 ## GitHub Actions variables
 
