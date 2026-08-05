@@ -201,6 +201,12 @@ jobs:
             echo "SERVICE_EXISTS=false" >> "${GITHUB_ENV}"
           fi
 
+      - name: Refresh Google Cloud authentication
+        uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
+
       - name: Deploy disabled revision
         env:
           IMAGE_REPO: ${{ steps.image.outputs.repo }}

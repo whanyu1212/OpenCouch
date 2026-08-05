@@ -36,7 +36,9 @@ The runtime service account needs Cloud SQL Client and narrowly scoped Secret
 Manager Secret Accessor access to both runtime secrets. The GitHub deployer
 needs Artifact Registry write access, Cloud Run deployment access, permission
 to act as the runtime service account, and Cloud Run Invoker access for the
-authenticated smoke test.
+authenticated smoke test. It also needs `iam.serviceAccounts.getOpenIdToken` on
+the deployer service account to mint that smoke test's ID token; grant
+`roles/iam.serviceAccountOpenIdTokenCreator` for this purpose.
 
 ## GitHub Actions variables
 
