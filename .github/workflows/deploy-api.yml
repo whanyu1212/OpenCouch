@@ -24,6 +24,7 @@ jobs:
       REPOSITORY: ${{ vars.AR_REPOSITORY }}
       SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE }}
       RUNTIME_SERVICE_ACCOUNT: ${{ vars.RUNTIME_SERVICE_ACCOUNT }}
+      DEPLOYER_SERVICE_ACCOUNT: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
       CLOUD_SQL_INSTANCE: ${{ vars.CLOUD_SQL_INSTANCE }}
       DATABASE_URL_SECRET_NAME: ${{ vars.DATABASE_URL_SECRET_NAME }}
       DATABASE_URL_SECRET_VERSION: ${{ vars.DATABASE_URL_SECRET_VERSION }}
@@ -39,7 +40,6 @@ jobs:
       - name: Validate deployment configuration
         env:
           WORKLOAD_IDENTITY_PROVIDER: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
-          DEPLOYER_SERVICE_ACCOUNT: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
         run: |
           set -euo pipefail
 
@@ -351,7 +351,6 @@ jobs:
       - name: Activate and verify deployment contract
         env:
           EXPECTED_IMAGE: ${{ steps.image.outputs.repo }}@${{ steps.build.outputs.digest }}
-          DEPLOYER_SERVICE_ACCOUNT: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
         run: |
           set -Eeuo pipefail
 
