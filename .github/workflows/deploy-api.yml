@@ -375,12 +375,24 @@ jobs:
             exit 1
           fi
 
+          # Cloud Run only writes this annotation when the invoker IAM check is
+          # explicitly disabled, so an empty value means the check is enabled.
           invoker_iam_disabled="$(gcloud run services describe "${SERVICE_NAME}" \
             --project "${PROJECT_ID}" \
             --region "${REGION}" \
             --format="value(metadata.annotations.'run.googleapis.com/invoker-iam-disabled')")"
-          if [[ "${invoker_iam_disabled}" != "false" ]]; then
+          if [[ "${invoker_iam_disabled}" == "true" ]]; then
             echo "Expected the Cloud Run Invoker IAM check to be enabled; got invoker-iam-disabled=${invoker_iam_disabled}." >&2
+            exit 1
+          fi
+
+          if gcloud run services get-iam-policy "${SERVICE_NAME}" \
+            --project "${PROJECT_ID}" \
+            --region "${REGION}" \
+            --format=json | jq -e \
+            'any(.bindings[]?; .role == "roles/run.invoker"
+              and ((.members // []) | any(. == "allUsers" or . == "allAuthenticatedUsers")))' >/dev/null; then
+            echo "${SERVICE_NAME} must not grant invoker access to allUsers or allAuthenticatedUsers." >&2
             exit 1
           fi
 
