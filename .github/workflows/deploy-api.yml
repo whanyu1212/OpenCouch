@@ -24,6 +24,7 @@ jobs:
       REPOSITORY: ${{ vars.AR_REPOSITORY }}
       SERVICE_NAME: ${{ vars.CLOUD_RUN_SERVICE }}
       RUNTIME_SERVICE_ACCOUNT: ${{ vars.RUNTIME_SERVICE_ACCOUNT }}
+      DEPLOYER_SERVICE_ACCOUNT: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
       CLOUD_SQL_INSTANCE: ${{ vars.CLOUD_SQL_INSTANCE }}
       DATABASE_URL_SECRET_NAME: ${{ vars.DATABASE_URL_SECRET_NAME }}
       DATABASE_URL_SECRET_VERSION: ${{ vars.DATABASE_URL_SECRET_VERSION }}
@@ -39,7 +40,6 @@ jobs:
       - name: Validate deployment configuration
         env:
           WORKLOAD_IDENTITY_PROVIDER: ${{ vars.WORKLOAD_IDENTITY_PROVIDER }}
-          DEPLOYER_SERVICE_ACCOUNT: ${{ vars.DEPLOYER_SERVICE_ACCOUNT }}
         run: |
           set -euo pipefail
 
@@ -151,6 +151,21 @@ jobs:
             '(.permissions // []) | index("iam.serviceAccounts.actAs") != null' \
             <<< "${deployer_runtime_permissions}" >/dev/null; then
             echo "The deployer cannot act as ${RUNTIME_SERVICE_ACCOUNT}." >&2
+            exit 1
+          fi
+
+          # Deployment verification mints an audience-scoped ID token as the
+          # deployer, which requires self-impersonation.
+          deployer_self_permissions="$(curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $(gcloud auth print-access-token)" \
+            --header "Content-Type: application/json" \
+            --data '{"permissions":["iam.serviceAccounts.getOpenIdToken"]}' \
+            "https://iam.googleapis.com/v1/projects/${PROJECT_ID}/serviceAccounts/${DEPLOYER_SERVICE_ACCOUNT}:testIamPermissions")"
+          if ! jq -e \
+            '(.permissions // []) | index("iam.serviceAccounts.getOpenIdToken") != null' \
+            <<< "${deployer_self_permissions}" >/dev/null; then
+            echo "The deployer needs Service Account Token Creator on itself to verify the deployment." >&2
             exit 1
           fi
 
@@ -409,7 +424,20 @@ jobs:
             --project "${PROJECT_ID}" \
             --region "${REGION}" \
             --format='value(status.url)')"
-          identity_token="$(gcloud auth print-identity-token --audiences "${service_url}")"
+          # Workload Identity Federation yields external account credentials,
+          # which cannot mint audience-scoped ID tokens locally. Ask the IAM
+          # Credentials API to sign one as the deployer instead.
+          identity_token="$(curl --fail --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $(gcloud auth print-access-token)" \
+            --header "Content-Type: application/json" \
+            --data "{\"audience\":\"${service_url}\",\"includeEmail\":true}" \
+            "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${DEPLOYER_SERVICE_ACCOUNT}:generateIdToken" \
+            | jq -r '.token')"
+          if [[ -z "${identity_token}" || "${identity_token}" == "null" ]]; then
+            echo "Could not mint an identity token for ${service_url}." >&2
+            exit 1
+          fi
           curl --fail --silent --show-error \
             --retry 6 \
             --retry-all-errors \
