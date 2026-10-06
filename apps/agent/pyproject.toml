@@ -1,0 +1,46 @@
+[project]
+name = "opencouch-agent"
+version = "0.1.0"
+description = "OpenCouch companion agent service"
+authors = [
+    { name = "whanyu1212", email = "whanyu1212@hotmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.142.2",
+    # Pinned to a minor: pydantic-ai releases every few days.
+    "pydantic-ai-slim[ag-ui,openai]>=2.54.0,<2.55",
+    "pydantic-settings>=2.15.0",
+    "uvicorn[standard]>=0.54.0",
+]
+
+[project.scripts]
+opencouch-agent = "opencouch_agent.main:run"
+
+[build-system]
+requires = ["uv_build>=0.9.8,<0.10.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "ruff>=0.16.10",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
