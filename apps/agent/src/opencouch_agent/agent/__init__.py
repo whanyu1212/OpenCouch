@@ -1,3 +1,5 @@
+"""The companion agent, its run dependencies and shared state."""
+
 from opencouch_agent.agent.companion import build_companion_agent
 from opencouch_agent.agent.deps import CompanionDeps
 from opencouch_agent.agent.state import CompanionState

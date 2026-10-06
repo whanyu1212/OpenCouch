@@ -39,7 +39,33 @@ line-length = 88
 target-version = "py312"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM"]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # bugbear
+    "UP",       # pyupgrade
+    "SIM",      # simplify
+    "D",        # pydocstyle (Google convention below)
+    "N",        # pep8-naming
+    "RET",      # return statements
+    "ASYNC",    # async pitfalls
+    "C90",      # mccabe complexity
+    "RUF",      # ruff-specific
+]
+ignore = [
+    "D105",  # magic methods
+    "D107",  # __init__ (document the class instead)
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D"]
 
 [tool.mypy]
 strict = true

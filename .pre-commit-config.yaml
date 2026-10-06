@@ -1,0 +1,34 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.10
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+        files: ^apps/agent/
+      - id: ruff-format
+        files: ^apps/agent/
+
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy (agent)
+        entry: bash -c 'cd apps/agent && uv run mypy src tests'
+        language: system
+        files: ^apps/agent/.*\.py$
+        pass_filenames: false
+      - id: eslint
+        name: eslint (web)
+        entry: pnpm --filter web lint
+        language: system
+        files: ^apps/web/.*\.(ts|tsx|js|mjs)$
+        pass_filenames: false

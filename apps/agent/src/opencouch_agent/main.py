@@ -16,6 +16,17 @@ def create_app(
     settings: Settings | None = None,
     agent: Agent[CompanionDeps, str] | None = None,
 ) -> FastAPI:
+    """Create the FastAPI app.
+
+    Args:
+        settings: Service settings. Defaults to settings loaded from the
+            environment.
+        agent: The companion agent to serve. Tests pass one backed by a test
+            model; by default it is built from `settings.model`.
+
+    Returns:
+        The configured app.
+    """
     settings = settings or get_settings()
     companion = agent or build_companion_agent(settings.model)
 
@@ -41,6 +52,7 @@ def create_app(
 
 
 def run() -> None:
+    """Serve the app with uvicorn, using host and port from settings."""
     settings = get_settings()
     uvicorn.run(
         "opencouch_agent.main:create_app",

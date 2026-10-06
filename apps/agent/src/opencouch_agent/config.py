@@ -6,6 +6,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    """Service settings, loaded from the environment and `.env`."""
+
     model_config = SettingsConfigDict(
         env_prefix="OPENCOUCH_",
         env_file=".env",
@@ -21,4 +23,5 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
+    """Return the process-wide settings, loaded once."""
     return Settings()
