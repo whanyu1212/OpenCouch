@@ -12,7 +12,11 @@ from opencouch_agent.safety.policy import (
     escalate,
     noisy_or,
 )
-from opencouch_agent.safety.questions import USER_TURN_QUESTIONS, UserSignals
+from opencouch_agent.safety.questions import (
+    USER_TURN_QUESTIONS,
+    UserSignals,
+    user_turn_questions,
+)
 
 QUIET = UserSignals(**{field.name: 0.0 for field in fields(UserSignals)})
 
@@ -46,7 +50,16 @@ def test_from_probabilities_rejects_values_that_are_not_probabilities(
 
 def test_question_set_cannot_be_changed_at_runtime() -> None:
     with pytest.raises(TypeError):
-        USER_TURN_QUESTIONS["intent"] = USER_TURN_QUESTIONS["plan"]  # type: ignore[index]
+        USER_TURN_QUESTIONS["intent"] = "changed"  # type: ignore[index]
+
+
+def test_changing_a_question_object_does_not_affect_later_requests() -> None:
+    questions = user_turn_questions()
+    questions["intent"].instructions = "changed"
+    questions.pop("plan")
+    fresh = user_turn_questions()
+    assert fresh["intent"].instructions == USER_TURN_QUESTIONS["intent"]
+    assert list(fresh) == list(USER_TURN_QUESTIONS)
 
 
 def test_quiet_turn_is_none() -> None:

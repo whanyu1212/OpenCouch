@@ -22,7 +22,7 @@ from pydantic_ai.messages import (
 
 from opencouch_agent.safety.jev import FailureReason, JevClient, failure_reason
 from opencouch_agent.safety.policy import RiskLevel, assess_level
-from opencouch_agent.safety.questions import USER_TURN_QUESTIONS, UserSignals
+from opencouch_agent.safety.questions import UserSignals, user_turn_questions
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ async def screen_user_message(
     state = user_check_state(history, latest_message)
     try:
         async with asyncio.timeout(deadline_seconds):
-            probabilities = await client.ask(state, USER_TURN_QUESTIONS)
+            probabilities = await client.ask(state, user_turn_questions())
         signals = UserSignals.from_probabilities(probabilities)
     except Exception as error:
         # Fail closed: every failure becomes a result the caller has to handle,

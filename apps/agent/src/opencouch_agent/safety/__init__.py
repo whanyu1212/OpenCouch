@@ -2,7 +2,11 @@
 
 from opencouch_agent.safety.jev import FailureReason, JevClient, TypeSafeJevClient
 from opencouch_agent.safety.policy import RiskLevel, assess_level, escalate
-from opencouch_agent.safety.questions import USER_TURN_QUESTIONS, UserSignals
+from opencouch_agent.safety.questions import (
+    USER_TURN_QUESTIONS,
+    UserSignals,
+    user_turn_questions,
+)
 from opencouch_agent.safety.screening import (
     Screened,
     ScreeningFailed,
@@ -27,4 +31,5 @@ __all__ = [
     "conversation_turns",
     "escalate",
     "screen_user_message",
+    "user_turn_questions",
 ]

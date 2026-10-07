@@ -65,7 +65,10 @@ async def test_quiet_message_screens_as_none() -> None:
     result = await screen_user_message(jev, [], "I had a long day at work.")
     assert isinstance(result, Screened)
     assert result.level is RiskLevel.NONE
-    assert jev.questions == [USER_TURN_QUESTIONS]
+    [questions] = jev.questions
+    assert {name: q.instructions for name, q in questions.items()} == dict(
+        USER_TURN_QUESTIONS
+    )
 
 
 async def test_risky_message_screens_at_the_assessed_level() -> None:
