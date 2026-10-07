@@ -6,6 +6,7 @@ Set `OPENCOUCH_TEST_POSTGRES_URL` to run them; they are skipped otherwise.
 import os
 import uuid
 from collections.abc import AsyncIterator
+from datetime import timedelta
 
 import pytest
 from psycopg_pool import AsyncConnectionPool
@@ -87,3 +88,49 @@ async def test_save_run_appends_after_user_message(
 
 async def test_create_schema_is_idempotent(store: PostgresSessionStore) -> None:
     await store.create_schema()
+
+
+async def test_claim_fails_while_another_turn_holds_the_thread(
+    store: PostgresSessionStore,
+) -> None:
+    thread_id = _thread_id()
+
+    assert await store.claim_turn(thread_id, "first", timedelta(seconds=60))
+    assert not await store.claim_turn(thread_id, "second", timedelta(seconds=60))
+
+
+async def test_expired_lease_can_be_reclaimed(store: PostgresSessionStore) -> None:
+    thread_id = _thread_id()
+    await store.claim_turn(thread_id, "crashed", timedelta(seconds=-1))
+
+    assert await store.claim_turn(thread_id, "next", timedelta(seconds=60))
+
+
+async def test_release_with_a_stale_token_keeps_the_newer_claim(
+    store: PostgresSessionStore,
+) -> None:
+    thread_id = _thread_id()
+    await store.claim_turn(thread_id, "old", timedelta(seconds=-1))
+    await store.claim_turn(thread_id, "new", timedelta(seconds=60))
+
+    await store.release_turn(thread_id, "old")
+
+    assert not await store.claim_turn(thread_id, "third", timedelta(seconds=60))
+
+
+async def test_release_frees_the_thread(store: PostgresSessionStore) -> None:
+    thread_id = _thread_id()
+    await store.claim_turn(thread_id, "first", timedelta(seconds=60))
+
+    await store.release_turn(thread_id, "first")
+
+    assert await store.claim_turn(thread_id, "second", timedelta(seconds=60))
+
+
+async def test_claiming_keeps_existing_history(store: PostgresSessionStore) -> None:
+    thread_id = _thread_id()
+    await store.append_messages(thread_id, [ModelRequest(parts=[UserPromptPart("hi")])])
+
+    await store.claim_turn(thread_id, "token", timedelta(seconds=60))
+
+    assert len((await store.load(thread_id)).history) == 1

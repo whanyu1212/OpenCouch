@@ -1,7 +1,9 @@
 """Session store interface and an in-memory implementation."""
 
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any, Protocol
 
 from pydantic_ai.messages import ModelMessage
@@ -44,12 +46,33 @@ class SessionStore(Protocol):
         """Atomically append a run's messages and replace the thread's state."""
         ...
 
+    async def claim_turn(
+        self, thread_id: str, lease_token: str, lease: timedelta
+    ) -> bool:
+        """Claim a thread for one turn.
+
+        Args:
+            thread_id: The thread to claim.
+            lease_token: A unique token identifying this turn's claim.
+            lease: How long the claim lasts if it is never released.
+
+        Returns:
+            True if claimed; False if another unexpired turn holds the thread.
+        """
+        ...
+
+    async def release_turn(self, thread_id: str, lease_token: str) -> None:
+        """Release a turn claim, but only if `lease_token` still holds it."""
+        ...
+
 
 class InMemorySessionStore:
     """Session store backed by a dict. For tests and local runs only."""
 
     def __init__(self) -> None:
         self._sessions: dict[str, Session] = {}
+        # thread_id -> (lease_token, monotonic expiry time)
+        self._turn_leases: dict[str, tuple[str, float]] = {}
 
     async def load(self, thread_id: str) -> Session:
         """Load a session, returning an empty one if the thread is new."""
@@ -80,3 +103,20 @@ class InMemorySessionStore:
         session = self._sessions.setdefault(thread_id, Session(thread_id=thread_id))
         session.history.extend(messages)
         session.state = dict(state)
+
+    async def claim_turn(
+        self, thread_id: str, lease_token: str, lease: timedelta
+    ) -> bool:
+        """Claim a thread for one turn; see `SessionStore.claim_turn`."""
+        now = time.monotonic()
+        current = self._turn_leases.get(thread_id)
+        if current is not None and current[1] > now:
+            return False
+        self._turn_leases[thread_id] = (lease_token, now + lease.total_seconds())
+        return True
+
+    async def release_turn(self, thread_id: str, lease_token: str) -> None:
+        """Release a turn claim, but only if `lease_token` still holds it."""
+        current = self._turn_leases.get(thread_id)
+        if current is not None and current[0] == lease_token:
+            del self._turn_leases[thread_id]

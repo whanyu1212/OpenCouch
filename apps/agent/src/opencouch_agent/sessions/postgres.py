@@ -1,6 +1,7 @@
 """Postgres-backed session store."""
 
 from collections.abc import Sequence
+from datetime import timedelta
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -18,6 +19,9 @@ CREATE TABLE IF NOT EXISTS conversations (
     -- Reserved for user identity; threads are unauthenticated for now.
     owner_id    TEXT,
     state       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- The turn currently holding the thread, if any; see claim_turn.
+    active_turn_token     TEXT,
+    turn_lease_expires_at TIMESTAMPTZ,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -36,6 +40,27 @@ CREATE INDEX IF NOT EXISTS conversation_messages_thread_id_idx
 _ENSURE_CONVERSATION = """
 INSERT INTO conversations (thread_id) VALUES (%s)
 ON CONFLICT (thread_id) DO UPDATE SET updated_at = now()
+"""
+
+# Insert-or-update in one statement, so two turns can't both claim the thread.
+# The WHERE clause makes the update a no-op, returning no row, while another
+# unexpired turn holds it.
+_CLAIM_TURN = """
+INSERT INTO conversations (thread_id, active_turn_token, turn_lease_expires_at)
+VALUES (%(thread_id)s, %(token)s, now() + %(lease)s)
+ON CONFLICT (thread_id) DO UPDATE
+SET active_turn_token = EXCLUDED.active_turn_token,
+    turn_lease_expires_at = EXCLUDED.turn_lease_expires_at,
+    updated_at = now()
+WHERE conversations.active_turn_token IS NULL
+   OR conversations.turn_lease_expires_at < now()
+RETURNING thread_id
+"""
+
+_RELEASE_TURN = """
+UPDATE conversations
+SET active_turn_token = NULL, turn_lease_expires_at = NULL
+WHERE thread_id = %s AND active_turn_token = %s
 """
 
 
@@ -100,6 +125,24 @@ class PostgresSessionStore:
                 (thread_id, Jsonb(state)),
             )
             await _insert_messages(connection, thread_id, messages)
+
+    async def claim_turn(
+        self, thread_id: str, lease_token: str, lease: timedelta
+    ) -> bool:
+        """Claim a thread for one turn; see `SessionStore.claim_turn`."""
+        async with self._pool.connection() as connection:
+            claimed = await (
+                await connection.execute(
+                    _CLAIM_TURN,
+                    {"thread_id": thread_id, "token": lease_token, "lease": lease},
+                )
+            ).fetchone()
+        return claimed is not None
+
+    async def release_turn(self, thread_id: str, lease_token: str) -> None:
+        """Release a turn claim, but only if `lease_token` still holds it."""
+        async with self._pool.connection() as connection:
+            await connection.execute(_RELEASE_TURN, (thread_id, lease_token))
 
 
 async def _insert_messages(

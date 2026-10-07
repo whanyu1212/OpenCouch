@@ -730,6 +730,7 @@ name = "opencouch-agent"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "fastapi" },
     { name = "psycopg", extra = ["binary", "pool"] },
     { name = "pydantic-ai-slim", extra = ["ag-ui", "openai"] },
@@ -748,6 +749,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.15.1" },
     { name = "fastapi", specifier = ">=0.142.2" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.3.6" },
     { name = "pydantic-ai-slim", extras = ["ag-ui", "openai"], specifier = ">=2.54.0,<2.55" },

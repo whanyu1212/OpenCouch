@@ -7,6 +7,7 @@ authors = [
 ]
 requires-python = ">=3.12"
 dependencies = [
+    "anyio>=4.15.1",
     "fastapi>=0.142.2",
     # Pinned to a minor: pydantic-ai releases every few days.
     "psycopg[binary,pool]>=3.3.6",
