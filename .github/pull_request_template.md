@@ -1,22 +1,23 @@
-## Description
-<!-- Provide a concise summary of the changes, the problem being solved, and the architectural approach. -->
+## What
 
-## Type of Change
-<!-- Please check the relevant option: -->
-- [ ] Bug fix (non-breaking change resolving an issue)
-- [ ] New feature (non-breaking change adding functionality)
-- [ ] Refactor (structural or architectural change)
-- [ ] Documentation update
-- [ ] Security/Safety update
+<!-- What changed, in a few sentences. -->
 
-## Verification & Testing
-<!-- OpenCouch requires strict validation of safety boundaries and routing logic. Check all that apply: -->
-- [ ] **Unit & Integration Tests:** `uv run pytest tests/unit tests/integration` completed successfully.
-- [ ] **Static Analysis:** `pre-commit run --all-files` completed without warnings.
-- [ ] **No Secrets:** Verified that no API keys or sensitive credentials are included in this PR.
+## Why
 
-## Context & Impact
-<!-- Please include any relevant diagrams, configuration changes, database migrations, or new dependencies introduced. -->
+<!-- The problem or checklist item this addresses. Link it: Refs #356 -->
 
-## Related Issues
-<!-- e.g., Resolves #123 -->
+## How it was tested
+
+- [ ] `uv run pytest` / `pnpm build:web` pass
+- [ ] Ruff, mypy and ESLint pass (`pre-commit run --all-files`)
+- [ ] Tried against a real model (say which), or explain why not
+
+## Safety impact
+
+<!-- Required. Does this touch safety screening, the crisis path, memory writes,
+client-sent state or anything a user sees during distress? If not, say "None"
+and why. -->
+
+## Notes for the reviewer
+
+<!-- Anything to look at closely, follow-ups, or new dependencies. -->

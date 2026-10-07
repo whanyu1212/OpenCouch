@@ -6,24 +6,29 @@ repos:
       - id: end-of-file-fixer
       - id: check-merge-conflict
       - id: check-yaml
-      - id: check-json
+      - id: check-toml
+      - id: check-added-large-files
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.10
+    rev: v0.16.10
     hooks:
       - id: ruff-check
-        name: ruff check
         args: [--fix]
-        files: ^(apps/backend|eval/runners)/.*\.py$
+        files: ^apps/agent/
       - id: ruff-format
-        name: ruff format
-        files: ^(apps/backend|eval/runners)/.*\.py$
+        files: ^apps/agent/
 
   - repo: local
     hooks:
-      - id: clean-appledouble-files
-        name: clean macOS AppleDouble files
-        entry: bash scripts/clean_appledouble_files.sh
+      - id: mypy
+        name: mypy (agent)
+        entry: bash -c 'cd apps/agent && uv run mypy src tests'
         language: system
+        files: ^apps/agent/.*\.py$
         pass_filenames: false
-        always_run: true
+      - id: eslint
+        name: eslint (web)
+        entry: pnpm --filter web lint
+        language: system
+        files: ^apps/web/.*\.(ts|tsx|js|mjs)$
+        pass_filenames: false
