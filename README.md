@@ -29,6 +29,10 @@ pnpm dev:web
 Without an API key, run the agent against Pydantic AI's test model with
 `OPENCOUCH_MODEL=test`.
 
+Conversation history is stored in Postgres when `OPENCOUCH_DATABASE_URL` is set,
+and kept in memory (lost on restart) otherwise. To run the Postgres-backed
+tests locally, set `OPENCOUCH_TEST_POSTGRES_URL`.
+
 To run Postgres and the agent in Docker instead:
 
 ```bash

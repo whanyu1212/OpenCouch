@@ -15,7 +15,8 @@ class Settings(BaseSettings):
     )
 
     model: str = "openai:gpt-5.4-mini"
-    database_url: str = "postgresql://opencouch:opencouch@localhost:5432/opencouch"
+    # Unset means an in-memory session store: history is lost on restart.
+    database_url: str | None = None
     cors_origins: list[str] = ["http://localhost:3000"]
     host: str = "0.0.0.0"
     port: int = 8080
