@@ -3,6 +3,7 @@
 from typing import cast
 
 from fastapi import HTTPException
+from pydantic import ValidationError
 from pydantic_ai import Agent
 from pydantic_ai.run import AgentRunResult
 from starlette.requests import Request
@@ -30,14 +31,20 @@ async def run_turn(
         A streaming response of AG-UI events.
 
     Raises:
-        HTTPException: 422 if the request uses client input the server rejects,
-            such as frontend tools or a history not ending in a user message.
+        HTTPException: 422 if the body isn't a valid AG-UI `RunAgentInput`, or
+            uses client input the server rejects, such as frontend tools or a
+            history not ending in a user message.
     """
-    # `from_request` is annotated as returning the base class; it builds `cls`.
-    adapter = cast(
-        ServerOwnedAGUIAdapter,
-        await ServerOwnedAGUIAdapter.from_request(request, agent=agent),
-    )
+    try:
+        # `from_request` is annotated as returning the base class; it builds `cls`.
+        adapter = cast(
+            ServerOwnedAGUIAdapter,
+            await ServerOwnedAGUIAdapter.from_request(request, agent=agent),
+        )
+    except ValidationError as error:
+        # Leave the input out of the error: it may contain what the user wrote.
+        detail = error.errors(include_input=False, include_url=False)
+        raise HTTPException(status_code=422, detail=detail) from error
     thread_id = adapter.run_input.thread_id
     try:
         adapter.check_request()

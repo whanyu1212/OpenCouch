@@ -161,3 +161,31 @@ async def test_client_resume_is_rejected_and_nothing_is_stored(
 
     assert response.status_code == 422
     assert (await store.load("thread-1")).history == []
+
+
+def test_invalid_json_is_rejected_with_422(client: TestClient) -> None:
+    response = client.post(
+        "/api/agent",
+        content=b"{not json",
+        headers={"content-type": "application/json"},
+    )
+
+    assert response.status_code == 422
+
+
+def test_body_missing_required_fields_is_rejected_with_422(
+    client: TestClient,
+) -> None:
+    response = client.post("/api/agent", json={"threadId": "thread-1"})
+
+    assert response.status_code == 422
+
+
+def test_validation_errors_do_not_echo_the_request_body(client: TestClient) -> None:
+    response = client.post(
+        "/api/agent",
+        json={"threadId": "thread-1", "messages": "I feel hopeless"},
+    )
+
+    assert response.status_code == 422
+    assert "I feel hopeless" not in response.text
