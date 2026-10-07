@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     # Unset means an in-memory session store: history is lost on restart.
     database_url: str | None = None
     cors_origins: list[str] = ["http://localhost:3000"]
+    # Hard limit on one turn, including streaming the reply.
+    turn_timeout_seconds: float = 90.0
     host: str = "0.0.0.0"
     port: int = 8080
 

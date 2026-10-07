@@ -3,6 +3,7 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import timedelta
 
 import uvicorn
 from fastapi import FastAPI
@@ -43,6 +44,7 @@ def create_app(
     companion = agent or build_companion_agent(settings.model)
     session_store: SessionStore = store or InMemorySessionStore()
     pool: AsyncConnectionPool | None = None
+    turn_timeout = timedelta(seconds=settings.turn_timeout_seconds)
 
     if store is None and settings.database_url:
         pool = AsyncConnectionPool(settings.database_url, open=False)
@@ -76,7 +78,12 @@ def create_app(
 
     @app.post("/api/agent")
     async def run_agent(request: Request) -> Response:
-        return await run_turn(request, agent=companion, store=session_store)
+        return await run_turn(
+            request,
+            agent=companion,
+            store=session_store,
+            turn_timeout=turn_timeout,
+        )
 
     return app
 

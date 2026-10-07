@@ -1,6 +1,7 @@
 """Postgres-backed session store."""
 
 from collections.abc import Sequence
+from datetime import timedelta
 from typing import Any
 
 from psycopg import AsyncConnection
@@ -18,9 +19,17 @@ CREATE TABLE IF NOT EXISTS conversations (
     -- Reserved for user identity; threads are unauthenticated for now.
     owner_id    TEXT,
     state       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- The turn currently holding the thread, if any; see claim_turn.
+    active_turn_token     TEXT,
+    turn_lease_expires_at TIMESTAMPTZ,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Columns added after the first release. CREATE TABLE IF NOT EXISTS leaves an
+-- existing table unchanged, so add them explicitly for older databases.
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS active_turn_token TEXT;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS turn_lease_expires_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS conversation_messages (
     id          BIGSERIAL PRIMARY KEY,
@@ -36,6 +45,27 @@ CREATE INDEX IF NOT EXISTS conversation_messages_thread_id_idx
 _ENSURE_CONVERSATION = """
 INSERT INTO conversations (thread_id) VALUES (%s)
 ON CONFLICT (thread_id) DO UPDATE SET updated_at = now()
+"""
+
+# Insert-or-update in one statement, so two turns can't both claim the thread.
+# The WHERE clause makes the update a no-op, returning no row, while another
+# unexpired turn holds it.
+_CLAIM_TURN = """
+INSERT INTO conversations (thread_id, active_turn_token, turn_lease_expires_at)
+VALUES (%(thread_id)s, %(token)s, now() + %(lease)s)
+ON CONFLICT (thread_id) DO UPDATE
+SET active_turn_token = EXCLUDED.active_turn_token,
+    turn_lease_expires_at = EXCLUDED.turn_lease_expires_at,
+    updated_at = now()
+WHERE conversations.active_turn_token IS NULL
+   OR conversations.turn_lease_expires_at < now()
+RETURNING thread_id
+"""
+
+_RELEASE_TURN = """
+UPDATE conversations
+SET active_turn_token = NULL, turn_lease_expires_at = NULL
+WHERE thread_id = %s AND active_turn_token = %s
 """
 
 
@@ -88,18 +118,47 @@ class PostgresSessionStore:
     async def save_run(
         self,
         thread_id: str,
+        lease_token: str,
         messages: Sequence[ModelMessage],
         state: dict[str, Any],
-    ) -> None:
-        """Atomically append a run's messages and replace the thread's state."""
+    ) -> bool:
+        """Save a run's messages and state; see `SessionStore.save_run`."""
         async with self._pool.connection() as connection, connection.transaction():
+            # Lock the row so the lease can't change hands mid-save.
+            held = await (
+                await connection.execute(
+                    "SELECT 1 FROM conversations"
+                    " WHERE thread_id = %s AND active_turn_token = %s FOR UPDATE",
+                    (thread_id, lease_token),
+                )
+            ).fetchone()
+            if held is None:
+                return False
             await connection.execute(
-                "INSERT INTO conversations (thread_id, state) VALUES (%s, %s)"
-                " ON CONFLICT (thread_id)"
-                " DO UPDATE SET state = EXCLUDED.state, updated_at = now()",
-                (thread_id, Jsonb(state)),
+                "UPDATE conversations SET state = %s, updated_at = now()"
+                " WHERE thread_id = %s",
+                (Jsonb(state), thread_id),
             )
             await _insert_messages(connection, thread_id, messages)
+        return True
+
+    async def claim_turn(
+        self, thread_id: str, lease_token: str, lease: timedelta
+    ) -> bool:
+        """Claim a thread for one turn; see `SessionStore.claim_turn`."""
+        async with self._pool.connection() as connection:
+            claimed = await (
+                await connection.execute(
+                    _CLAIM_TURN,
+                    {"thread_id": thread_id, "token": lease_token, "lease": lease},
+                )
+            ).fetchone()
+        return claimed is not None
+
+    async def release_turn(self, thread_id: str, lease_token: str) -> None:
+        """Release a turn claim, but only if `lease_token` still holds it."""
+        async with self._pool.connection() as connection:
+            await connection.execute(_RELEASE_TURN, (thread_id, lease_token))
 
 
 async def _insert_messages(
