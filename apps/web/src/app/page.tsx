@@ -14,8 +14,10 @@ export default function Home() {
     if (!text || running) return;
     setDraft("");
     void send(text).then((result) => {
-      // Give the text back so it can be re-sent, unless a new draft was started.
-      if (result === "removed") setDraft((current) => current || text);
+      // Give the text back so it can be re-sent, ahead of anything typed since.
+      if (result === "removed") {
+        setDraft((current) => (current.trim() ? `${text} ${current}` : text));
+      }
     });
   }
 

@@ -7,12 +7,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 const AGENT_URL =
   process.env.NEXT_PUBLIC_AGENT_URL ?? "http://localhost:8080/api/agent";
 
-// The server rejects these before writing anything, so the message was never
-// stored and must not stay in the conversation.
-const NOT_STORED_MESSAGES: Partial<Record<number, string>> = {
-  409: "A reply is still on its way. Your message wasn't sent; try again in a moment.",
-  422: "Your message couldn't be sent.",
-};
+const BUSY_MESSAGE =
+  "Your message wasn't sent because the previous reply hasn't finished. Try again in a moment.";
+const NOT_SENT_MESSAGE = "Your message couldn't be sent. Please try again.";
 
 /** Whether the message stayed in the conversation or was taken back out. */
 export type SendResult = "kept" | "removed";
@@ -38,7 +35,8 @@ export function useCompanion() {
   useEffect(() => {
     const { unsubscribe } = agent.subscribe({
       onMessagesChanged: ({ messages }) => setMessages([...messages]),
-      onRunFailed: ({ error }) => setError(error.message),
+      // A failure mid-reply arrives as an event; `runAgent` still resolves.
+      onRunErrorEvent: ({ event }) => setError(event.message),
     });
     return () => {
       unsubscribe();
@@ -48,26 +46,26 @@ export function useCompanion() {
 
   const send = useCallback(
     async (text: string): Promise<SendResult> => {
+      const id = crypto.randomUUID();
       setError(null);
       setRunning(true);
-      const id = crypto.randomUUID();
-      agent.addMessage({ id, role: "user", content: text });
       try {
+        agent.addMessage({ id, role: "user", content: text });
         await agent.runAgent();
-        return "kept";
       } catch (err) {
         const status = httpStatus(err);
-        const rejection = status === undefined ? undefined : NOT_STORED_MESSAGES[status];
-        if (rejection === undefined) {
+        if (status === undefined) {
           setError(errorMessage(err));
-          return "kept";
+        } else {
+          // An HTTP error status means the server refused the turn before
+          // streaming, and it stores the message only once a turn starts.
+          agent.setMessages(agent.messages.filter((message) => message.id !== id));
+          setError(status === 409 ? BUSY_MESSAGE : NOT_SENT_MESSAGE);
         }
-        agent.setMessages(agent.messages.filter((message) => message.id !== id));
-        setError(rejection);
-        return "removed";
       } finally {
         setRunning(false);
       }
+      return agent.messages.some((message) => message.id === id) ? "kept" : "removed";
     },
     [agent],
   );
