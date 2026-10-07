@@ -64,9 +64,10 @@ async def test_messages_round_trip_in_order(store: PostgresSessionStore) -> None
 
 async def test_save_run_replaces_state(store: PostgresSessionStore) -> None:
     thread_id = _thread_id()
+    await store.claim_turn(thread_id, "token", timedelta(seconds=60))
 
-    await store.save_run(thread_id, [], {"mode": "chat"})
-    await store.save_run(thread_id, [], {"mode": "exercise"})
+    await store.save_run(thread_id, "token", [], {"mode": "chat"})
+    await store.save_run(thread_id, "token", [], {"mode": "exercise"})
 
     assert (await store.load(thread_id)).state == {"mode": "exercise"}
 
@@ -77,13 +78,51 @@ async def test_save_run_appends_after_user_message(
     thread_id = _thread_id()
     user_turn: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart("hi")])]
     reply: list[ModelMessage] = [ModelResponse(parts=[TextPart("hello")])]
+    await store.claim_turn(thread_id, "token", timedelta(seconds=60))
 
     await store.append_messages(thread_id, user_turn)
-    await store.save_run(thread_id, reply, {"mode": "chat"})
+    await store.save_run(thread_id, "token", reply, {"mode": "chat"})
     session = await store.load(thread_id)
 
     assert session.history == [*user_turn, *reply]
     assert session.state == {"mode": "chat"}
+
+
+async def test_save_run_writes_nothing_after_the_lease_was_taken_over(
+    store: PostgresSessionStore,
+) -> None:
+    thread_id = _thread_id()
+    await store.claim_turn(thread_id, "slow", timedelta(seconds=-1))
+    await store.claim_turn(thread_id, "newer", timedelta(seconds=60))
+    await store.save_run(thread_id, "newer", [], {"mode": "newer"})
+
+    saved = await store.save_run(
+        thread_id,
+        "slow",
+        [ModelResponse(parts=[TextPart("late reply")])],
+        {"mode": "stale"},
+    )
+
+    session = await store.load(thread_id)
+    assert not saved
+    assert session.history == []
+    assert session.state == {"mode": "newer"}
+
+
+async def test_create_schema_adds_lease_columns_to_an_older_table(
+    store: PostgresSessionStore,
+) -> None:
+    # Recreate the table as the first release created it, without lease columns.
+    async with store._pool.connection() as connection:
+        await connection.execute(
+            "ALTER TABLE conversations"
+            " DROP COLUMN active_turn_token, DROP COLUMN turn_lease_expires_at"
+        )
+
+    await store.create_schema()
+
+    thread_id = _thread_id()
+    assert await store.claim_turn(thread_id, "token", timedelta(seconds=60))
 
 
 async def test_create_schema_is_idempotent(store: PostgresSessionStore) -> None:

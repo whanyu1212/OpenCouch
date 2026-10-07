@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from datetime import timedelta
 
@@ -186,3 +187,51 @@ async def test_release_with_a_stale_token_keeps_the_newer_claim() -> None:
     await store.release_turn("t", "old")
 
     assert not await store.claim_turn("t", "third", LEASE)
+
+
+async def test_turn_that_lost_its_lease_does_not_save_its_reply() -> None:
+    store = InMemorySessionStore()
+    model_started = asyncio.Event()
+    finish_reply = asyncio.Event()
+
+    async def slow_reply(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
+        model_started.set()
+        await finish_reply.wait()
+        yield "late reply"
+
+    async with _client(store, FunctionModel(stream_function=slow_reply)) as http:
+        first = asyncio.create_task(
+            http.post("/api/agent", json=run_input(user_message("first", "m1")))
+        )
+        await asyncio.wait_for(model_started.wait(), timeout=5)
+        # Simulate the lease expiring and another turn claiming the thread,
+        # as happens when a very slow client holds a turn past its lease.
+        store._turn_leases["thread-1"] = ("newer-turn", time.monotonic() + 60)
+        finish_reply.set()
+        await first
+
+    history = (await store.load("thread-1")).history
+    assert _prompts_and_replies(history) == ["first"]
+
+
+async def test_turn_past_its_deadline_stops_even_while_events_are_ready() -> None:
+    store = InMemorySessionStore()
+    await store.claim_turn("thread-1", "token", LEASE)
+
+    async def events() -> AsyncIterator[BaseEvent]:
+        for index in range(3):
+            yield TextMessageStartEvent(message_id=f"msg-{index}")
+
+    guarded = _guard_turn(
+        events(),
+        store=store,
+        thread_id="thread-1",
+        lease_token="token",
+        turn_timeout=timedelta(seconds=0.05),
+    )
+    first = await anext(guarded)
+    await asyncio.sleep(0.1)  # A slow client: the deadline passes mid-send.
+    remaining = [event async for event in guarded]
+
+    assert first.type == "TEXT_MESSAGE_START"
+    assert [event.type for event in remaining] == ["RUN_ERROR"]

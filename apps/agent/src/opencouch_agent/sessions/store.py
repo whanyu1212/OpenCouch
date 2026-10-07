@@ -40,10 +40,24 @@ class SessionStore(Protocol):
     async def save_run(
         self,
         thread_id: str,
+        lease_token: str,
         messages: Sequence[ModelMessage],
         state: dict[str, Any],
-    ) -> None:
-        """Atomically append a run's messages and replace the thread's state."""
+    ) -> bool:
+        """Atomically append a run's messages and replace the thread's state.
+
+        The write only happens if `lease_token` still holds the thread, so a
+        turn that lost its lease can't overwrite the turn that took over.
+
+        Args:
+            thread_id: The thread the run belongs to.
+            lease_token: The token the turn claimed the thread with.
+            messages: The run's new messages.
+            state: The thread's state after the run.
+
+        Returns:
+            True if saved; False, writing nothing, if the lease was lost.
+        """
         ...
 
     async def claim_turn(
@@ -96,13 +110,18 @@ class InMemorySessionStore:
     async def save_run(
         self,
         thread_id: str,
+        lease_token: str,
         messages: Sequence[ModelMessage],
         state: dict[str, Any],
-    ) -> None:
-        """Atomically append a run's messages and replace the thread's state."""
+    ) -> bool:
+        """Save a run's messages and state; see `SessionStore.save_run`."""
+        current = self._turn_leases.get(thread_id)
+        if current is None or current[0] != lease_token:
+            return False
         session = self._sessions.setdefault(thread_id, Session(thread_id=thread_id))
         session.history.extend(messages)
         session.state = dict(state)
+        return True
 
     async def claim_turn(
         self, thread_id: str, lease_token: str, lease: timedelta

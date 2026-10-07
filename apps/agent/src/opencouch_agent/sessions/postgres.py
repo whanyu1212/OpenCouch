@@ -26,6 +26,11 @@ CREATE TABLE IF NOT EXISTS conversations (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Columns added after the first release. CREATE TABLE IF NOT EXISTS leaves an
+-- existing table unchanged, so add them explicitly for older databases.
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS active_turn_token TEXT;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS turn_lease_expires_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS conversation_messages (
     id          BIGSERIAL PRIMARY KEY,
     thread_id   TEXT NOT NULL REFERENCES conversations (thread_id) ON DELETE CASCADE,
@@ -113,18 +118,29 @@ class PostgresSessionStore:
     async def save_run(
         self,
         thread_id: str,
+        lease_token: str,
         messages: Sequence[ModelMessage],
         state: dict[str, Any],
-    ) -> None:
-        """Atomically append a run's messages and replace the thread's state."""
+    ) -> bool:
+        """Save a run's messages and state; see `SessionStore.save_run`."""
         async with self._pool.connection() as connection, connection.transaction():
+            # Lock the row so the lease can't change hands mid-save.
+            held = await (
+                await connection.execute(
+                    "SELECT 1 FROM conversations"
+                    " WHERE thread_id = %s AND active_turn_token = %s FOR UPDATE",
+                    (thread_id, lease_token),
+                )
+            ).fetchone()
+            if held is None:
+                return False
             await connection.execute(
-                "INSERT INTO conversations (thread_id, state) VALUES (%s, %s)"
-                " ON CONFLICT (thread_id)"
-                " DO UPDATE SET state = EXCLUDED.state, updated_at = now()",
-                (thread_id, Jsonb(state)),
+                "UPDATE conversations SET state = %s, updated_at = now()"
+                " WHERE thread_id = %s",
+                (Jsonb(state), thread_id),
             )
             await _insert_messages(connection, thread_id, messages)
+        return True
 
     async def claim_turn(
         self, thread_id: str, lease_token: str, lease: timedelta

@@ -66,7 +66,9 @@ async def run_turn(
             detail="A reply is already in progress for this conversation.",
         )
     try:
-        events = await _start_run(adapter, store=store, thread_id=thread_id)
+        events = await _start_run(
+            adapter, store=store, thread_id=thread_id, lease_token=lease_token
+        )
     except BaseException:
         await _release_turn(store, thread_id, lease_token)
         raise
@@ -104,7 +106,11 @@ async def _parse_request(
 
 
 async def _start_run(
-    adapter: ServerOwnedAGUIAdapter, *, store: SessionStore, thread_id: str
+    adapter: ServerOwnedAGUIAdapter,
+    *,
+    store: SessionStore,
+    thread_id: str,
+    lease_token: str,
 ) -> AsyncIterator[BaseEvent]:
     """Load the session, record the user's message and start the agent run."""
     session = await store.load(thread_id)
@@ -118,9 +124,18 @@ async def _start_run(
 
     async def persist_run(result: AgentRunResult[str]) -> None:
         # The user's message is excluded here: it entered the run as history.
-        await store.save_run(
-            thread_id, result.new_messages(), deps.state.model_dump(mode="json")
+        saved = await store.save_run(
+            thread_id,
+            lease_token,
+            result.new_messages(),
+            deps.state.model_dump(mode="json"),
         )
+        if not saved:
+            # Another turn took over after this one's lease expired (e.g. a
+            # very slow client). Its writes win; this reply is dropped.
+            logger.warning(
+                "Turn lost its lease; reply not saved (thread %s)", thread_id
+            )
 
     return adapter.run_stream(
         message_history=session.history, deps=deps, on_complete=persist_run
@@ -144,6 +159,11 @@ async def _guard_turn(
     deadline = loop.time() + turn_timeout.total_seconds()
     try:
         while True:
+            # Sending to a slow client happens at the `yield` below, outside the
+            # timeout, so check the deadline again before each wait.
+            if loop.time() >= deadline:
+                yield RunErrorEvent(message=TURN_TIMEOUT_MESSAGE, code="turn_timeout")
+                return
             try:
                 # The timeout wraps only the wait for the next event, never a
                 # `yield`, so it can't fire while the client is being sent data.
