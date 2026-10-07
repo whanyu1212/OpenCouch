@@ -45,7 +45,7 @@ jobs:
         run: uv run mypy src tests
 
       - name: Test
-        run: uv run pytest -q
+        run: uv run pytest -q --cov
 
   web:
     runs-on: ubuntu-latest
