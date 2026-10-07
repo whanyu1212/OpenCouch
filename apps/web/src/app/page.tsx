@@ -13,7 +13,12 @@ export default function Home() {
     const text = draft.trim();
     if (!text || running) return;
     setDraft("");
-    void send(text);
+    void send(text).then((result) => {
+      // Give the text back so it can be re-sent, ahead of anything typed since.
+      if (result === "removed") {
+        setDraft((current) => (current.trim() ? `${text} ${current}` : text));
+      }
+    });
   }
 
   const visible = messages.filter(
