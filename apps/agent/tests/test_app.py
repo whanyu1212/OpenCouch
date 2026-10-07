@@ -2,6 +2,8 @@ import json
 
 from fastapi.testclient import TestClient
 
+from tests.ag_ui_requests import run_input, user_message
+
 
 def test_health(client: TestClient) -> None:
     response = client.get("/api/health")
@@ -11,18 +13,10 @@ def test_health(client: TestClient) -> None:
 
 
 def test_agent_streams_ag_ui_events(client: TestClient) -> None:
-    run_input = {
-        "threadId": "thread-1",
-        "runId": "run-1",
-        "state": {},
-        "messages": [{"id": "msg-1", "role": "user", "content": "Rough day today."}],
-        "tools": [],
-        "context": [],
-        "forwardedProps": {},
-    }
-
     response = client.post(
-        "/api/agent", json=run_input, headers={"accept": "text/event-stream"}
+        "/api/agent",
+        json=run_input(user_message("Rough day today.")),
+        headers={"accept": "text/event-stream"},
     )
 
     assert response.status_code == 200

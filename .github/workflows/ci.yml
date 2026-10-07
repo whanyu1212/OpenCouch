@@ -7,6 +7,22 @@ on:
 jobs:
   agent:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: opencouch
+          POSTGRES_USER: opencouch
+          POSTGRES_PASSWORD: opencouch
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U opencouch -d opencouch"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OPENCOUCH_TEST_POSTGRES_URL: postgresql://opencouch:opencouch@localhost:5432/opencouch
     defaults:
       run:
         working-directory: apps/agent
