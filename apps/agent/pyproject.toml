@@ -9,10 +9,12 @@ requires-python = ">=3.12"
 dependencies = [
     "anyio>=4.15.1",
     "fastapi>=0.142.2",
-    # Pinned to a minor: pydantic-ai releases every few days.
+    "httpx2>=2.13.1,<3",
     "psycopg[binary,pool]>=3.3.6",
+    # Pinned to a minor: pydantic-ai releases every few days.
     "pydantic-ai-slim[ag-ui,openai]>=2.54.0,<2.55",
     "pydantic-settings>=2.15.0",
+    "typesafe-sdk>=0.7.2,<0.8",
     "uvicorn[standard]>=0.54.0",
 ]
 
@@ -29,6 +31,7 @@ dev = [
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7",
     "ruff>=0.16.10",
 ]
 
@@ -73,3 +76,12 @@ max-complexity = 10
 [tool.mypy]
 strict = true
 plugins = ["pydantic.mypy"]
+
+# CLAUDE.md: safety/ needs full branch coverage. CI runs `pytest --cov`.
+[tool.coverage.run]
+branch = true
+source = ["opencouch_agent.safety"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
