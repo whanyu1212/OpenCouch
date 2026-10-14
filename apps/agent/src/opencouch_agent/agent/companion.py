@@ -18,7 +18,7 @@ def build_companion_agent(model: Model | str) -> Agent[CompanionDeps, str]:
 
     Args:
         model: A Pydantic AI model instance or model string, such as
-            `"openai:gpt-5.4-mini"` or `"test"`.
+            `"openai:gpt-6.1-sol"` or `"test"`.
 
     Returns:
         The configured companion agent.
