@@ -87,8 +87,13 @@ Recorded on every live run, from the API's own usage data, never estimated:
   separately. Report p50, p90 and the share over 3s.
 - Tokens and cost per model call, per turn and per run. Judge cost is
   recorded separately so it doesn't blur differences between variants.
-- Only the final successful request counts toward latency; retries and
-  back-off are recorded but kept out of it.
+- Two latency numbers, kept apart:
+  - **Turn latency** is what the user waits: from the message arriving to the
+    first token, including every retry and back-off. This is the headline,
+    so a flakier model or a retry-policy change shows up as slower.
+  - **Model latency** times the final successful request only, for comparing
+    models without transient errors skewing it. Retry counts are recorded per
+    row.
 
 ## The judge
 
@@ -121,13 +126,16 @@ cases a human labelled independently:
    weak ones so the hard fails get exercised.
 2. First-pass labels by Claude in a coding session, each with a one-line
    reason, written without seeing the judge's output.
-3. **The project owner reviews and corrects them.** The first-pass labeller and
-   the judge are the same model, so they share blind spots, and agreement
-   between them overstates the judge. The review covers at least every
-   disagreement, every hard fail, and a random 10 where they agree.
-4. Agreement per criterion: exact match on hard fails, within ±1 on scores.
-   Report it before and after the human review. Below about 90% on hard fails,
-   fix the judge prompt before its scores can block a change.
+3. **The project owner reviews and corrects every label.** The first-pass
+   labeller and the judge are the same model, so they share blind spots: where
+   both are wrong they agree, and agreement with unreviewed labels would
+   overstate the judge. Start with disagreements and hard fails, but review the
+   whole set; each label records who confirmed it.
+4. Agreement per criterion, **computed only from human-confirmed labels**:
+   exact match on hard fails, within ±1 on scores. Agreement with the
+   unreviewed first pass may be shown for interest, never used as the
+   threshold. Below about 90% on hard fails, fix the judge prompt before its
+   scores can block a change.
 
 ## Running conversations
 
@@ -183,7 +191,10 @@ evals/results/<suite>-<split>-<git sha>-<timestamp>/   # gitignored
 ```
 
 Infra failures go in `errors.jsonl` and never count as model failures. A reply
-cut off at `max_tokens` is marked `truncated`, not scored as wrong.
+cut off at `max_tokens` is a different case: the user saw an incomplete reply,
+so it keeps a `truncated` status and **counts as a quality failure** in the
+denominator. Leaving it out would let a verbose regression look better as its
+worst replies get cut off.
 
 ## Discipline
 
