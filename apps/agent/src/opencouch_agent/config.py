@@ -14,7 +14,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    model: str = "openai:gpt-5.4-mini"
+    model: str = "openai:gpt-6.1-sol"
     # Unset means an in-memory session store: history is lost on restart.
     database_url: str | None = None
     cors_origins: list[str] = ["http://localhost:3000"]
