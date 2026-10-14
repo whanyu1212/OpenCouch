@@ -18,7 +18,9 @@ Prerequisites: [uv](https://docs.astral.sh/uv/), Node 22 with pnpm, Docker.
 ```bash
 # Agent on http://localhost:8080 (needs OPENAI_API_KEY in apps/agent/.env)
 cp apps/agent/.env.example apps/agent/.env
-cd apps/agent && uv sync && uv run opencouch-agent
+# --env-file exports the key; the settings loader alone doesn't pass it to the
+# OpenAI client.
+cd apps/agent && uv sync && uv run --env-file .env opencouch-agent
 
 # Web on http://localhost:3000
 pnpm install
