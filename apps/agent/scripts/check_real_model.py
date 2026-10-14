@@ -135,7 +135,11 @@ async def run_conversation(store: InMemorySessionStore) -> list[TurnResult]:
     server = uvicorn.Server(uvicorn.Config(app, port=PORT, log_level="warning"))
     serving = asyncio.create_task(server.serve())
     # uvicorn exposes no startup event, only this flag.
-    while not server.started:  # noqa: ASYNC110
+    while not server.started:
+        if serving.done():
+            # Startup failed (e.g. the port is taken); surface why.
+            serving.result()
+            raise RuntimeError(f"Server failed to start on port {PORT}")
         await asyncio.sleep(0.05)
     try:
         base_url = f"http://127.0.0.1:{PORT}"
