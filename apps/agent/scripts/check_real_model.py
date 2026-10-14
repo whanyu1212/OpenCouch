@@ -1,12 +1,15 @@
 """Opt-in check of the agent against the real model (HY-202).
 
 Calls the real OpenAI API, so it costs money (well under $1 per run) and is not
-part of the default test run. Run from `apps/agent` with the key in the
-environment:
+part of the default test run. Run from `apps/agent`, with `OPENAI_API_KEY` in
+`apps/agent/.env` as the README sets up (or point `--env-file` at another file,
+e.g. `../../.env` for a key kept at the repo root):
 
-    uv run --env-file ../../.env python scripts/check_real_model.py
+    uv run --env-file .env python scripts/check_real_model.py
 
-It checks five things and prints a report:
+It checks five things, prints a report, and exits with status 1 if any check
+failed. Reasoning summaries are reported but never fail the run: the model
+only returns one when it actually reasons, which short messages may not need.
 
 1. A multi-turn chat through the real AG-UI endpoint, with server-owned
    history: time to first token per turn, and a tool call making the full
@@ -20,6 +23,7 @@ It checks five things and prints a report:
 
 import asyncio
 import json
+import sys
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -233,23 +237,46 @@ def print_conversation(turns: list[TurnResult]) -> None:
     print("events:", dict(sum((t.event_counts for t in turns), Counter())))
 
 
-async def main() -> None:
-    """Run every check and print a report."""
+def conversation_failures(turns: list[TurnResult]) -> list[str]:
+    """List what went wrong in the conversation, if anything."""
+    failures = [
+        f"turn {index}: HTTP {turn.status}, errors {turn.errors}, reply {turn.reply!r}"
+        for index, turn in enumerate(turns)
+        if turn.status != 200 or turn.errors or not turn.reply
+    ]
+    if not any("get_local_time" in turn.tool_calls for turn in turns):
+        failures.append("conversation: the tool was never called")
+    return failures
+
+
+async def main() -> int:
+    """Run every check, print a report, and return the exit status."""
     store = InMemorySessionStore()
     turns = await run_conversation(store)
     print_conversation(turns)
+    failures = conversation_failures(turns)
     history = (await store.load(THREAD_ID)).history
     print("stored history parts:", describe_history(history))
 
     print("\n== 2. Tool-less agent on history with tool calls ==")
-    print(await check_toolless_history(history))
+    toolless = await check_toolless_history(history)
+    print(toolless)
     print("\n== 3. UsageLimits ==")
-    print(await check_usage_limit())
-    print("\n== 4. Reasoning summaries ==")
+    usage_limit = await check_usage_limit()
+    print(usage_limit)
+    print("\n== 4. Reasoning summaries (informational) ==")
     print(await check_reasoning_summary())
     print("\n== 5. Strict structured output ==")
-    print(await check_structured_output())
+    structured = await check_structured_output()
+    print(structured)
+
+    failures += [] if toolless["ok"] else ["tool-less agent rejected the history"]
+    failures += [] if usage_limit["stopped"] else ["UsageLimits did not stop the run"]
+    failures += [] if structured["ok"] else ["structured output failed"]
+    print("\n== Result ==")
+    print("\n".join(f"FAIL {failure}" for failure in failures) or "all checks passed")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    sys.exit(asyncio.run(main()))
