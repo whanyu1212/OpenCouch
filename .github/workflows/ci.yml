@@ -42,7 +42,7 @@ jobs:
           uv run ruff format --check .
 
       - name: Type check
-        run: uv run mypy src tests
+        run: uv run mypy src tests evals scripts
 
       - name: Test
         run: uv run pytest -q --cov

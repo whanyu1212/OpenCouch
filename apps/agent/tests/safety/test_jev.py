@@ -6,6 +6,7 @@ import httpx2
 import pytest
 from typesafe_sdk import (
     Noul,
+    RetryPolicy,
     TypeSafeAPIConnectionError,
     TypeSafeAPIError,
     TypeSafeAPITimeoutError,
@@ -82,6 +83,25 @@ async def test_ask_gives_up_after_one_retry() -> None:
     with pytest.raises(TypeSafeRateLimitError):
         await jev_client(handler).ask("state", QUESTIONS)
     assert calls == 2
+
+
+async def test_a_batch_retry_policy_replaces_the_live_one() -> None:
+    calls = 0
+
+    def handler(_: httpx2.Request) -> httpx2.Response:
+        nonlocal calls
+        calls += 1
+        return httpx2.Response(503)
+
+    batch_retry = RetryPolicy(max_retries=3, backoff_initial=0, backoff_jitter=0)
+    client = TypeSafeJevClient(
+        api_key="test-key",
+        retry=batch_retry,
+        transport=httpx2.MockTransport(handler),
+    )
+    with pytest.raises(TypeSafeAPIError):
+        await client.ask("state", QUESTIONS)
+    assert calls == 4
 
 
 async def test_ask_fails_when_an_answer_is_missing() -> None:

@@ -59,7 +59,11 @@ class JevClient(Protocol):
 
 
 class TypeSafeJevClient:
-    """`JevClient` backed by TypeSafe's SDK, tuned for live turns."""
+    """`JevClient` backed by TypeSafe's SDK, tuned for live turns by default.
+
+    Batch callers such as the evals pass a more patient `retry` and
+    `attempt_timeout_seconds`; live turns keep the defaults.
+    """
 
     def __init__(
         self,
@@ -67,6 +71,8 @@ class TypeSafeJevClient:
         api_key: str,
         base_url: str = GATEWAY_BASE_URL,
         model: str = GATEWAY_MODEL,
+        retry: RetryPolicy = LIVE_RETRY,
+        attempt_timeout_seconds: float = LIVE_ATTEMPT_TIMEOUT_SECONDS,
         transport: httpx2.AsyncBaseTransport | None = None,
     ) -> None:
         _keep_request_bodies_out_of_logs(logging.getLogger("typesafe_sdk"))
@@ -74,8 +80,8 @@ class TypeSafeJevClient:
             api_key=api_key,
             base_url=base_url,
             model=model,
-            retry=LIVE_RETRY,
-            timeout=LIVE_ATTEMPT_TIMEOUT_SECONDS,
+            retry=retry,
+            timeout=attempt_timeout_seconds,
             transport=transport,
         )
 

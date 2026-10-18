@@ -23,3 +23,6 @@ htmlcov/
 
 # Saved eval runs (may hold full transcripts)
 apps/agent/evals/results/
+
+# The BHH benchmark is CC-BY-NC: downloaded locally, never committed
+apps/agent/evals/data/

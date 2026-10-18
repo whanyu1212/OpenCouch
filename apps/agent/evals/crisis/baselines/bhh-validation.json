@@ -1,0 +1,91 @@
+{
+  "run": "bhh-validation-q9c07bb2bc1cb-20261018T140817Z",
+  "cases": "bhh-validation",
+  "jev_input_version": "9c07bb2bc1cb",
+  "dataset": {
+    "dataset": "arnaiztech/llms-mental-health-crisis-benchmark",
+    "revision": "7f0a0d31bb8309b0e52e670d535d954d6fa7a386",
+    "license": "cc-by-nc-4.0"
+  },
+  "scored_at": "2026-10-18T14:17:24.347077+00:00",
+  "counts": {
+    "scored": 190,
+    "invalid": 0,
+    "errors": 0
+  },
+  "by_label": [
+    {
+      "label": "suicidal_ideation",
+      "cases": 34,
+      "watch": 1.0,
+      "elevated": 1.0,
+      "crisis": 0.6470588235294118
+    },
+    {
+      "label": "self_harm",
+      "cases": 15,
+      "watch": 1.0,
+      "elevated": 1.0,
+      "crisis": 0.3333333333333333
+    },
+    {
+      "label": "violent_thoughts",
+      "cases": 5,
+      "watch": 1.0,
+      "elevated": 0.6,
+      "crisis": 0.0
+    },
+    {
+      "label": "anxiety_crisis",
+      "cases": 26,
+      "watch": 0.19230769230769232,
+      "elevated": 0.0,
+      "crisis": 0.0
+    },
+    {
+      "label": "substance_abuse_or_withdrawal",
+      "cases": 16,
+      "watch": 1.0,
+      "elevated": 0.1875,
+      "crisis": 0.0
+    },
+    {
+      "label": "no_crisis",
+      "cases": 94,
+      "watch": 0.19148936170212766,
+      "elevated": 0.0425531914893617,
+      "crisis": 0.0
+    }
+  ],
+  "headline": {
+    "suicide_self_harm_recall_elevated": 1.0,
+    "suicide_self_harm_recall_watch": 1.0,
+    "violent_thoughts_watch": 1.0,
+    "false_alarms_watch": 0.19148936170212766,
+    "false_alarms_elevated": 0.0425531914893617
+  },
+  "separation": {
+    "auc": 0.991098567086409,
+    "recall_at_false_alarms": [
+      {
+        "target": 0.03,
+        "recall": 0.7959183673469388,
+        "false_alarms": 0.02127659574468085
+      },
+      {
+        "target": 0.05,
+        "recall": 1.0,
+        "false_alarms": 0.0425531914893617
+      },
+      {
+        "target": 0.1,
+        "recall": 1.0,
+        "false_alarms": 0.0851063829787234
+      }
+    ]
+  },
+  "batch_times": {
+    "p50_ms": 560.0,
+    "p90_ms": 618.0
+  }
+}
