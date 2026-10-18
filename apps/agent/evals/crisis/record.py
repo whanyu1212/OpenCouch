@@ -30,19 +30,21 @@ from evals.crisis.runs import (
     RECORDED_FILE,
     DatasetInfo,
     ErrorRow,
-    InputVersionMismatchError,
     RecordedRow,
+    RunCheckError,
     RunMeta,
+    cases_digest,
     check_input_version,
+    expected_cases,
     jev_input_version,
     load_meta,
+    portable_path,
     read_recorded,
     write_meta,
 )
 from opencouch_agent.safety import JevClient, TypeSafeJevClient, user_turn_questions
 from opencouch_agent.safety.screening import user_check_state
 
-AGENT_DIR: Final = Path(__file__).parents[2]
 RESULTS_DIR: Final = Path(__file__).parents[1] / "results" / "crisis"
 
 # Batch runs can wait: respect Retry-After, retry timeouts, allow long texts.
@@ -112,28 +114,23 @@ def new_run_dir(name: str) -> Path:
     return run_dir
 
 
-def _portable(path: Path) -> str:
-    # Relative to apps/agent when inside it, so committed runs carry no local
-    # paths; absolute otherwise. Either way `--resume` works from any directory.
-    resolved = path.resolve()
-    if resolved.is_relative_to(AGENT_DIR):
-        return str(resolved.relative_to(AGENT_DIR))
-    return str(resolved)
-
-
-def _resolve(stored: str) -> Path:
-    path = Path(stored)
-    return path if path.is_absolute() else AGENT_DIR / path
-
-
-def build_meta(name: str, cases_path: Path, *, is_bhh: bool) -> RunMeta:
+def build_meta(
+    name: str,
+    cases_path: Path,
+    cases: Sequence[Case],
+    *,
+    is_bhh: bool,
+    limit: int | None = None,
+) -> RunMeta:
     """Describe a new run, with the dataset revision when the cases are BHH."""
     dataset = None
     if is_bhh and BHH_META_PATH.exists():
         dataset = DatasetInfo.model_validate_json(BHH_META_PATH.read_text())
     return RunMeta(
         cases=name,
-        cases_path=_portable(cases_path),
+        cases_path=portable_path(cases_path),
+        cases_digest=cases_digest(cases),
+        limit=limit,
         jev_input_version=jev_input_version(),
         started_at=datetime.now(UTC).isoformat(),
         dataset=dataset,
@@ -141,24 +138,37 @@ def build_meta(name: str, cases_path: Path, *, is_bhh: bool) -> RunMeta:
 
 
 def prepare_run(
-    *, split: str | None, cases_path: Path | None, resume: Path | None
+    *,
+    split: str | None,
+    cases_path: Path | None,
+    resume: Path | None,
+    limit: int | None = None,
 ) -> tuple[Path, list[Case]]:
-    """Pick or create the run directory and load its cases.
+    """Pick or create the run directory and return the cases it should cover.
+
+    Resuming with `limit` changes how many cases the run covers, so a small
+    smoke run can be extended into a full one.
 
     Raises:
-        InputVersionMismatchError: If resuming a run recorded with another Jev input.
+        RunCheckError: If resuming a run whose Jev input or cases changed.
     """
     if resume:
         meta = load_meta(resume)
         check_input_version(meta, resume)
-        return resume, load_cases(_resolve(meta.cases_path))
+        if limit != meta.limit:
+            meta = meta.model_copy(update={"limit": limit})
+        cases = expected_cases(meta, resume)
+        write_meta(resume, meta)
+        return resume, cases
     path = bhh_path(split) if split else cases_path
     if path is None:
         raise ValueError("Give a BHH split, a cases file or a run to resume.")
+    cases = load_cases(path)
     name = f"bhh-{split}" if split else path.stem
     run_dir = new_run_dir(name)
-    write_meta(run_dir, build_meta(name, path, is_bhh=split is not None))
-    return run_dir, load_cases(path)
+    meta = build_meta(name, path, cases, is_bhh=split is not None, limit=limit)
+    write_meta(run_dir, meta)
+    return run_dir, cases[:limit]
 
 
 def parse_args() -> argparse.Namespace:
@@ -178,9 +188,12 @@ async def main() -> None:
     args = parse_args()
     try:
         run_dir, cases = prepare_run(
-            split=args.split, cases_path=args.cases, resume=args.resume
+            split=args.split,
+            cases_path=args.cases,
+            resume=args.resume,
+            limit=args.limit,
         )
-    except InputVersionMismatchError as error:
+    except RunCheckError as error:
         raise SystemExit(str(error)) from error
     client = TypeSafeJevClient(
         api_key=os.environ["AI_GATEWAY_API_KEY"],
@@ -188,9 +201,7 @@ async def main() -> None:
         attempt_timeout_seconds=BATCH_ATTEMPT_TIMEOUT_SECONDS,
     )
     try:
-        recorded, failed = await record_cases(
-            client, cases[: args.limit], run_dir, args.concurrency
-        )
+        recorded, failed = await record_cases(client, cases, run_dir, args.concurrency)
     finally:
         await client.aclose()
     print(f"recorded {recorded}, failed {failed} -> {run_dir}")

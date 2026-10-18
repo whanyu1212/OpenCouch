@@ -32,10 +32,12 @@ from evals.crisis.detection import (
     separation,
 )
 from evals.crisis.runs import (
-    InputVersionMismatchError,
     RecordedRow,
+    RunCheckError,
     RunMeta,
+    check_complete,
     check_input_version,
+    expected_cases,
     load_meta,
     read_errors,
     read_recorded,
@@ -102,17 +104,20 @@ LEVELS: Final = (RiskLevel.WATCH, RiskLevel.ELEVATED, RiskLevel.CRISIS)
 
 
 def load_run(run_dir: Path) -> tuple[RunMeta, list[RecordedRow], int]:
-    """Load a run, refusing one recorded with a different Jev input.
+    """Load a run, refusing one that can't be trusted as it stands.
 
     Returns:
         The run's metadata, its recorded rows, and how many cases errored.
 
     Raises:
-        InputVersionMismatchError: If the questions or framing changed since.
+        RunCheckError: If the Jev input or the cases changed since recording,
+            or some cases have neither an answer nor an error.
     """
     meta = load_meta(run_dir)
     check_input_version(meta, run_dir)
-    return meta, read_recorded(run_dir), len(read_errors(run_dir))
+    recorded, errors = read_recorded(run_dir), read_errors(run_dir)
+    check_complete(expected_cases(meta, run_dir), recorded, errors, run_dir)
+    return meta, recorded, len(errors)
 
 
 def label_rates(cases: Sequence[ScoredCase]) -> list[LabelRates]:
@@ -146,12 +151,14 @@ def headline(cases: Sequence[ScoredCase]) -> Headline:
 
 
 def batch_times(rows: Sequence[RecordedRow]) -> BatchTimes:
-    """Median and 90th percentile time per call."""
+    """Median and 90th percentile time per call, within the observed range."""
     times = [row.ms for row in rows]
-    return BatchTimes(
-        p50_ms=statistics.median(times) if times else None,
-        p90_ms=statistics.quantiles(times, n=10)[-1] if len(times) > 1 else None,
-    )
+    if len(times) < 2:
+        only = float(times[0]) if times else None
+        return BatchTimes(p50_ms=only, p90_ms=only)
+    # Inclusive, so a small run's p90 never lands above its slowest call.
+    deciles = statistics.quantiles(times, n=10, method="inclusive")
+    return BatchTimes(p50_ms=statistics.median(times), p90_ms=deciles[-1])
 
 
 def summarize(run_dir: Path) -> RunSummary:
@@ -206,7 +213,7 @@ def main() -> None:
     args = parser.parse_args()
     try:
         summary = summarize(args.run_dir)
-    except InputVersionMismatchError as error:
+    except RunCheckError as error:
         raise SystemExit(str(error)) from error
     print_summary(summary)
     if args.baseline:

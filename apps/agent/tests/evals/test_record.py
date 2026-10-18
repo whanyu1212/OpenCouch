@@ -1,4 +1,6 @@
+import json
 from collections.abc import Mapping
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -8,6 +10,7 @@ from evals.crisis import record
 from evals.crisis.cases import Case
 from evals.crisis.record import build_meta, prepare_run, record_cases
 from evals.crisis.runs import (
+    CasesChangedError,
     ErrorRow,
     InputVersionMismatchError,
     load_meta,
@@ -34,6 +37,11 @@ class FakeJev:
 
 
 CASES = [Case("a", "first message", "no_crisis"), Case("b", "second", "self_harm")]
+
+
+def write_cases(path: Path, cases: list[Case]) -> Path:
+    path.write_text("".join(json.dumps(asdict(case)) + "\n" for case in cases))
+    return path
 
 
 async def test_cases_are_sent_exactly_as_a_live_first_message(tmp_path: Path) -> None:
@@ -72,8 +80,7 @@ async def test_resuming_retries_only_what_is_missing(tmp_path: Path) -> None:
 def test_a_new_run_stores_an_absolute_cases_path_and_no_dataset(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cases_file = tmp_path / "bhh_extra.jsonl"
-    cases_file.write_text('{"id": "a", "text": "hi", "label": "none"}\n')
+    cases_file = write_cases(tmp_path / "bhh_extra.jsonl", CASES)
     monkeypatch.setattr(record, "RESULTS_DIR", tmp_path / "results")
     monkeypatch.chdir(tmp_path)
 
@@ -84,14 +91,39 @@ def test_a_new_run_stores_an_absolute_cases_path_and_no_dataset(
     meta = load_meta(run_dir)
     assert meta.cases_path == str(cases_file.resolve())
     assert meta.dataset is None  # a name starting with "bhh" isn't BHH
-    assert cases == [Case("a", "hi", "none")]
+    assert cases == CASES
+
+
+def test_resuming_with_a_larger_limit_extends_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cases_file = write_cases(tmp_path / "cases.jsonl", CASES)
+    monkeypatch.setattr(record, "RESULTS_DIR", tmp_path / "results")
+    run_dir, first = prepare_run(
+        split=None, cases_path=cases_file, resume=None, limit=1
+    )
+
+    _, extended = prepare_run(split=None, cases_path=None, resume=run_dir)
+
+    assert (first, extended) == (CASES[:1], CASES)
+    assert load_meta(run_dir).limit is None
 
 
 def test_resuming_a_run_recorded_with_other_questions_is_refused(
     tmp_path: Path,
 ) -> None:
-    meta = build_meta("old", tmp_path / "cases.jsonl", is_bhh=False)
+    cases_file = write_cases(tmp_path / "cases.jsonl", CASES)
+    meta = build_meta("old", cases_file, CASES, is_bhh=False)
     write_meta(tmp_path, meta.model_copy(update={"jev_input_version": "stale"}))
 
     with pytest.raises(InputVersionMismatchError):
+        prepare_run(split=None, cases_path=None, resume=tmp_path)
+
+
+def test_resuming_a_run_whose_cases_changed_is_refused(tmp_path: Path) -> None:
+    cases_file = write_cases(tmp_path / "cases.jsonl", CASES)
+    write_meta(tmp_path, build_meta("old", cases_file, CASES, is_bhh=False))
+    write_cases(cases_file, [Case("a", "first message, edited", "no_crisis")])
+
+    with pytest.raises(CasesChangedError):
         prepare_run(split=None, cases_path=None, resume=tmp_path)
