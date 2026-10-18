@@ -94,6 +94,7 @@ def score_run(
 
     Raises:
         RunCheckError: If the run can't be trusted or isn't a conversations run.
+        ValueError: If the risk rule doesn't return one level per exchange.
     """
     meta, rows, _ = load_run(run_dir)
     if meta.source != "conversations":
@@ -109,6 +110,12 @@ def score_run(
             unscorable.append(conversation.id)
             continue
         levels = tracker([exchanges[number] for number in numbers])
+        if len(levels) != len(numbers):
+            raise ValueError(
+                f"The risk rule returned {len(levels)} levels for the "
+                f"{len(numbers)} exchanges of {conversation.id}; it must "
+                "return one per exchange."
+            )
         results.append(_result(conversation, levels))
     return results, totals(results, unscorable)
 

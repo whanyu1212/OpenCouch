@@ -24,7 +24,7 @@ from pydantic import BaseModel
 
 from evals.crisis.cases import Case, load_cases
 from opencouch_agent.safety import USER_TURN_QUESTIONS, Turn
-from opencouch_agent.safety.screening import user_check_state
+from opencouch_agent.safety.screening import WINDOW_TURNS, user_check_state
 
 AGENT_DIR: Final = Path(__file__).parents[2]
 META_FILE: Final = "meta.json"
@@ -134,12 +134,23 @@ def load_source_cases(path: Path, source: str) -> list[Case]:
 
 
 def jev_input_version() -> str:
-    """A short hash of everything Jev is sent besides the case text."""
+    """A short hash of everything Jev is sent besides the case text.
+
+    The framing is probed with no history, a short one, and one longer than
+    the transcript window, so a change to how history is cut is caught too.
+    """
+    long_history = [
+        Turn(role, f"<{role} {number}>")
+        for number in range(WINDOW_TURNS)
+        for role in ("user", "assistant")
+    ]
     framing = {
         "first_message": user_check_state([], "<case>"),
         "with_history": user_check_state(
             [Turn("user", "<user>"), Turn("assistant", "<assistant>")], "<case>"
         ),
+        "beyond_window": user_check_state(long_history, "<case>"),
+        "window_turns": str(WINDOW_TURNS),
     }
     payload = {"questions": dict(USER_TURN_QUESTIONS), "framing": framing}
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode())

@@ -7,6 +7,8 @@ baseline file is updated with it.
 """
 
 import json
+from collections.abc import Sequence
+from dataclasses import asdict
 from pathlib import Path
 
 import pytest
@@ -37,16 +39,23 @@ def test_todays_rule_never_lowers_the_level() -> None:
 
 def test_dev_results_match_the_baseline(capsys: pytest.CaptureFixture[str]) -> None:
     results, totals = score_run(RECORDING, split="dev")
-    expected = DEV_BASELINE["totals"]
 
     assert totals.unscorable == []
-    assert totals.conversations == expected["conversations"]
-    assert totals.missed == expected["missed"], "misses changed"
-    assert totals.missed_crisis == expected["missed_crisis"]
-    assert totals.over_ceiling == expected["over_ceiling"], "over-escalations changed"
+    # Every metric, per conversation and in total: any change to levels,
+    # delays, ceilings, recovery or settling must update the baseline too.
+    assert asdict(totals) == DEV_BASELINE["totals"]
+    assert [asdict(result) for result in results] == DEV_BASELINE["conversations"]
 
     print_results(results, totals)
     assert "missed CRISIS" in capsys.readouterr().out
+
+
+def test_a_rule_must_return_one_level_per_exchange() -> None:
+    def too_short(signals: Sequence[UserSignals]) -> list[RiskLevel]:
+        return [RiskLevel.NONE]
+
+    with pytest.raises(ValueError, match="one per exchange"):
+        score_run(RECORDING, split="dev", tracker=too_short)
 
 
 def test_a_conversation_with_an_errored_exchange_is_unscorable(
