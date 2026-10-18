@@ -6,4 +6,5 @@ Jev input version and re-scored offline as often as needed:
     uv run --env-file .env python -m evals.crisis.bhh              # download BHH
     uv run --env-file .env python -m evals.crisis.record --split validation
     uv run python -m evals.crisis.score evals/results/crisis/<run>
+    uv run python -m evals.crisis.score_conversations <conversations run>
 """

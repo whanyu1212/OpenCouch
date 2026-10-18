@@ -33,9 +33,19 @@ Code in `evals/crisis/`:
   it is downloaded by a script, never committed. Aggregate baselines are in
   `evals/crisis/baselines/`. On the test split the current policy scores
   AUC 0.992 with 96% recall at 5% false alarms, matching FirstRead.
-- **CI sample:** 41 single-message cases with recorded answers, re-scored on
-  every PR. A policy change that changes which cases are missed or
-  over-escalated fails CI until the sample's baseline file is updated with it.
+- **CI checks:** 41 single-message cases and the dev conversations, with
+  recorded answers, re-scored on every PR. A policy change that changes which
+  cases or conversations are missed or over-escalated fails CI until the
+  matching baseline file is updated with it.
+- **Conversations** (`evals/crisis/conversations/`, FirstRead's 58, dev and
+  holdout): each exchange is recorded with the conversation so far as
+  history, then re-scored with a risk-update rule. Metrics: missed, detection
+  delay against `detect_by`, exchanges over `ceiling`, flagged after
+  recovery, settled by `settle_by`. Report counts, not percentages; the set
+  is small. Labels about coming down (`recovery_from`, `settle_by`) assume
+  FirstRead's exit rule and are flagged until HY-208 settles ours. Today's
+  rule (each message on its own, never lower) misses no CRISIS on holdout but
+  over-escalates 10 of 37 dev conversations; HY-208 is measured against that.
 - These are dataset-level metrics, so they don't use `pydantic-evals`; that
   comes with the multi-turn runner (HY-239).
 
@@ -43,10 +53,10 @@ Code in `evals/crisis/`:
 uv run python -m evals.crisis.bhh                                    # download BHH
 uv run --env-file .env python -m evals.crisis.record --split test    # ~$0.10
 uv run python -m evals.crisis.score evals/results/crisis/<run>
+uv run --env-file .env python -m evals.crisis.record \
+    --conversations evals/crisis/conversations/conversations.jsonl       # cents
+uv run python -m evals.crisis.score_conversations <run> --split dev
 ```
-- **Conversations** (`conversations.jsonl`): missed, detection delay against
-  `detect_by`, exchanges over `ceiling`, flagged after recovery, settled by
-  `settle_by`. Report counts, not percentages; the set is small.
 
 ### Behaviour
 

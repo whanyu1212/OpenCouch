@@ -1,13 +1,13 @@
 {
   "run": "bhh-validation-q9c07bb2bc1cb-20261018T140817Z",
   "cases": "bhh-validation",
-  "jev_input_version": "9c07bb2bc1cb",
+  "jev_input_version": "f07fefa16e18",
   "dataset": {
     "dataset": "arnaiztech/llms-mental-health-crisis-benchmark",
     "revision": "7f0a0d31bb8309b0e52e670d535d954d6fa7a386",
     "license": "cc-by-nc-4.0"
   },
-  "scored_at": "2026-10-18T14:17:24.347077+00:00",
+  "scored_at": "2026-10-18T14:52:51.505768+00:00",
   "counts": {
     "scored": 190,
     "invalid": 0,

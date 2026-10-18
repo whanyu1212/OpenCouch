@@ -18,13 +18,13 @@ import json
 from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
-from typing import Final
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel
 
 from evals.crisis.cases import Case, load_cases
 from opencouch_agent.safety import USER_TURN_QUESTIONS, Turn
-from opencouch_agent.safety.screening import user_check_state
+from opencouch_agent.safety.screening import WINDOW_TURNS, user_check_state
 
 AGENT_DIR: Final = Path(__file__).parents[2]
 META_FILE: Final = "meta.json"
@@ -45,6 +45,7 @@ class RunMeta(BaseModel):
 
     cases: str
     cases_path: str
+    source: Literal["cases", "conversations"] = "cases"
     cases_digest: str
     limit: int | None = None
     jev_input_version: str
@@ -103,19 +104,53 @@ def resolve_path(stored: str) -> Path:
     return path if path.is_absolute() else AGENT_DIR / path
 
 
+def _hashed_fields(case: Case) -> dict[str, Any]:
+    fields = asdict(case)
+    # Leave out an empty history, so single-message cases hash as they did
+    # before cases could carry one and their recordings stay valid.
+    if not case.history:
+        del fields["history"]
+    return fields
+
+
 def cases_digest(cases: Sequence[Case]) -> str:
-    """A short hash of every case's ID, text and label."""
-    payload = json.dumps([asdict(case) for case in cases], sort_keys=True)
+    """A short hash of every case's ID, text, label and history."""
+    payload = json.dumps([_hashed_fields(case) for case in cases], sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()[:12]
 
 
+def load_source_cases(path: Path, source: str) -> list[Case]:
+    """The cases in a cases file, or one per exchange of a conversations file."""
+    if source == "conversations":
+        # Imported here: conversations.py needs cases.py, not this module.
+        from evals.crisis.conversations import exchange_cases, load_conversations
+
+        return [
+            case
+            for conversation in load_conversations(path)
+            for case in exchange_cases(conversation)
+        ]
+    return load_cases(path)
+
+
 def jev_input_version() -> str:
-    """A short hash of everything Jev is sent besides the case text."""
+    """A short hash of everything Jev is sent besides the case text.
+
+    The framing is probed with no history, a short one, and one longer than
+    the transcript window, so a change to how history is cut is caught too.
+    """
+    long_history = [
+        Turn(role, f"<{role} {number}>")
+        for number in range(WINDOW_TURNS)
+        for role in ("user", "assistant")
+    ]
     framing = {
         "first_message": user_check_state([], "<case>"),
         "with_history": user_check_state(
             [Turn("user", "<user>"), Turn("assistant", "<assistant>")], "<case>"
         ),
+        "beyond_window": user_check_state(long_history, "<case>"),
+        "window_turns": str(WINDOW_TURNS),
     }
     payload = {"questions": dict(USER_TURN_QUESTIONS), "framing": framing}
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode())
@@ -143,7 +178,7 @@ def expected_cases(meta: RunMeta, run_dir: Path) -> list[Case]:
     Raises:
         CasesChangedError: If the cases file differs from when it was recorded.
     """
-    cases = load_cases(resolve_path(meta.cases_path))
+    cases = load_source_cases(resolve_path(meta.cases_path), meta.source)
     if cases_digest(cases) != meta.cases_digest:
         raise CasesChangedError(
             f"{meta.cases_path} changed since {run_dir} was recorded "
