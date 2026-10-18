@@ -1,0 +1,88 @@
+{
+  "run": "bhh-test-q58153b11fa73-20261018T131731Z",
+  "cases": "bhh-test",
+  "question_set_version": "58153b11fa73",
+  "dataset": {
+    "dataset": "arnaiztech/llms-mental-health-crisis-benchmark",
+    "revision": "7f0a0d31bb8309b0e52e670d535d954d6fa7a386",
+    "license": "cc-by-nc-4.0"
+  },
+  "scored_at": "2026-10-18T13:19:59.049146+00:00",
+  "counts": {
+    "scored": 2044,
+    "invalid": 0,
+    "errors": 0
+  },
+  "by_label": {
+    "suicidal_ideation": {
+      "n": 380,
+      ">=watch": 0.9921052631578947,
+      ">=elevated": 0.9552631578947368,
+      ">=crisis": 0.6236842105263158
+    },
+    "self_harm": {
+      "n": 139,
+      ">=watch": 0.9784172661870504,
+      ">=elevated": 0.9784172661870504,
+      ">=crisis": 0.6330935251798561
+    },
+    "violent_thoughts": {
+      "n": 21,
+      ">=watch": 0.5714285714285714,
+      ">=elevated": 0.47619047619047616,
+      ">=crisis": 0.09523809523809523
+    },
+    "anxiety_crisis": {
+      "n": 177,
+      ">=watch": 0.13559322033898305,
+      ">=elevated": 0.01694915254237288,
+      ">=crisis": 0.005649717514124294
+    },
+    "substance_abuse_or_withdrawal": {
+      "n": 77,
+      ">=watch": 0.7272727272727273,
+      ">=elevated": 0.16883116883116883,
+      ">=crisis": 0.025974025974025976
+    },
+    "risk_taking_behaviors": {
+      "n": 19,
+      ">=watch": 0.8947368421052632,
+      ">=elevated": 0.8421052631578947,
+      ">=crisis": 0.3157894736842105
+    },
+    "no_crisis": {
+      "n": 1231,
+      ">=watch": 0.1502843216896832,
+      ">=elevated": 0.03574329813160033,
+      ">=crisis": 0.00487408610885459
+    }
+  },
+  "headline": {
+    "si_self_harm_recall_elevated": 0.9614643545279383,
+    "si_self_harm_recall_watch": 0.9884393063583815,
+    "violent_thoughts_watch": 0.5714285714285714,
+    "false_alarms_watch": 0.1502843216896832,
+    "false_alarms_elevated": 0.03574329813160033
+  },
+  "separation": {
+    "auc": 0.9919125231456482,
+    "recall_at_false_alarms": {
+      "3%": {
+        "recall": 0.9267822736030829,
+        "false_alarms": 0.02924451665312754
+      },
+      "5%": {
+        "recall": 0.9595375722543352,
+        "false_alarms": 0.04467912266450041
+      },
+      "10%": {
+        "recall": 0.9865125240847784,
+        "false_alarms": 0.08448415922014622
+      }
+    }
+  },
+  "batch_ms": {
+    "p50": 577.0,
+    "p90": 666.0
+  }
+}

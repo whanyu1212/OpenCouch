@@ -16,7 +16,7 @@ catalog data and eval scenarios, not as a design to copy.
 ```bash
 # Agent (run from apps/agent)
 uv run ruff check . && uv run ruff format --check .
-uv run mypy src tests
+uv run mypy src tests evals scripts
 uv run pytest
 OPENCOUCH_MODEL=test uv run opencouch-agent   # run without an API key
 

@@ -44,6 +44,6 @@ docker compose up --build
 ## Checks
 
 ```bash
-cd apps/agent && uv run ruff check . && uv run mypy src tests && uv run pytest
+cd apps/agent && uv run ruff check . && uv run mypy src tests evals scripts && uv run pytest
 pnpm lint:web && pnpm build:web
 ```
