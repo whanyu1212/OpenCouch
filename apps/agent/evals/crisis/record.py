@@ -1,11 +1,14 @@
 """Record Jev's answers for a set of cases, once per Jev input version.
 
-Each case is sent exactly as the live gate would send a first message:
-`user_check_state` with an empty history, and the current question set.
+Each case is sent exactly as the live gate would send it: `user_check_state`
+with the case's history (empty for a first message), and the current question
+set. A conversations file is recorded as one case per exchange.
 Answers are stored raw, keyed by question name, so the scorer can re-score
 them under any policy without calling Jev again.
 
     uv run --env-file .env python -m evals.crisis.record --split validation --limit 20
+    uv run --env-file .env python -m evals.crisis.record --conversations \
+        evals/crisis/conversations/conversations.jsonl
     uv run --env-file .env python -m evals.crisis.record --resume <run dir>
 
 See `runs.py` for what a run directory holds. `--resume` skips cases already
@@ -20,11 +23,11 @@ import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 
 from typesafe_sdk import RetryPolicy
 
-from evals.crisis.cases import BHH_META_PATH, Case, bhh_path, load_cases
+from evals.crisis.cases import BHH_META_PATH, Case, bhh_path
 from evals.crisis.runs import (
     ERRORS_FILE,
     RECORDED_FILE,
@@ -38,6 +41,7 @@ from evals.crisis.runs import (
     expected_cases,
     jev_input_version,
     load_meta,
+    load_source_cases,
     portable_path,
     read_recorded,
     write_meta,
@@ -56,7 +60,7 @@ async def record_case(client: JevClient, case: Case) -> RecordedRow | ErrorRow:
     """Ask Jev about one case; an error row if it didn't answer."""
     start = time.perf_counter()
     try:
-        state = user_check_state([], case.text)
+        state = user_check_state(case.history, case.text)
         probabilities = await client.ask(state, user_turn_questions())
     except Exception as error:
         # Any failure is kept out of the recording, so it's never scored as NONE.
@@ -120,6 +124,7 @@ def build_meta(
     cases: Sequence[Case],
     *,
     is_bhh: bool,
+    source: Literal["cases", "conversations"] = "cases",
     limit: int | None = None,
 ) -> RunMeta:
     """Describe a new run, with the dataset revision when the cases are BHH."""
@@ -129,6 +134,7 @@ def build_meta(
     return RunMeta(
         cases=name,
         cases_path=portable_path(cases_path),
+        source=source,
         cases_digest=cases_digest(cases),
         limit=limit,
         jev_input_version=jev_input_version(),
@@ -142,6 +148,7 @@ def prepare_run(
     split: str | None,
     cases_path: Path | None,
     resume: Path | None,
+    conversations_path: Path | None = None,
     limit: int | None = None,
 ) -> tuple[Path, list[Case]]:
     """Pick or create the run directory and return the cases it should cover.
@@ -160,13 +167,18 @@ def prepare_run(
         cases = expected_cases(meta, resume)
         write_meta(resume, meta)
         return resume, cases
-    path = bhh_path(split) if split else cases_path
+    source: Literal["cases", "conversations"] = (
+        "conversations" if conversations_path else "cases"
+    )
+    path = bhh_path(split) if split else (conversations_path or cases_path)
     if path is None:
         raise ValueError("Give a BHH split, a cases file or a run to resume.")
-    cases = load_cases(path)
+    cases = load_source_cases(path, source)
     name = f"bhh-{split}" if split else path.stem
     run_dir = new_run_dir(name)
-    meta = build_meta(name, path, cases, is_bhh=split is not None, limit=limit)
+    meta = build_meta(
+        name, path, cases, is_bhh=split is not None, source=source, limit=limit
+    )
     write_meta(run_dir, meta)
     return run_dir, cases[:limit]
 
@@ -177,6 +189,9 @@ def parse_args() -> argparse.Namespace:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--split", choices=["validation", "test"], help="BHH split")
     source.add_argument("--cases", type=Path, help="a cases JSON Lines file")
+    source.add_argument(
+        "--conversations", type=Path, help="a labelled conversations file"
+    )
     source.add_argument("--resume", type=Path, help="a run directory to finish")
     parser.add_argument("--limit", type=int, help="record only the first N cases")
     parser.add_argument("--concurrency", type=int, default=4)
@@ -190,6 +205,7 @@ async def main() -> None:
         run_dir, cases = prepare_run(
             split=args.split,
             cases_path=args.cases,
+            conversations_path=args.conversations,
             resume=args.resume,
             limit=args.limit,
         )

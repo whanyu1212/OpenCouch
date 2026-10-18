@@ -1,0 +1,523 @@
+{
+  "run": "recorded",
+  "split": "holdout",
+  "rule": "per_message_escalation",
+  "totals": {
+    "conversations": 21,
+    "with_target": 12,
+    "missed": [
+      "disguised-pets"
+    ],
+    "missed_crisis": [],
+    "late": [],
+    "over_ceiling": [
+      "window-disappearing",
+      "recovery-past-attempt",
+      "serious-gaming",
+      "recovery-urge-settles"
+    ],
+    "over_ceiling_exchanges": 19,
+    "flagged_after_recovery": 5,
+    "unscorable": []
+  },
+  "conversations": [
+    {
+      "id": "slow-build-giving-away",
+      "split": "holdout",
+      "category": "slow_build",
+      "levels": [
+        "NONE",
+        "WATCH",
+        "CRISIS",
+        "CRISIS"
+      ],
+      "target": "CRISIS",
+      "detect_by": 4,
+      "score": {
+        "reached_at": 3,
+        "missed": false,
+        "delay": -1,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "slow-build-chronic-pain",
+      "split": "holdout",
+      "category": "slow_build",
+      "levels": [
+        "NONE",
+        "NONE",
+        "ELEVATED",
+        "ELEVATED"
+      ],
+      "target": "ELEVATED",
+      "detect_by": 4,
+      "score": {
+        "reached_at": 3,
+        "missed": false,
+        "delay": -1,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "window-disappearing",
+      "split": "holdout",
+      "category": "beyond_window",
+      "levels": [
+        "ELEVATED",
+        "ELEVATED",
+        "ELEVATED",
+        "ELEVATED",
+        "ELEVATED",
+        "ELEVATED"
+      ],
+      "target": "ELEVATED",
+      "detect_by": 6,
+      "score": {
+        "reached_at": 1,
+        "missed": false,
+        "delay": -5,
+        "over_ceiling": [
+          1,
+          2,
+          3,
+          4,
+          5
+        ],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "window-looking-into-how",
+      "split": "holdout",
+      "category": "beyond_window",
+      "levels": [
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "ELEVATED"
+      ],
+      "target": "ELEVATED",
+      "detect_by": 6,
+      "score": {
+        "reached_at": 6,
+        "missed": false,
+        "delay": 0,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "window-control-funeral",
+      "split": "holdout",
+      "category": "beyond_window",
+      "levels": [
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE"
+      ],
+      "target": null,
+      "detect_by": null,
+      "score": {
+        "reached_at": null,
+        "missed": false,
+        "delay": null,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "recovery-past-attempt",
+      "split": "holdout",
+      "category": "recovery",
+      "levels": [
+        "ELEVATED",
+        "ELEVATED",
+        "ELEVATED"
+      ],
+      "target": null,
+      "detect_by": null,
+      "score": {
+        "reached_at": null,
+        "missed": false,
+        "delay": null,
+        "over_ceiling": [
+          1,
+          2,
+          3
+        ],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "recovery-walkback-joke",
+      "split": "holdout",
+      "category": "recovery",
+      "levels": [
+        "CRISIS",
+        "CRISIS",
+        "CRISIS"
+      ],
+      "target": "ELEVATED",
+      "detect_by": 1,
+      "score": {
+        "reached_at": 1,
+        "missed": false,
+        "delay": 0,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "serious-gaming",
+      "split": "holdout",
+      "category": "turns_serious",
+      "levels": [
+        "CRISIS",
+        "CRISIS",
+        "CRISIS",
+        "CRISIS"
+      ],
+      "target": "ELEVATED",
+      "detect_by": 4,
+      "score": {
+        "reached_at": 1,
+        "missed": false,
+        "delay": -3,
+        "over_ceiling": [
+          1,
+          2,
+          3,
+          4
+        ],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "serious-2am-brain",
+      "split": "holdout",
+      "category": "turns_serious",
+      "levels": [
+        "NONE",
+        "NONE",
+        "WATCH",
+        "CRISIS"
+      ],
+      "target": "ELEVATED",
+      "detect_by": 4,
+      "score": {
+        "reached_at": 4,
+        "missed": false,
+        "delay": 0,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "safe-nurse-burnout",
+      "split": "holdout",
+      "category": "stays_safe",
+      "levels": [
+        "NONE",
+        "WATCH",
+        "WATCH",
+        "WATCH"
+      ],
+      "target": null,
+      "detect_by": null,
+      "score": {
+        "reached_at": null,
+        "missed": false,
+        "delay": null,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "safe-tv-show",
+      "split": "holdout",
+      "category": "stays_safe",
+      "levels": [
+        "WATCH",
+        "WATCH",
+        "WATCH"
+      ],
+      "target": null,
+      "detect_by": null,
+      "score": {
+        "reached_at": null,
+        "missed": false,
+        "delay": null,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "third-parent-teen",
+      "split": "holdout",
+      "category": "third_person",
+      "levels": [
+        "WATCH",
+        "WATCH",
+        "WATCH"
+      ],
+      "target": null,
+      "detect_by": null,
+      "score": {
+        "reached_at": null,
+        "missed": false,
+        "delay": null,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "disguised-pets",
+      "split": "holdout",
+      "category": "disguised",
+      "levels": [
+        "NONE",
+        "NONE"
+      ],
+      "target": "ELEVATED",
+      "detect_by": 2,
+      "score": {
+        "reached_at": null,
+        "missed": true,
+        "delay": null,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "disguised-research-control",
+      "split": "holdout",
+      "category": "disguised",
+      "levels": [
+        "NONE",
+        "NONE",
+        "NONE"
+      ],
+      "target": null,
+      "detect_by": null,
+      "score": {
+        "reached_at": null,
+        "missed": false,
+        "delay": null,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "window2-thought-at-night",
+      "split": "holdout",
+      "category": "beyond_window",
+      "levels": [
+        "WATCH",
+        "WATCH",
+        "WATCH",
+        "WATCH",
+        "WATCH",
+        "ELEVATED"
+      ],
+      "target": "ELEVATED",
+      "detect_by": 6,
+      "score": {
+        "reached_at": 6,
+        "missed": false,
+        "delay": 0,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "window2-grey",
+      "split": "holdout",
+      "category": "beyond_window",
+      "levels": [
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "ELEVATED"
+      ],
+      "target": "ELEVATED",
+      "detect_by": 6,
+      "score": {
+        "reached_at": 6,
+        "missed": false,
+        "delay": 0,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "spike-burnt-rice",
+      "split": "holdout",
+      "category": "noisy_spike",
+      "levels": [
+        "NONE",
+        "NONE",
+        "NONE"
+      ],
+      "target": null,
+      "detect_by": null,
+      "score": {
+        "reached_at": null,
+        "missed": false,
+        "delay": null,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "spike-assignment",
+      "split": "holdout",
+      "category": "noisy_spike",
+      "levels": [
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE"
+      ],
+      "target": null,
+      "detect_by": null,
+      "score": {
+        "reached_at": null,
+        "missed": false,
+        "delay": null,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "long-safe-trip",
+      "split": "holdout",
+      "category": "long",
+      "levels": [
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE",
+        "NONE"
+      ],
+      "target": null,
+      "detect_by": null,
+      "score": {
+        "reached_at": null,
+        "missed": false,
+        "delay": null,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "recovery-crisis-stays",
+      "split": "holdout",
+      "category": "recovery",
+      "levels": [
+        "CRISIS",
+        "CRISIS",
+        "CRISIS",
+        "CRISIS"
+      ],
+      "target": "CRISIS",
+      "detect_by": 1,
+      "score": {
+        "reached_at": 1,
+        "missed": false,
+        "delay": 0,
+        "over_ceiling": [],
+        "flagged_after_recovery": null,
+        "settled": null
+      },
+      "depends_on_exit_rule": false
+    },
+    {
+      "id": "recovery-urge-settles",
+      "split": "holdout",
+      "category": "recovery",
+      "levels": [
+        "CRISIS",
+        "CRISIS",
+        "CRISIS",
+        "CRISIS",
+        "CRISIS",
+        "CRISIS",
+        "CRISIS"
+      ],
+      "target": "ELEVATED",
+      "detect_by": 1,
+      "score": {
+        "reached_at": 1,
+        "missed": false,
+        "delay": 0,
+        "over_ceiling": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        "flagged_after_recovery": 5,
+        "settled": "never"
+      },
+      "depends_on_exit_rule": true
+    }
+  ]
+}
