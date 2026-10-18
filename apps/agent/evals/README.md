@@ -22,9 +22,11 @@ FirstRead's eval data and metric definitions, with our own code (HY-211).
 Code in `evals/crisis/`:
 
 - **Record once, re-score free.** `record` sends each case exactly as the live
-  gate sends a first message and stores Jev's raw answers per question-set
-  version. `score` re-scores a recording with the current policy offline; it
-  refuses a recording made with different questions.
+  gate sends a first message and stores Jev's raw answers, tagged with a hash
+  of the questions and transcript framing. `score` re-scores a recording with
+  the current policy offline; it refuses a recording made with a different
+  Jev input. Jev's answers vary slightly between recordings (about a point on
+  false alarms), so compare policies on the same recording.
 - **BHH** (Between Help and Harm): AUC, recall at a 5% false-alarm rate,
   recall at ≥ELEVATED and ≥WATCH, false-alarm rate on `no_crisis`, and the
   share of every crisis type reaching each level. The dataset is CC-BY-NC, so
@@ -32,12 +34,13 @@ Code in `evals/crisis/`:
   `evals/crisis/baselines/`. On the test split the current policy scores
   AUC 0.992 with 96% recall at 5% false alarms, matching FirstRead.
 - **CI sample:** 41 single-message cases with recorded answers, re-scored on
-  every PR. A policy change that adds a miss or a false alarm fails CI.
+  every PR. A policy change that changes which cases are missed or
+  over-escalated fails CI until the sample's baseline file is updated with it.
 - These are dataset-level metrics, so they don't use `pydantic-evals`; that
   comes with the multi-turn runner (HY-239).
 
 ```bash
-uv run python -m evals.crisis.cases                                  # download BHH
+uv run python -m evals.crisis.bhh                                    # download BHH
 uv run --env-file .env python -m evals.crisis.record --split test    # ~$0.10
 uv run python -m evals.crisis.score evals/results/crisis/<run>
 ```

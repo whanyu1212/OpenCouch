@@ -1,88 +1,98 @@
 {
-  "run": "bhh-test-q58153b11fa73-20261018T131731Z",
+  "run": "bhh-test-q9c07bb2bc1cb-20261018T140832Z",
   "cases": "bhh-test",
-  "question_set_version": "58153b11fa73",
+  "jev_input_version": "9c07bb2bc1cb",
   "dataset": {
     "dataset": "arnaiztech/llms-mental-health-crisis-benchmark",
     "revision": "7f0a0d31bb8309b0e52e670d535d954d6fa7a386",
     "license": "cc-by-nc-4.0"
   },
-  "scored_at": "2026-10-18T13:19:59.049146+00:00",
+  "scored_at": "2026-10-18T14:11:22.851902+00:00",
   "counts": {
     "scored": 2044,
     "invalid": 0,
     "errors": 0
   },
-  "by_label": {
-    "suicidal_ideation": {
-      "n": 380,
-      ">=watch": 0.9921052631578947,
-      ">=elevated": 0.9552631578947368,
-      ">=crisis": 0.6236842105263158
+  "by_label": [
+    {
+      "label": "suicidal_ideation",
+      "cases": 380,
+      "watch": 0.9921052631578947,
+      "elevated": 0.9526315789473684,
+      "crisis": 0.6263157894736842
     },
-    "self_harm": {
-      "n": 139,
-      ">=watch": 0.9784172661870504,
-      ">=elevated": 0.9784172661870504,
-      ">=crisis": 0.6330935251798561
+    {
+      "label": "self_harm",
+      "cases": 139,
+      "watch": 0.9784172661870504,
+      "elevated": 0.9784172661870504,
+      "crisis": 0.6474820143884892
     },
-    "violent_thoughts": {
-      "n": 21,
-      ">=watch": 0.5714285714285714,
-      ">=elevated": 0.47619047619047616,
-      ">=crisis": 0.09523809523809523
+    {
+      "label": "violent_thoughts",
+      "cases": 21,
+      "watch": 0.5714285714285714,
+      "elevated": 0.47619047619047616,
+      "crisis": 0.09523809523809523
     },
-    "anxiety_crisis": {
-      "n": 177,
-      ">=watch": 0.13559322033898305,
-      ">=elevated": 0.01694915254237288,
-      ">=crisis": 0.005649717514124294
+    {
+      "label": "anxiety_crisis",
+      "cases": 177,
+      "watch": 0.12994350282485875,
+      "elevated": 0.01694915254237288,
+      "crisis": 0.005649717514124294
     },
-    "substance_abuse_or_withdrawal": {
-      "n": 77,
-      ">=watch": 0.7272727272727273,
-      ">=elevated": 0.16883116883116883,
-      ">=crisis": 0.025974025974025976
+    {
+      "label": "substance_abuse_or_withdrawal",
+      "cases": 77,
+      "watch": 0.7012987012987013,
+      "elevated": 0.16883116883116883,
+      "crisis": 0.025974025974025976
     },
-    "risk_taking_behaviors": {
-      "n": 19,
-      ">=watch": 0.8947368421052632,
-      ">=elevated": 0.8421052631578947,
-      ">=crisis": 0.3157894736842105
+    {
+      "label": "risk_taking_behaviors",
+      "cases": 19,
+      "watch": 0.8947368421052632,
+      "elevated": 0.7894736842105263,
+      "crisis": 0.3684210526315789
     },
-    "no_crisis": {
-      "n": 1231,
-      ">=watch": 0.1502843216896832,
-      ">=elevated": 0.03574329813160033,
-      ">=crisis": 0.00487408610885459
+    {
+      "label": "no_crisis",
+      "cases": 1231,
+      "watch": 0.1445978878960195,
+      "elevated": 0.038180341186027617,
+      "crisis": 0.00487408610885459
     }
-  },
+  ],
   "headline": {
-    "si_self_harm_recall_elevated": 0.9614643545279383,
-    "si_self_harm_recall_watch": 0.9884393063583815,
+    "suicide_self_harm_recall_elevated": 0.9595375722543352,
+    "suicide_self_harm_recall_watch": 0.9884393063583815,
     "violent_thoughts_watch": 0.5714285714285714,
-    "false_alarms_watch": 0.1502843216896832,
-    "false_alarms_elevated": 0.03574329813160033
+    "false_alarms_watch": 0.1445978878960195,
+    "false_alarms_elevated": 0.038180341186027617
   },
   "separation": {
-    "auc": 0.9919125231456482,
-    "recall_at_false_alarms": {
-      "3%": {
-        "recall": 0.9267822736030829,
+    "auc": 0.9924040013210432,
+    "recall_at_false_alarms": [
+      {
+        "target": 0.03,
+        "recall": 0.930635838150289,
         "false_alarms": 0.02924451665312754
       },
-      "5%": {
-        "recall": 0.9595375722543352,
+      {
+        "target": 0.05,
+        "recall": 0.9614643545279383,
         "false_alarms": 0.04467912266450041
       },
-      "10%": {
+      {
+        "target": 0.1,
         "recall": 0.9865125240847784,
-        "false_alarms": 0.08448415922014622
+        "false_alarms": 0.08123476848090982
       }
-    }
+    ]
   },
-  "batch_ms": {
-    "p50": 577.0,
-    "p90": 666.0
+  "batch_times": {
+    "p50_ms": 564.0,
+    "p90_ms": 622.0
   }
 }

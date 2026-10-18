@@ -1,4 +1,4 @@
-"""Record Jev's answers for a set of cases, once per question-set version.
+"""Record Jev's answers for a set of cases, once per Jev input version.
 
 Each case is sent exactly as the live gate would send a first message:
 `user_check_state` with an empty history, and the current question set.
@@ -8,36 +8,41 @@ them under any policy without calling Jev again.
     uv run --env-file .env python -m evals.crisis.record --split validation --limit 20
     uv run --env-file .env python -m evals.crisis.record --resume <run dir>
 
-A run directory holds `meta.json`, `recorded.jsonl` (one row per answered
-case) and `errors.jsonl` (cases that failed this run). `--resume` skips cases
-already recorded, which covers both a crash and retrying errors. Recorded
-times use the batch client below, not live settings, so they aren't live
-latency.
+See `runs.py` for what a run directory holds. `--resume` skips cases already
+recorded, which covers both a crash and retrying errors. Recorded times use
+the batch client below, not live settings, so they aren't live latency.
 """
 
 import argparse
 import asyncio
-import hashlib
-import json
 import os
 import time
 from collections.abc import Sequence
-from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 from typesafe_sdk import RetryPolicy
 
-from evals.crisis.cases import DATA_DIR, Case, bhh_path, load_cases
-from opencouch_agent.safety import (
-    USER_TURN_QUESTIONS,
-    JevClient,
-    TypeSafeJevClient,
-    user_turn_questions,
+from evals.crisis.cases import BHH_META_PATH, Case, bhh_path, load_cases
+from evals.crisis.runs import (
+    ERRORS_FILE,
+    RECORDED_FILE,
+    DatasetInfo,
+    ErrorRow,
+    InputVersionMismatchError,
+    RecordedRow,
+    RunMeta,
+    check_input_version,
+    jev_input_version,
+    load_meta,
+    read_recorded,
+    write_meta,
 )
+from opencouch_agent.safety import JevClient, TypeSafeJevClient, user_turn_questions
 from opencouch_agent.safety.screening import user_check_state
 
+AGENT_DIR: Final = Path(__file__).parents[2]
 RESULTS_DIR: Final = Path(__file__).parents[1] / "results" / "crisis"
 
 # Batch runs can wait: respect Retry-After, retry timeouts, allow long texts.
@@ -45,31 +50,23 @@ BATCH_RETRY: Final = RetryPolicy(max_retries=4, backoff_initial=1.0, backoff_max
 BATCH_ATTEMPT_TIMEOUT_SECONDS: Final = 30.0
 
 
-def question_set_version() -> str:
-    """A short hash of the question text; a recording is only valid for one."""
-    text = json.dumps(dict(sorted(USER_TURN_QUESTIONS.items())))
-    return hashlib.sha256(text.encode()).hexdigest()[:12]
-
-
-def read_jsonl(path: Path) -> list[dict[str, Any]]:
-    """Read a JSON Lines file, or nothing if it doesn't exist."""
-    if not path.exists():
-        return []
-    with path.open() as lines:
-        return [json.loads(line) for line in lines if line.strip()]
-
-
-async def record_case(client: JevClient, case: Case) -> dict[str, Any]:
-    """Ask Jev about one case; the result row says whether it worked."""
+async def record_case(client: JevClient, case: Case) -> RecordedRow | ErrorRow:
+    """Ask Jev about one case; an error row if it didn't answer."""
     start = time.perf_counter()
     try:
         state = user_check_state([], case.text)
         probabilities = await client.ask(state, user_turn_questions())
     except Exception as error:
-        # Keep the case out of the recording; errors are never scored as NONE.
-        return {"id": case.id, "error": type(error).__name__}
+        # Any failure is kept out of the recording, so it's never scored as NONE.
+        return ErrorRow(id=case.id, error=type(error).__name__)
     elapsed_ms = round((time.perf_counter() - start) * 1000)
-    return {**asdict(case), "probabilities": probabilities, "ms": elapsed_ms}
+    return RecordedRow(
+        id=case.id,
+        text=case.text,
+        label=case.label,
+        probabilities=probabilities,
+        ms=elapsed_ms,
+    )
 
 
 async def record_cases(
@@ -80,49 +77,88 @@ async def record_cases(
     Returns:
         How many cases were recorded and how many failed in this run.
     """
-    done = {row["id"] for row in read_jsonl(run_dir / "recorded.jsonl")}
+    done = {row.id for row in read_recorded(run_dir)}
     pending = [case for case in cases if case.id not in done]
     limit = asyncio.Semaphore(concurrency)
 
-    async def bounded(case: Case) -> dict[str, Any]:
+    async def bounded(case: Case) -> RecordedRow | ErrorRow:
         async with limit:
             return await record_case(client, case)
 
     recorded = failed = 0
     with (
-        (run_dir / "recorded.jsonl").open("a") as recorded_file,
-        (run_dir / "errors.jsonl").open("w") as errors_file,
+        (run_dir / RECORDED_FILE).open("a") as recorded_file,
+        (run_dir / ERRORS_FILE).open("w") as errors_file,
     ):
         for finished in asyncio.as_completed([bounded(case) for case in pending]):
             row = await finished
-            target = errors_file if "error" in row else recorded_file
-            target.write(json.dumps(row) + "\n")
+            if isinstance(row, ErrorRow):
+                failed += 1
+                target = errors_file
+            else:
+                recorded += 1
+                target = recorded_file
+            # Written as each case finishes, so a crash loses nothing.
+            target.write(row.model_dump_json() + "\n")
             target.flush()
-            failed += "error" in row
-            recorded += "error" not in row
     return recorded, failed
 
 
 def new_run_dir(name: str) -> Path:
-    """Create a run directory named for the cases, question set and time."""
+    """Create a run directory named for the cases, Jev input and time."""
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    run_dir = RESULTS_DIR / f"{name}-q{question_set_version()}-{stamp}"
+    run_dir = RESULTS_DIR / f"{name}-q{jev_input_version()}-{stamp}"
     run_dir.mkdir(parents=True)
     return run_dir
 
 
-def write_meta(run_dir: Path, name: str, cases_path: Path) -> None:
-    """Record what the run was made from, so the scorer can check it."""
-    meta: dict[str, Any] = {
-        "cases": name,
-        "cases_path": str(cases_path),
-        "question_set_version": question_set_version(),
-        "started_at": datetime.now(UTC).isoformat(),
-    }
-    dataset_meta = DATA_DIR / "bhh.meta.json"
-    if name.startswith("bhh") and dataset_meta.exists():
-        meta["dataset"] = json.loads(dataset_meta.read_text())
-    (run_dir / "meta.json").write_text(json.dumps(meta, indent=2) + "\n")
+def _portable(path: Path) -> str:
+    # Relative to apps/agent when inside it, so committed runs carry no local
+    # paths; absolute otherwise. Either way `--resume` works from any directory.
+    resolved = path.resolve()
+    if resolved.is_relative_to(AGENT_DIR):
+        return str(resolved.relative_to(AGENT_DIR))
+    return str(resolved)
+
+
+def _resolve(stored: str) -> Path:
+    path = Path(stored)
+    return path if path.is_absolute() else AGENT_DIR / path
+
+
+def build_meta(name: str, cases_path: Path, *, is_bhh: bool) -> RunMeta:
+    """Describe a new run, with the dataset revision when the cases are BHH."""
+    dataset = None
+    if is_bhh and BHH_META_PATH.exists():
+        dataset = DatasetInfo.model_validate_json(BHH_META_PATH.read_text())
+    return RunMeta(
+        cases=name,
+        cases_path=_portable(cases_path),
+        jev_input_version=jev_input_version(),
+        started_at=datetime.now(UTC).isoformat(),
+        dataset=dataset,
+    )
+
+
+def prepare_run(
+    *, split: str | None, cases_path: Path | None, resume: Path | None
+) -> tuple[Path, list[Case]]:
+    """Pick or create the run directory and load its cases.
+
+    Raises:
+        InputVersionMismatchError: If resuming a run recorded with another Jev input.
+    """
+    if resume:
+        meta = load_meta(resume)
+        check_input_version(meta, resume)
+        return resume, load_cases(_resolve(meta.cases_path))
+    path = bhh_path(split) if split else cases_path
+    if path is None:
+        raise ValueError("Give a BHH split, a cases file or a run to resume.")
+    name = f"bhh-{split}" if split else path.stem
+    run_dir = new_run_dir(name)
+    write_meta(run_dir, build_meta(name, path, is_bhh=split is not None))
+    return run_dir, load_cases(path)
 
 
 def parse_args() -> argparse.Namespace:
@@ -137,24 +173,15 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def prepare_run(args: argparse.Namespace) -> tuple[Path, list[Case]]:
-    """Pick or create the run directory and load its cases."""
-    if args.resume:
-        meta = json.loads((args.resume / "meta.json").read_text())
-        if meta["question_set_version"] != question_set_version():
-            raise SystemExit("The questions changed since this run; start a new one.")
-        return args.resume, load_cases(Path(meta["cases_path"]))
-    cases_path = bhh_path(args.split) if args.split else args.cases
-    name = f"bhh-{args.split}" if args.split else cases_path.stem
-    run_dir = new_run_dir(name)
-    write_meta(run_dir, name, cases_path)
-    return run_dir, load_cases(cases_path)
-
-
 async def main() -> None:
     """Record a run and report where it went."""
     args = parse_args()
-    run_dir, cases = prepare_run(args)
+    try:
+        run_dir, cases = prepare_run(
+            split=args.split, cases_path=args.cases, resume=args.resume
+        )
+    except InputVersionMismatchError as error:
+        raise SystemExit(str(error)) from error
     client = TypeSafeJevClient(
         api_key=os.environ["AI_GATEWAY_API_KEY"],
         retry=BATCH_RETRY,

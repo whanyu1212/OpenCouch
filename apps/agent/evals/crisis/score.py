@@ -13,123 +13,189 @@ import argparse
 import json
 import statistics
 from collections.abc import Sequence
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Final
 
 from evals.crisis.cases import BHH_LABELS
 from evals.crisis.detection import (
     NEGATIVE_LABEL,
     POSITIVE_LABELS,
+    VIOLENT_THOUGHTS_LABEL,
     Scored,
     ScoredCase,
+    Separation,
     by_label,
     rate,
     score_rows,
     separation,
 )
-from evals.crisis.record import question_set_version, read_jsonl
+from evals.crisis.runs import (
+    InputVersionMismatchError,
+    RecordedRow,
+    RunMeta,
+    check_input_version,
+    load_meta,
+    read_errors,
+    read_recorded,
+)
 from opencouch_agent.safety import RiskLevel
 
-LEVELS = (RiskLevel.WATCH, RiskLevel.ELEVATED, RiskLevel.CRISIS)
+
+@dataclass(frozen=True)
+class LabelRates:
+    """For one label: how many cases, and the share reaching each level."""
+
+    label: str
+    cases: int
+    watch: float | None
+    elevated: float | None
+    crisis: float | None
 
 
-def load_run(run_dir: Path) -> tuple[dict[str, Any], Scored, int]:
-    """Load a run and score it, refusing a run made with other questions.
+@dataclass(frozen=True)
+class Headline:
+    """The numbers the ship bar is judged on; None where the labels don't allow."""
+
+    suicide_self_harm_recall_elevated: float | None
+    suicide_self_harm_recall_watch: float | None
+    violent_thoughts_watch: float | None
+    false_alarms_watch: float | None
+    false_alarms_elevated: float | None
+
+
+@dataclass(frozen=True)
+class Counts:
+    """How many cases were scored, had invalid answers, or errored."""
+
+    scored: int
+    invalid: int
+    errors: int
+
+
+@dataclass(frozen=True)
+class BatchTimes:
+    """Time per Jev call with the batch client. Not live latency."""
+
+    p50_ms: float | None
+    p90_ms: float | None
+
+
+@dataclass(frozen=True)
+class RunSummary:
+    """Everything worth reporting about a run, with no case text."""
+
+    run: str
+    cases: str
+    jev_input_version: str
+    dataset: dict[str, str] | None
+    scored_at: str
+    counts: Counts
+    by_label: list[LabelRates]
+    headline: Headline
+    separation: Separation | None
+    batch_times: BatchTimes
+
+
+LEVELS: Final = (RiskLevel.WATCH, RiskLevel.ELEVATED, RiskLevel.CRISIS)
+
+
+def load_run(run_dir: Path) -> tuple[RunMeta, list[RecordedRow], int]:
+    """Load a run, refusing one recorded with a different Jev input.
 
     Returns:
-        The run's metadata, its scored cases, and how many cases errored.
+        The run's metadata, its recorded rows, and how many cases errored.
+
+    Raises:
+        InputVersionMismatchError: If the questions or framing changed since.
     """
-    meta: dict[str, Any] = json.loads((run_dir / "meta.json").read_text())
-    if meta["question_set_version"] != question_set_version():
-        raise SystemExit(
-            f"{run_dir} was recorded with question set "
-            f"{meta['question_set_version']}, but the questions are now "
-            f"{question_set_version()}. Record a new run."
-        )
-    scored = score_rows(read_jsonl(run_dir / "recorded.jsonl"))
-    errors = len(read_jsonl(run_dir / "errors.jsonl"))
-    return meta, scored, errors
+    meta = load_meta(run_dir)
+    check_input_version(meta, run_dir)
+    return meta, read_recorded(run_dir), len(read_errors(run_dir))
 
 
-def label_table(cases: Sequence[ScoredCase]) -> dict[str, dict[str, Any]]:
-    """Per-label counts and the share reaching each level."""
+def label_rates(cases: Sequence[ScoredCase]) -> list[LabelRates]:
+    """Per-label rates, BHH labels first in their usual order."""
     groups = by_label(cases)
     order = [label for label in BHH_LABELS if label in groups] + sorted(
         label for label in groups if label not in BHH_LABELS
     )
-    return {
-        label: {"n": len(groups[label])}
-        | {f">={level}": rate(groups[label], level) for level in LEVELS}
+    return [
+        LabelRates(
+            label,
+            len(groups[label]),
+            *(rate(groups[label], level) for level in LEVELS),
+        )
         for label in order
-    }
+    ]
 
 
-def headline(cases: Sequence[ScoredCase]) -> dict[str, Any]:
-    """The numbers the ship bar is judged on, where the labels allow."""
+def headline(cases: Sequence[ScoredCase]) -> Headline:
+    """The ship-bar numbers for a set of scored cases."""
     positives = [c for c in cases if c.label in POSITIVE_LABELS]
     negatives = [c for c in cases if c.label == NEGATIVE_LABEL]
-    violent = [c for c in cases if c.label == "violent_thoughts"]
-    return {
-        "si_self_harm_recall_elevated": rate(positives, RiskLevel.ELEVATED),
-        "si_self_harm_recall_watch": rate(positives, RiskLevel.WATCH),
-        "violent_thoughts_watch": rate(violent, RiskLevel.WATCH),
-        "false_alarms_watch": rate(negatives, RiskLevel.WATCH),
-        "false_alarms_elevated": rate(negatives, RiskLevel.ELEVATED),
-    }
+    violent = [c for c in cases if c.label == VIOLENT_THOUGHTS_LABEL]
+    return Headline(
+        suicide_self_harm_recall_elevated=rate(positives, RiskLevel.ELEVATED),
+        suicide_self_harm_recall_watch=rate(positives, RiskLevel.WATCH),
+        violent_thoughts_watch=rate(violent, RiskLevel.WATCH),
+        false_alarms_watch=rate(negatives, RiskLevel.WATCH),
+        false_alarms_elevated=rate(negatives, RiskLevel.ELEVATED),
+    )
 
 
-def summarize(run_dir: Path) -> dict[str, Any]:
-    """Everything worth reporting about a run, as plain data."""
-    meta, scored, errors = load_run(run_dir)
-    times = [row["ms"] for row in read_jsonl(run_dir / "recorded.jsonl")]
-    return {
-        "run": run_dir.name,
-        "cases": meta["cases"],
-        "question_set_version": meta["question_set_version"],
-        "dataset": meta.get("dataset"),
-        "scored_at": datetime.now(UTC).isoformat(),
-        "counts": {
-            "scored": len(scored.cases),
-            "invalid": len(scored.invalid),
-            "errors": errors,
-        },
-        "by_label": label_table(scored.cases),
-        "headline": headline(scored.cases),
-        "separation": separation(scored.cases),
-        "batch_ms": {
-            "p50": statistics.median(times) if times else None,
-            "p90": statistics.quantiles(times, n=10)[-1] if len(times) > 1 else None,
-        },
-    }
+def batch_times(rows: Sequence[RecordedRow]) -> BatchTimes:
+    """Median and 90th percentile time per call."""
+    times = [row.ms for row in rows]
+    return BatchTimes(
+        p50_ms=statistics.median(times) if times else None,
+        p90_ms=statistics.quantiles(times, n=10)[-1] if len(times) > 1 else None,
+    )
 
 
-def show(value: object) -> str:
+def summarize(run_dir: Path) -> RunSummary:
+    """Score a run with the current policy and summarize it."""
+    meta, rows, errors = load_run(run_dir)
+    scored: Scored = score_rows(rows)
+    return RunSummary(
+        run=run_dir.name,
+        cases=meta.cases,
+        jev_input_version=meta.jev_input_version,
+        dataset=meta.dataset.model_dump() if meta.dataset else None,
+        scored_at=datetime.now(UTC).isoformat(),
+        counts=Counts(len(scored.cases), len(scored.invalid), errors),
+        by_label=label_rates(scored.cases),
+        headline=headline(scored.cases),
+        separation=separation(scored.cases),
+        batch_times=batch_times(rows),
+    )
+
+
+def show(value: float | None) -> str:
     """Format a rate as a percentage, or a dash when there's nothing to rate."""
-    if isinstance(value, float):
-        return f"{value:.0%}"
-    return "-" if value is None else str(value)
+    return "-" if value is None else f"{value:.0%}"
 
 
-def print_summary(summary: dict[str, Any]) -> None:
+def print_summary(summary: RunSummary) -> None:
     """Print a summary as readable tables."""
-    print(f"{summary['run']}  (questions {summary['question_set_version']})")
-    print(f"counts: {summary['counts']}\n")
-    print(f"{'label':<30}{'n':>5}{'>=WATCH':>10}{'>=ELEVATED':>12}{'CRISIS':>9}")
-    for label, row in summary["by_label"].items():
-        cells = [show(row[f">={level}"]) for level in LEVELS]
-        print(f"{label:<30}{row['n']:>5}{cells[0]:>10}{cells[1]:>12}{cells[2]:>9}")
+    print(f"{summary.run}  (Jev input {summary.jev_input_version})")
+    print(f"counts: {asdict(summary.counts)}\n")
+    print(f"{'label':<30}{'cases':>6}{'>=WATCH':>10}{'>=ELEVATED':>12}{'CRISIS':>9}")
+    for row in summary.by_label:
+        cells = show(row.watch), show(row.elevated), show(row.crisis)
+        print(f"{row.label:<30}{row.cases:>6}{cells[0]:>10}{cells[1]:>12}{cells[2]:>9}")
     print()
-    for name, value in summary["headline"].items():
-        print(f"{name:<32}{show(value)}")
-    if summary["separation"]:
-        print(f"\nAUC {summary['separation']['auc']:.3f}")
-        for target, at in summary["separation"]["recall_at_false_alarms"].items():
+    for name, value in asdict(summary.headline).items():
+        print(f"{name:<36}{show(value)}")
+    if summary.separation:
+        print(f"\nAUC {summary.separation.auc:.3f}")
+        for at in summary.separation.recall_at_false_alarms:
             print(
-                f"recall at false alarms <= {target}: {show(at['recall'])} "
-                f"(actual {show(at['false_alarms'])})"
+                f"recall at false alarms <= {at.target:.0%}: {show(at.recall)} "
+                f"(actual {show(at.false_alarms)})"
             )
-    print(f"\nbatch time per call (not live latency): {summary['batch_ms']}")
+    print(f"\nbatch time per call (not live latency): {asdict(summary.batch_times)}")
 
 
 def main() -> None:
@@ -138,11 +204,14 @@ def main() -> None:
     parser.add_argument("run_dir", type=Path)
     parser.add_argument("--baseline", type=Path, help="also write the summary here")
     args = parser.parse_args()
-    summary = summarize(args.run_dir)
+    try:
+        summary = summarize(args.run_dir)
+    except InputVersionMismatchError as error:
+        raise SystemExit(str(error)) from error
     print_summary(summary)
     if args.baseline:
         args.baseline.parent.mkdir(parents=True, exist_ok=True)
-        args.baseline.write_text(json.dumps(summary, indent=2) + "\n")
+        args.baseline.write_text(json.dumps(asdict(summary), indent=2) + "\n")
 
 
 if __name__ == "__main__":
