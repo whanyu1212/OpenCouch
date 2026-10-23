@@ -2,7 +2,9 @@ import json
 
 from fastapi.testclient import TestClient
 
-from tests.ag_ui_requests import run_input, user_message
+from opencouch_agent.config import Settings
+from opencouch_agent.main import create_app
+from tests.ag_ui_requests import reply_text, run_input, user_message
 
 
 def test_health(client: TestClient) -> None:
@@ -28,5 +30,14 @@ def test_agent_streams_ag_ui_events(client: TestClient) -> None:
     types = [event["type"] for event in events]
     assert types[0] == "RUN_STARTED"
     assert types[-1] == "RUN_FINISHED"
-    text = "".join(e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT")
-    assert text == "I'm here with you."
+    assert reply_text(response) == "I'm here with you."
+
+
+def test_a_local_run_with_the_fake_jev_serves_turns() -> None:
+    app = create_app(settings=Settings(model="test", fake_jev=True))
+
+    with TestClient(app) as client:
+        response = client.post("/api/agent", json=run_input(user_message("hi")))
+
+    assert response.status_code == 200
+    assert "RUN_FINISHED" in response.text

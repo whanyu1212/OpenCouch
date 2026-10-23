@@ -11,13 +11,11 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
-from opencouch_agent.agent import build_companion_agent
-from opencouch_agent.config import Settings
-from opencouch_agent.main import create_app
 from opencouch_agent.safety import RiskLevel
 from opencouch_agent.safety.risk import RiskState
 from opencouch_agent.sessions import InMemorySessionStore
 from tests.ag_ui_requests import assistant_message, run_input, user_message
+from tests.apps import build_app
 
 
 def _transcript(messages: list[ModelMessage]) -> list[tuple[str, str]]:
@@ -43,8 +41,7 @@ def _recording_client(
         last_prompt = _transcript(messages)[-1][1]
         yield f"heard: {last_prompt}"
 
-    agent = build_companion_agent(FunctionModel(stream_function=reply))
-    app = create_app(settings=Settings(), agent=agent, store=store)
+    app = build_app(store, FunctionModel(stream_function=reply))
     return TestClient(app), seen_by_model
 
 
@@ -105,8 +102,7 @@ async def test_user_message_is_persisted_even_if_the_run_fails() -> None:
         raise RuntimeError("model unavailable")
         yield  # Unreachable; makes this an async generator.
 
-    agent = build_companion_agent(FunctionModel(stream_function=fail))
-    client = TestClient(create_app(settings=Settings(), agent=agent, store=store))
+    client = TestClient(build_app(store, FunctionModel(stream_function=fail)))
     client.post("/api/agent", json=run_input(user_message("are you there?")))
 
     session = await store.load("thread-1")
@@ -245,8 +241,7 @@ class _LeaseLostBeforeRecording(InMemorySessionStore):
 
 async def test_turn_that_loses_its_lease_before_recording_gets_409() -> None:
     store = _LeaseLostBeforeRecording()
-    agent = build_companion_agent(TestModel())
-    client = TestClient(create_app(settings=Settings(), agent=agent, store=store))
+    client = TestClient(build_app(store, TestModel()))
 
     response = client.post("/api/agent", json=run_input(user_message("hi")))
 

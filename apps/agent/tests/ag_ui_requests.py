@@ -1,6 +1,9 @@
-"""Builders for AG-UI request bodies used across tests."""
+"""Builders for AG-UI request bodies, and a reader for replies, used across tests."""
 
+import json
 from typing import Any
+
+import httpx2
 
 
 def run_input(
@@ -26,3 +29,13 @@ def user_message(content: str, message_id: str = "msg-1") -> dict[str, Any]:
 
 def assistant_message(content: str, message_id: str = "msg-a") -> dict[str, Any]:
     return {"id": message_id, "role": "assistant", "content": content}
+
+
+def reply_text(response: httpx2.Response) -> str:
+    """The text the agent streamed in an AG-UI response."""
+    events = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    return "".join(e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT")

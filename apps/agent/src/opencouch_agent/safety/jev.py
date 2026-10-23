@@ -21,6 +21,8 @@ from typesafe_sdk import (
     TypeSafeRateLimitError,
 )
 
+logger = logging.getLogger(__name__)
+
 GATEWAY_BASE_URL: Final = "https://ai-gateway.vercel.sh/typesafe"
 GATEWAY_MODEL: Final = "typesafe-ai/jev"
 
@@ -98,6 +100,47 @@ class TypeSafeJevClient:
     async def aclose(self) -> None:
         """Close the underlying HTTP client."""
         await self._client.aclose()
+
+
+class FakeJevClient:
+    """Answers "no" to every question, for local runs without a Jev key.
+
+    Every message reads as no risk, so screening runs but protects nothing.
+    `build_jev_client` only allows it with the test model.
+    """
+
+    async def ask(self, state: str, questions: Mapping[str, Noul]) -> dict[str, float]:
+        """Return 0 for every question."""
+        logger.warning("Fake Jev: this turn was not screened")
+        return dict.fromkeys(questions, 0.0)
+
+
+def build_jev_client(*, api_key: str | None, fake: bool, model: str) -> JevClient:
+    """The Jev client for the service's settings.
+
+    Args:
+        api_key: The Vercel AI Gateway key, if set.
+        fake: Whether the fake client was asked for explicitly.
+        model: The agent's model string.
+
+    Raises:
+        ValueError: If the fake is asked for with a real model, or no key is
+            set and the fake wasn't asked for.
+    """
+    # Safety: the fake never stands in for a missing key on its own, and never
+    # runs next to a real model, so a misconfigured deploy fails to start
+    # instead of serving unscreened turns.
+    if fake:
+        if model != "test":
+            raise ValueError("OPENCOUCH_FAKE_JEV only runs with OPENCOUCH_MODEL=test")
+        logger.warning("Using the fake Jev client: no turn is really screened")
+        return FakeJevClient()
+    if not api_key:
+        raise ValueError(
+            "AI_GATEWAY_API_KEY is required: every turn is screened by Jev. For a "
+            "local run with OPENCOUCH_MODEL=test, set OPENCOUCH_FAKE_JEV=true."
+        )
+    return TypeSafeJevClient(api_key=api_key)
 
 
 def failure_reason(error: BaseException) -> FailureReason:

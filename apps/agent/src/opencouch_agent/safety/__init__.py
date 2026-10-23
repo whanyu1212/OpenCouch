@@ -1,5 +1,6 @@
-"""Safety screening: the Jev user check and the risk policy."""
+"""Safety screening: the Jev user check, the risk policy and the gate."""
 
+from opencouch_agent.safety.gate import GateDecision, ReplyPath, run_gate
 from opencouch_agent.safety.jev import FailureReason, JevClient, TypeSafeJevClient
 from opencouch_agent.safety.policy import RiskLevel, assess_level, escalate
 from opencouch_agent.safety.questions import (
@@ -19,7 +20,9 @@ from opencouch_agent.safety.screening import (
 __all__ = [
     "USER_TURN_QUESTIONS",
     "FailureReason",
+    "GateDecision",
     "JevClient",
+    "ReplyPath",
     "RiskLevel",
     "Screened",
     "ScreeningFailed",
@@ -30,6 +33,7 @@ __all__ = [
     "assess_level",
     "conversation_turns",
     "escalate",
+    "run_gate",
     "screen_user_message",
     "user_turn_questions",
 ]
