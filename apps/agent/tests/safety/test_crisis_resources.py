@@ -78,6 +78,12 @@ def test_the_emergency_entry_has_the_numbers_the_official_pages_give() -> None:
         ("sms", "70999"),
         ("sms", "70995"),
     }
+    (scdf_sms,) = [c for c in emergency.channels if c.number == "70995"]
+    assert "deaf" in scdf_sms.label
+
+
+def test_every_shipped_entry_states_its_hours() -> None:
+    assert all(resource.hours == "24 hours" for resource in CATALOG.resources)
 
 
 @pytest.mark.parametrize(
