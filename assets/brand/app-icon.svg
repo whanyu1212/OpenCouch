@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<defs>
+  <clipPath id="icon-shape"><rect width="512" height="512" rx="112"/></clipPath>
+  <radialGradient id="icon-wall" cx="222" cy="230" r="420" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#6f8a76"/><stop offset="1" stop-color="#3d4d43"/></radialGradient>
+  <radialGradient id="icon-glow" cx="222" cy="214" r="300" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#ffc477" stop-opacity="0.55"/><stop offset="0.4" stop-color="#ffc477" stop-opacity="0.2"/>
+    <stop offset="1" stop-color="#ffc477" stop-opacity="0"/></radialGradient>
+</defs>
+<g clip-path="url(#icon-shape)">
+  <rect width="512" height="512" fill="url(#icon-wall)"/>
+  <rect y="418" width="512" height="94" fill="#2f3b33" opacity="0.8"/>
+  <rect width="512" height="512" fill="url(#icon-glow)"/>
+  <g transform="translate(-120 5) scale(1.18)">
+    <defs><linearGradient id="icon-cone" x1="0" y1="170" x2="0" y2="350" gradientUnits="userSpaceOnUse">
+  <stop offset="0" stop-color="#ffc477" stop-opacity="0.24"/><stop offset="1" stop-color="#ffc477" stop-opacity="0"/></linearGradient></defs>
+<path d="M269 170H311L440 330H180Z" fill="url(#icon-cone)"/>
+    <g transform="translate(160 213.20000000000002) scale(0.72)">
+      
+<defs>
+  <linearGradient id="icon-cush" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0" stop-color="#82b7ae"/><stop offset="1" stop-color="#609c94"/></linearGradient>
+  <linearGradient id="icon-arm" x1="0" y1="0" x2="1" y2="0">
+    <stop offset="0" stop-color="#467f77"/><stop offset="0.55" stop-color="#609c94"/><stop offset="1" stop-color="#467f77"/></linearGradient>
+  <radialGradient id="icon-lit" cx="180.55555555555557" cy="-60.00000000000003" r="330" gradientUnits="userSpaceOnUse">
+    <stop offset="0.25" stop-color="#ffc477" stop-opacity="0.3"/><stop offset="1" stop-color="#ffc477" stop-opacity="0"/></radialGradient>
+  <radialGradient id="icon-shade" cx="180.55555555555557" cy="-60.00000000000003" r="480" gradientUnits="userSpaceOnUse">
+    <stop offset="0.45" stop-color="#000" stop-opacity="0"/><stop offset="1" stop-color="#000" stop-opacity="0.45"/></radialGradient>
+  <clipPath id="icon-clip"><rect x="30" y="0" width="380" height="140" rx="48"/>
+<rect x="0" y="46" width="70" height="128" rx="35"/><rect x="370" y="46" width="70" height="128" rx="35"/>
+<rect x="10" y="100" width="420" height="74" rx="12"/>
+<path d="M236 104C280 96 340 98 384 108L396 190H236Z"/></clipPath>
+</defs>
+<ellipse cx="236" cy="190" rx="240" ry="10" fill="#000" opacity="0.35"/>
+<path d="M32 172h12l-2 18h-8z M396 172h12l-2 18h-8z" fill="#5a3d2b"/>
+<rect x="30" y="0" width="380" height="140" rx="48" fill="#467f77"/>
+<rect x="10" y="150" width="420" height="24" rx="12" fill="#30605a"/>
+<g transform="rotate(-5 128 70)"><rect x="46" y="20" width="172" height="104" rx="40" fill="url(#icon-cush)"/>
+  <path d="M84 84q44 20 96 4" stroke="#30605a" stroke-width="3" fill="none" opacity="0.3" stroke-linecap="round"/></g>
+<rect x="222" y="14" width="174" height="108" rx="40" fill="url(#icon-cush)"/>
+<path d="M66 8q154 -12 308 0 M256 32q54 -9 108 0" stroke="#82b7ae" stroke-width="3" fill="none" opacity="0.5" stroke-linecap="round"/>
+
+<g transform="rotate(-14 84 70)"><rect x="52" y="40" width="66" height="62" rx="22" fill="#e3b25c"/>
+  <path d="M64 70h42" stroke="#000" stroke-opacity="0.12" stroke-width="2"/></g>
+<g transform="rotate(6 296 86)"><rect x="250" y="64" width="92" height="44" rx="22" fill="#c9744a"/>
+  <path d="M262 86h68" stroke="#000" stroke-opacity="0.12" stroke-width="2"/></g>
+<g transform="rotate(10 350 80)"><rect x="318" y="50" width="64" height="60" rx="20" fill="#f1e4cf"/>
+  <path d="M330 66h40 M330 80h40 M330 94h40" stroke="#7a9c94" stroke-width="3" opacity="0.7"/></g>
+<path d="M50 122C50 106 60 100 74 100H86Q134 132 184 100H204C214 100 220 106 220 122Z" fill="#96c8bf"/>
+<path d="M86 100Q134 132 184 100Q134 114 86 100Z" fill="#30605a" opacity="0.4"/>
+<path d="M48 118Q134 136 222 118V150Q222 166 204 166H66Q48 166 48 150Z" fill="url(#icon-cush)"/>
+<rect x="220" y="100" width="176" height="20" rx="10" fill="#96c8bf"/>
+<rect x="220" y="112" width="176" height="54" rx="18" fill="url(#icon-cush)"/>
+
+<path d="M178 104C196 116 176 126 132 122C116 121 104 118 98 114" stroke="#d68b4a" stroke-width="10" fill="none" stroke-linecap="round"/>
+<ellipse cx="138" cy="98" rx="44" ry="19" fill="#d68b4a"/>
+<path d="M124 82q6 14 0 30 M142 80q6 15 0 34 M160 84q5 12 0 26" stroke="#b06a33" stroke-width="4" fill="none" stroke-linecap="round" opacity="0.8"/>
+<path d="M88 84L91 66L102 79Z M104 79L114 65L117 82Z" fill="#d68b4a"/>
+<circle cx="102" cy="92" r="16" fill="#d68b4a"/>
+<path d="M93 92q4 3 8 0 M105 92q4 3 8 0" stroke="#5a3420" stroke-width="1.8" fill="none" stroke-linecap="round"/>
+<path d="M101 98l2 1.6 2-1.6" stroke="#5a3420" stroke-width="1.4" fill="none" stroke-linecap="round"/>
+
+<defs><pattern id="icon-knit" width="10" height="8" patternUnits="userSpaceOnUse">
+  <path d="M0 1L5 6L10 1" stroke="#cdbb9f" stroke-width="1.6" fill="none"/></pattern></defs>
+<path d="M236 104C280 96 340 98 384 108C392 140 396 168 392 186C370 190 350 184 330 190C310 184 290 190 270 186C254 188 244 182 238 186C236 160 234 130 236 104Z" fill="#efe2cc"/>
+<path d="M236 104C280 96 340 98 384 108C392 140 396 168 392 186C370 190 350 184 330 190C310 184 290 190 270 186C254 188 244 182 238 186C236 160 234 130 236 104Z" fill="url(#icon-knit)"/>
+<path d="M262 106C266 140 268 168 268 186 M330 104C334 140 336 166 336 188" stroke="#000" stroke-opacity="0.1" stroke-width="5" fill="none"/>
+<rect x="0" y="46" width="70" height="128" rx="35" fill="url(#icon-arm)"/>
+<rect x="370" y="46" width="70" height="128" rx="35" fill="url(#icon-arm)"/>
+<path d="M12 62q23 -12 46 0 M382 62q23 -12 46 0" stroke="#82b7ae" stroke-width="3" fill="none" opacity="0.55" stroke-linecap="round"/>
+<g clip-path="url(#icon-clip)">
+  <rect x="-10" y="-10" width="470" height="210" fill="url(#icon-lit)"/>
+  <rect x="-10" y="-10" width="470" height="210" fill="url(#icon-shade)"/>
+</g></g>
+    
+<path d="M92 350V168Q92 96 190 96Q272 96 290 148" stroke="#3a3330" stroke-width="3.6" fill="none" stroke-linecap="round"/>
+<path d="M270 148h40l8 22h-56z" fill="#f6e3c0"/>
+<ellipse cx="290" cy="171" rx="23" ry="3" fill="#fff3d6"/>
+  </g>
+</g>
+</svg>
