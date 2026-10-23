@@ -1,18 +1,20 @@
 import asyncio
-import json
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import timedelta
 
 import httpx
 from ag_ui.core import BaseEvent, RunStartedEvent, TextMessageStartEvent
+from pydantic_ai import CancellationToken
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
+from opencouch_agent.agent import CompanionDeps
 from opencouch_agent.config import Settings
+from opencouch_agent.run_recorder import RunRecorder
 from opencouch_agent.sessions import InMemorySessionStore
-from opencouch_agent.turn import _guard_turn
-from tests.ag_ui_requests import run_input, user_message
+from opencouch_agent.turn import _ActiveRun, _guard_turn, _UserTurn
+from tests.ag_ui_requests import event_types, run_input, user_message
 from tests.apps import build_app
 
 LEASE = timedelta(seconds=60)
@@ -32,6 +34,21 @@ def _client(
     )
 
 
+def _guarded(
+    events: AsyncIterator[BaseEvent],
+    store: InMemorySessionStore,
+    turn_timeout: timedelta,
+) -> AsyncGenerator[BaseEvent]:
+    """`_guard_turn` around hand-made events, for a turn holding "token"."""
+    run = _ActiveRun(
+        events,
+        CancellationToken(),
+        RunRecorder(store, "thread-1", "token", CompanionDeps()),
+    )
+    turn = _UserTurn("thread-1", "token", [], "hi")
+    return _guard_turn(run, store=store, turn=turn, turn_timeout=turn_timeout)
+
+
 def _prompts_and_replies(messages: list[ModelMessage]) -> list[str]:
     texts: list[str] = []
     for message in messages:
@@ -41,14 +58,6 @@ def _prompts_and_replies(messages: list[ModelMessage]) -> list[str]:
             ):
                 texts.append(part.content)
     return texts
-
-
-def _event_types(response: httpx.Response) -> list[str]:
-    return [
-        json.loads(line.removeprefix("data: "))["type"]
-        for line in response.text.splitlines()
-        if line.startswith("data: ")
-    ]
 
 
 async def test_second_turn_on_a_busy_thread_gets_409_and_stores_nothing() -> None:
@@ -127,7 +136,7 @@ async def test_turn_that_runs_too_long_ends_with_run_error_and_is_released() -> 
         )
         retry = await http.post("/api/agent", json=run_input(user_message("two", "m2")))
 
-    assert _event_types(timed_out)[-1] == "RUN_ERROR"
+    assert event_types(timed_out.text)[-1] == "RUN_ERROR"
     assert "turn_timeout" in timed_out.text
     assert retry.status_code == 200
     # The timed-out run was stopped, so no late reply was persisted.
@@ -148,13 +157,7 @@ async def test_turn_is_released_when_the_client_stops_reading() -> None:
         finally:
             inner_closed = True
 
-    guarded = _guard_turn(
-        events(),
-        store=store,
-        thread_id="thread-1",
-        lease_token="token",
-        turn_timeout=timedelta(seconds=90),
-    )
+    guarded = _guarded(events(), store, timedelta(seconds=90))
     await anext(guarded)
     await guarded.aclose()  # What Starlette does when the client disconnects.
 
@@ -219,13 +222,7 @@ async def test_turn_past_its_deadline_stops_even_while_events_are_ready() -> Non
         for index in range(3):
             yield TextMessageStartEvent(message_id=f"msg-{index}")
 
-    guarded = _guard_turn(
-        events(),
-        store=store,
-        thread_id="thread-1",
-        lease_token="token",
-        turn_timeout=timedelta(seconds=0.05),
-    )
+    guarded = _guarded(events(), store, timedelta(seconds=0.05))
     first = await anext(guarded)
     await asyncio.sleep(0.1)  # A slow client: the deadline passes mid-send.
     remaining = [event async for event in guarded]

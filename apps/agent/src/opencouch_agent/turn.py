@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import cast
@@ -12,14 +12,14 @@ import anyio
 from ag_ui.core import BaseEvent, RunErrorEvent
 from fastapi import HTTPException
 from pydantic import ValidationError
-from pydantic_ai import Agent
+from pydantic_ai import Agent, CancellationToken
 from pydantic_ai.messages import ModelMessage
-from pydantic_ai.run import AgentRunResult
 from starlette.requests import Request
 from starlette.responses import Response
 
 from opencouch_agent.agent import CompanionDeps, CompanionState
 from opencouch_agent.api.adapter import ServerOwnedAGUIAdapter, UnsupportedRequestError
+from opencouch_agent.run_recorder import RunRecorder
 from opencouch_agent.safety import JevClient, conversation_turns, run_gate
 from opencouch_agent.sessions import SessionStore
 
@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 # The lease outlives the turn's time limit by this much, so a running turn's
 # lease can never expire and let a second turn in.
 LEASE_MARGIN = timedelta(seconds=30)
+# How long a cancelled run gets to stop and hand over its partial reply. Well
+# inside LEASE_MARGIN, so the save still holds the lease.
+CANCEL_GRACE_SECONDS = 5.0
 
 TURN_TIMEOUT_MESSAGE = "The reply took too long. Please try again."
 TURN_IN_PROGRESS_MESSAGE = "A reply is already in progress for this conversation."
@@ -52,6 +55,13 @@ class _UserTurn:
     lease_token: str
     messages: list[ModelMessage]
     text: str
+
+
+@dataclass(frozen=True)
+class _ActiveRun:
+    events: AsyncIterator[BaseEvent]
+    cancellation: CancellationToken
+    recorder: RunRecorder
 
 
 async def run_turn(
@@ -98,7 +108,7 @@ async def run_turn(
     if not await store.claim_turn(turn.thread_id, turn.lease_token, lease):
         raise HTTPException(status_code=409, detail=TURN_IN_PROGRESS_MESSAGE)
     try:
-        routed, events = await _start_run(
+        routed, run = await _start_run(
             adapter, turn, agents=agents, jev=jev, store=store
         )
     except BaseException:
@@ -106,13 +116,7 @@ async def run_turn(
         raise
 
     return routed.streaming_response(
-        _guard_turn(
-            events,
-            store=store,
-            thread_id=turn.thread_id,
-            lease_token=turn.lease_token,
-            turn_timeout=turn_timeout,
-        )
+        _guard_turn(run, store=store, turn=turn, turn_timeout=turn_timeout)
     )
 
 
@@ -156,7 +160,7 @@ async def _start_run(
     agents: TurnAgents,
     jev: JevClient,
     store: SessionStore,
-) -> tuple[ServerOwnedAGUIAdapter, AsyncIterator[BaseEvent]]:
+) -> tuple[ServerOwnedAGUIAdapter, _ActiveRun]:
     """Load the session, run the gate, record the turn and start the chosen agent."""
     session = await store.load(turn.thread_id)
     # Validate stored state before writing anything, so a bad session fails
@@ -184,76 +188,94 @@ async def _start_run(
 
     agent = agents.crisis if decision.path == "crisis" else agents.companion
     routed = replace(adapter, agent=agent, server_state=session.state)
+    cancellation = CancellationToken()
+    recorder = RunRecorder(store, turn.thread_id, turn.lease_token, deps)
     events = routed.run_stream(
         message_history=session.history,
         deps=deps,
-        on_complete=_run_saver(store, turn, deps),
+        cancellation_token=cancellation,
+        on_complete=recorder.save_completed,
+        on_cancel=recorder.save_cancelled,
     )
-    return routed, events
-
-
-def _run_saver(
-    store: SessionStore, turn: _UserTurn, deps: CompanionDeps
-) -> Callable[[AgentRunResult[str]], Awaitable[None]]:
-    """The callback that saves a completed run's reply and state."""
-
-    async def persist_run(result: AgentRunResult[str]) -> None:
-        # The user's message is excluded here: it entered the run as history.
-        saved = await store.save_run(
-            turn.thread_id,
-            turn.lease_token,
-            result.new_messages(),
-            deps.state.model_dump(mode="json"),
-        )
-        if not saved:
-            # Another turn took over after this one's lease expired (e.g. a
-            # very slow client). Its writes win; this reply is dropped.
-            logger.warning(
-                "Turn lost its lease; reply not saved (thread %s)", turn.thread_id
-            )
-
-    return persist_run
+    return routed, _ActiveRun(events, cancellation, recorder)
 
 
 async def _guard_turn(
-    events: AsyncIterator[BaseEvent],
+    run: _ActiveRun,
     *,
     store: SessionStore,
-    thread_id: str,
-    lease_token: str,
+    turn: _UserTurn,
     turn_timeout: timedelta,
 ) -> AsyncGenerator[BaseEvent]:
-    """Enforce the turn's time limit and release its claim when the stream ends.
+    """Enforce the turn's time limit, save the run and release the turn's claim.
 
     The `finally` runs whether the run completes, fails, times out or the
-    client disconnects.
+    client disconnects, and saves the run before releasing the claim, since
+    saving needs it.
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + turn_timeout.total_seconds()
+    # At the deadline, cancel through the token rather than abandoning the
+    # wait: cancelling the wait would end the run from outside, and its
+    # partial reply would be lost.
+    stop_at_deadline = loop.call_at(deadline, run.cancellation.cancel)
     try:
         while True:
-            # Sending to a slow client happens at the `yield` below, outside the
-            # timeout, so check the deadline again before each wait.
-            if loop.time() >= deadline:
-                yield RunErrorEvent(message=TURN_TIMEOUT_MESSAGE, code="turn_timeout")
-                return
             try:
-                # The timeout wraps only the wait for the next event, never a
-                # `yield`, so it can't fire while the client is being sent data.
-                async with asyncio.timeout_at(deadline):
-                    event = await anext(events)
+                # Only a backstop, for a run that ignores cancellation. The
+                # timeout wraps the wait for the next event, never a `yield`,
+                # so it can't fire while the client is being sent data.
+                async with asyncio.timeout_at(deadline + CANCEL_GRACE_SECONDS):
+                    event = await anext(run.events)
             except StopAsyncIteration:
                 return
             except TimeoutError:
                 yield RunErrorEvent(message=TURN_TIMEOUT_MESSAGE, code="turn_timeout")
                 return
+            # Past the deadline the run is stopping (or a slow client held the
+            # turn up), and what's left of it isn't sent.
+            if loop.time() >= deadline:
+                yield RunErrorEvent(message=TURN_TIMEOUT_MESSAGE, code="turn_timeout")
+                return
+            run.recorder.observe(event)
             yield event
     finally:
+        stop_at_deadline.cancel()
         # Shielded: a client disconnect cancels this generator, and cleanup must
         # still finish.
         with anyio.CancelScope(shield=True):
-            await _close_events(events)
-            await _release_turn(store, thread_id, lease_token)
+            await _stop_run(run)
+            await _save_shown(run.recorder, turn.thread_id)
+            await _release_turn(store, turn.thread_id, turn.lease_token)
+
+
+async def _stop_run(run: _ActiveRun) -> None:
+    """Stop an unfinished run so it saves its partial reply, then close it.
+
+    Cancelling through the token, rather than closing the stream, is what
+    makes Pydantic AI hand over the partial reply. The remaining events are
+    read but not sent: the client has gone or already has its error. A run
+    that already ended is left as it is.
+    """
+    run.cancellation.cancel()
+    try:
+        async with asyncio.timeout(CANCEL_GRACE_SECONDS):
+            async for _ in run.events:
+                pass
+    except TimeoutError:
+        logger.warning("Cancelled run didn't stop in time; saving what was shown")
+    except Exception:
+        logger.exception("Stopping the agent run failed")
+    await _close_events(run.events)
+
+
+async def _save_shown(recorder: RunRecorder, thread_id: str) -> None:
+    # Logged, not raised: the claim must still be released, and the original
+    # failure is what ended the turn.
+    try:
+        await recorder.save_shown()
+    except Exception:
+        logger.exception("Saving the interrupted reply failed for thread %s", thread_id)
 
 
 async def _close_events(events: AsyncIterator[BaseEvent]) -> None:
