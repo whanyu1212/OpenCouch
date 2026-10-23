@@ -4,7 +4,9 @@
 
 # OpenCouch
 
-A mental health support companion. This branch is a from-scratch rewrite; see
+A guided self-help program for anxiety, with an AI coach that helps people
+practise skills instead of reassuring them. This branch is a from-scratch
+rewrite; see
 [#356](https://github.com/whanyu1212/OpenCouch/issues/356) for the architecture
 plan. The previous implementation lives on `main` for reference.
 
