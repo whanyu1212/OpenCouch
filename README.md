@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/brand/banner.png" width="100%" alt="opencouch: You don't have to hold it alone. A teal sofa with a sleeping cat under a reading lamp, rain on the window.">
+</p>
+
 # OpenCouch
 
 A mental health support companion. This branch is a from-scratch rewrite; see
