@@ -1,13 +1,19 @@
 # OpenCouch
 
-A mental health support companion, being rewritten from scratch on this branch.
-The architecture plan and the working checklist are in issue #356. The previous
-implementation is on `main`; use it as a reference for prompts, exercise
-catalog data and eval scenarios, not as a design to copy.
+A guided self-help program for anxiety, with an AI coach that helps people
+practise skills instead of reassuring them. It's being rewritten from scratch
+on this branch; the clinical content of the program is still open. The
+architecture plan is in issue #356 and the work is tracked in Linear. The
+previous implementation (an open-ended companion) is on `main`; use it as a
+reference for prompts and eval scenarios, not as a design to copy.
 
 ## Layout
 
 - `apps/agent`: Python service. FastAPI + Pydantic AI, served over AG-UI.
+  Features: `safety/` (screening, conversation-level risk, crisis path) and
+  `sessions/` (thread persistence). Planned: `coach/` (the agent, replacing
+  `agent/`, and the reassurance redirect) and `program/` (program state,
+  content, practice records).
 - `apps/web`: Next.js frontend on `@ag-ui/client`. See `apps/web/AGENTS.md`
   before writing Next.js code.
 
@@ -27,14 +33,18 @@ pnpm lint:web && pnpm build:web
 ## Architecture rules
 
 - **Workflow outside, limited agent autonomy inside.** Code owns the structure
-  of every turn: safety screening, the crisis path, session lifecycle, memory
-  writes and exercise state transitions. The model decides what to say and
-  which of a few safe tools to call.
+  of every turn: safety screening and risk, the crisis path, reassurance
+  detection, session lifecycle, program state transitions and record writes.
+  The model decides what to say and which of a few safe tools to call.
 - Safety screening runs on every turn, in code, before the agent. If it fails,
   fail toward a crisis-aware reply. Never skip it.
 - Tools *request* state changes; code validates and applies them.
 - The server owns conversation history and state. Client-sent AG-UI state is
   untrusted user input: never let it lower a crisis level or skip a safety step.
+  A crisis check-in tap only counts on a turn where the server offered it.
+- Program content (lessons, skill steps, questionnaires) is fixed, reviewed
+  data in the repo. The model explains and personalises it; it never writes it
+  at runtime.
 - Cap model calls per turn with `UsageLimits`.
 
 ## Python standards
@@ -47,7 +57,7 @@ pnpm lint:web && pnpm build:web
 - **Typed everything** (mypy strict). Pydantic models at boundaries (API, LLM
   structured output, database); dataclasses internally. No `dict[str, Any]` for
   state.
-- **Organize by feature** (`safety/`, `exercises/`, `memory/`), with each
+- **Organize by feature** (`safety/`, `coach/`, `program/`), with each
   package owning its models, logic and tools. Not by layer.
 - **Keep units small:** aim for files under ~300 lines and functions under ~40.
   Ruff enforces a complexity limit of 10.
@@ -68,7 +78,8 @@ pnpm lint:web && pnpm build:web
 
 ## Workflow
 
-- One PR per checklist item in #356, ideally under ~400 changed lines, linked to
-  the issue. Fill in the PR template, including **Safety impact**.
+- One PR per Linear issue, ideally under ~400 changed lines, targeting
+  `develop`, with the Linear ID in the branch name and `Refs #356`. Fill in the
+  PR template, including **Safety impact**.
 - Conventional commit messages (`feat:`, `fix:`, `chore:`, `docs:`, `test:`).
 - Run `/code-review` before opening a PR.
