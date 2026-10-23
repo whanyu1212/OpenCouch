@@ -10,11 +10,11 @@ reference for prompts and eval scenarios, not as a design to copy.
 ## Layout
 
 - `apps/agent`: Python service. FastAPI + Pydantic AI, served over AG-UI.
-  Features: `safety/` (the Jev check, risk policy and conversation-level risk,
-  not yet wired into `turn.py`) and `sessions/` (thread persistence). Planned:
-  the gate in the turn pipeline and the crisis responder (in `safety/`),
-  `coach/` (the agent, replacing `agent/`, and the reassurance redirect) and
-  `program/` (program state, content, practice records).
+  Features: `safety/` (the Jev check, risk policy, conversation-level risk and
+  the gate that screens every turn in `turn.py`; the crisis responder is a
+  stub) and `sessions/` (thread persistence). Planned: the crisis responder
+  (in `safety/`), `coach/` (the agent, replacing `agent/`, and the reassurance
+  redirect) and `program/` (program state, content, practice records).
 - `apps/web`: Next.js frontend on `@ag-ui/client`. See `apps/web/AGENTS.md`
   before writing Next.js code.
 
@@ -25,7 +25,8 @@ reference for prompts and eval scenarios, not as a design to copy.
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src tests evals scripts
 uv run pytest
-OPENCOUCH_MODEL=test uv run opencouch-agent   # run without an API key
+# Run without API keys: the test model and a fake Jev that screens nothing
+OPENCOUCH_MODEL=test OPENCOUCH_FAKE_JEV=true uv run opencouch-agent
 
 # Web (run from the repo root)
 pnpm lint:web && pnpm build:web

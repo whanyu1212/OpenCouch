@@ -9,12 +9,11 @@ from ag_ui.core import BaseEvent, RunStartedEvent, TextMessageStartEvent
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from opencouch_agent.agent import build_companion_agent
 from opencouch_agent.config import Settings
-from opencouch_agent.main import create_app
 from opencouch_agent.sessions import InMemorySessionStore
 from opencouch_agent.turn import _guard_turn
 from tests.ag_ui_requests import run_input, user_message
+from tests.apps import build_app
 
 LEASE = timedelta(seconds=60)
 
@@ -25,10 +24,8 @@ def _client(
     *,
     turn_timeout_seconds: float = 90.0,
 ) -> httpx.AsyncClient:
-    app = create_app(
-        settings=Settings(turn_timeout_seconds=turn_timeout_seconds),
-        agent=build_companion_agent(model),
-        store=store,
+    app = build_app(
+        store, model, settings=Settings(turn_timeout_seconds=turn_timeout_seconds)
     )
     return httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"

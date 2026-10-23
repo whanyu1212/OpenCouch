@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,8 +19,15 @@ class Settings(BaseSettings):
     # Unset means an in-memory session store: history is lost on restart.
     database_url: str | None = None
     cors_origins: list[str] = ["http://localhost:3000"]
-    # Hard limit on one turn, including streaming the reply.
+    # Hard limit on the agent's reply, including streaming it. Screening runs
+    # first, under its own 3-second deadline.
     turn_timeout_seconds: float = 90.0
+    # Jev is called through Vercel AI Gateway; the evals read the same variable.
+    ai_gateway_api_key: SecretStr | None = Field(
+        default=None, validation_alias="AI_GATEWAY_API_KEY"
+    )
+    # Local runs without a key only, and only with the test model.
+    fake_jev: bool = False
     host: str = "0.0.0.0"
     port: int = 8080
 

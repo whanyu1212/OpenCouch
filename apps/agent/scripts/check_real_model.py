@@ -1,9 +1,10 @@
 """Opt-in check of the agent against the real model (HY-202).
 
-Calls the real OpenAI API, so it costs money (well under $1 per run) and is not
-part of the default test run. Run from `apps/agent`, with `OPENAI_API_KEY` in
-`apps/agent/.env` as the README sets up (or point `--env-file` at another file,
-e.g. `../../.env` for a key kept at the repo root):
+Calls the real OpenAI API, and Jev through Vercel AI Gateway for the safety
+gate on every turn, so it costs money (well under $1 per run) and is not part
+of the default test run. Run from `apps/agent`, with `OPENAI_API_KEY` and
+`AI_GATEWAY_API_KEY` in `apps/agent/.env` as the README sets up (or point
+`--env-file` at another file, e.g. `../../.env` for keys kept at the repo root):
 
     uv run --env-file .env python scripts/check_real_model.py
 

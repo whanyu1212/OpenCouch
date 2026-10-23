@@ -16,7 +16,9 @@ from typesafe_sdk import (
 from opencouch_agent.safety.jev import (
     GATEWAY_MODEL,
     FailureReason,
+    FakeJevClient,
     TypeSafeJevClient,
+    build_jev_client,
     failure_reason,
 )
 
@@ -156,3 +158,37 @@ def test_failure_reason_classifies_errors(
     error: BaseException, reason: FailureReason
 ) -> None:
     assert failure_reason(error) is reason
+
+
+async def test_the_fake_client_answers_no_and_warns_on_every_call(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="opencouch_agent.safety.jev"):
+        answers = await FakeJevClient().ask("state", QUESTIONS)
+
+    assert answers == {"ideation": 0.0, "intent": 0.0}
+    assert "not screened" in caplog.text
+
+
+def test_the_fake_client_is_used_only_when_asked_for_with_the_test_model() -> None:
+    client = build_jev_client(api_key=None, fake=True, model="test")
+
+    assert isinstance(client, FakeJevClient)
+
+
+def test_the_fake_client_is_refused_with_a_real_model() -> None:
+    with pytest.raises(ValueError, match="OPENCOUCH_MODEL=test"):
+        build_jev_client(api_key="key", fake=True, model="openai:gpt-6.1-sol")
+
+
+@pytest.mark.parametrize("model", ["test", "openai:gpt-6.1-sol"])
+def test_a_missing_key_fails_instead_of_falling_back_to_the_fake(model: str) -> None:
+    with pytest.raises(ValueError, match="AI_GATEWAY_API_KEY"):
+        build_jev_client(api_key=None, fake=False, model=model)
+
+
+async def test_a_key_builds_the_real_client() -> None:
+    client = build_jev_client(api_key="key", fake=False, model="test")
+
+    assert isinstance(client, TypeSafeJevClient)
+    await client.aclose()

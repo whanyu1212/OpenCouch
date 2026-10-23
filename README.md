@@ -22,7 +22,8 @@ plan. The previous implementation lives on `main` for reference.
 Prerequisites: [uv](https://docs.astral.sh/uv/), Node 22 with pnpm, Docker.
 
 ```bash
-# Agent on http://localhost:8080 (needs OPENAI_API_KEY in apps/agent/.env)
+# Agent on http://localhost:8080 (needs OPENAI_API_KEY and AI_GATEWAY_API_KEY
+# in apps/agent/.env)
 cp apps/agent/.env.example apps/agent/.env
 # --env-file exports the key; the settings loader alone doesn't pass it to the
 # OpenAI client.
@@ -34,8 +35,11 @@ cp apps/web/.env.example apps/web/.env.local
 pnpm dev:web
 ```
 
-Without an API key, run the agent against Pydantic AI's test model with
-`OPENCOUCH_MODEL=test`.
+Every turn is screened by Jev through Vercel AI Gateway before the agent
+replies, so the agent won't start without `AI_GATEWAY_API_KEY`. Without API
+keys, run it against Pydantic AI's test model with a fake Jev:
+`OPENCOUCH_MODEL=test OPENCOUCH_FAKE_JEV=true`. The fake reads every message as
+no risk, so it is refused with any other model.
 
 Conversation history is stored in Postgres when `OPENCOUCH_DATABASE_URL` is set,
 and kept in memory (lost on restart) otherwise. To run the Postgres-backed
