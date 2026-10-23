@@ -49,6 +49,29 @@ Code in `evals/crisis/`:
   rule (each message on its own, never lower) misses no CRISIS on holdout but
   over-escalates 13 of 37 dev conversations on the 2026-10-23 recording (9
   on 2026-10-19: Jev drifted between them); HY-208 is measured against that.
+- **Conversation-level risk** (`--rule conversation_risk`, HY-208's
+  `update_risk`): on the same recording it misses nothing the per-message
+  rule catches, and over-escalates less (dev: 38 exchanges over the ceiling
+  against 40; 10 still flagged after recovery against 18).
+- **Stepping down from CRISIS** (`evals/crisis/step_down.py`): 23 of our
+  own synthetic conversations (`conversations/step_down.jsonl`: recovery,
+  masking, relapse, a new thread mid-crisis), labelled with a floor and a
+  ceiling per exchange. A grid over the step-down settings replays them
+  offline. A setting passes only with no exchange below its floor (no early
+  step-down, missed relapse or level lost on a new thread) and misses
+  nothing on FirstRead's conversations that the per-message rule catches;
+  among those, fewer late step-downs wins, preferring settings with passing
+  neighbours. The defaults in `RiskConfig` came from this on dev. On the
+  2026-10-23 recording no exchange is below its floor on either split; 7
+  exchanges per split step down late, mostly because recovery messages that
+  mention the crisis restart the calm clock. Taps happen where the script
+  puts them, so a setting that would offer the check-in earlier gets no
+  credit, and small shifts in the best setting between recordings are Jev
+  drift: don't re-tune for them.
+  The cases were
+  written by the person tuning the rule, so masking here is likely easier
+  than real masking; re-escalation after real step-downs is the check that
+  matters once there is traffic. Not in CI until the cases are reviewed.
 - These are dataset-level metrics, so they don't use `pydantic-evals`; that
   comes with the multi-turn runner (HY-239).
 
@@ -59,6 +82,10 @@ uv run python -m evals.crisis.score evals/results/crisis/<run>
 uv run --env-file .env python -m evals.crisis.record \
     --conversations evals/crisis/conversations/conversations.jsonl       # cents
 uv run python -m evals.crisis.score_conversations <run> --split dev
+uv run --env-file .env python -m evals.crisis.record \
+    --step-down evals/crisis/conversations/step_down.jsonl               # cents
+uv run python -m evals.crisis.step_down evals/crisis/conversations/step_down_recorded \
+    --conversations evals/crisis/conversations/recorded                # the grid
 ```
 
 ### Behaviour

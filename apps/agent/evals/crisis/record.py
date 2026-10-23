@@ -9,6 +9,8 @@ them under any policy without calling Jev again.
     uv run --env-file .env python -m evals.crisis.record --split validation --limit 20
     uv run --env-file .env python -m evals.crisis.record --conversations \
         evals/crisis/conversations/conversations.jsonl
+    uv run --env-file .env python -m evals.crisis.record --step-down \
+        evals/crisis/conversations/step_down.jsonl
     uv run --env-file .env python -m evals.crisis.record --resume <run dir>
 
 See `runs.py` for what a run directory holds. `--resume` skips cases already
@@ -124,7 +126,7 @@ def build_meta(
     cases: Sequence[Case],
     *,
     is_bhh: bool,
-    source: Literal["cases", "conversations"] = "cases",
+    source: Literal["cases", "conversations", "step_down"] = "cases",
     limit: int | None = None,
 ) -> RunMeta:
     """Describe a new run, with the dataset revision when the cases are BHH."""
@@ -149,6 +151,7 @@ def prepare_run(
     cases_path: Path | None,
     resume: Path | None,
     conversations_path: Path | None = None,
+    step_down_path: Path | None = None,
     limit: int | None = None,
 ) -> tuple[Path, list[Case]]:
     """Pick or create the run directory and return the cases it should cover.
@@ -167,10 +170,16 @@ def prepare_run(
         cases = expected_cases(meta, resume)
         write_meta(resume, meta)
         return resume, cases
-    source: Literal["cases", "conversations"] = (
-        "conversations" if conversations_path else "cases"
+    source: Literal["cases", "conversations", "step_down"] = "cases"
+    if conversations_path:
+        source = "conversations"
+    elif step_down_path:
+        source = "step_down"
+    path = (
+        bhh_path(split)
+        if split
+        else (conversations_path or step_down_path or cases_path)
     )
-    path = bhh_path(split) if split else (conversations_path or cases_path)
     if path is None:
         raise ValueError("Give a BHH split, a cases file or a run to resume.")
     cases = load_source_cases(path, source)
@@ -192,6 +201,7 @@ def parse_args() -> argparse.Namespace:
     source.add_argument(
         "--conversations", type=Path, help="a labelled conversations file"
     )
+    source.add_argument("--step-down", type=Path, help="a step-down cases file")
     source.add_argument("--resume", type=Path, help="a run directory to finish")
     parser.add_argument("--limit", type=int, help="record only the first N cases")
     parser.add_argument("--concurrency", type=int, default=4)
@@ -206,6 +216,7 @@ async def main() -> None:
             split=args.split,
             cases_path=args.cases,
             conversations_path=args.conversations,
+            step_down_path=args.step_down,
             resume=args.resume,
             limit=args.limit,
         )
