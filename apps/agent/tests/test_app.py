@@ -41,3 +41,20 @@ def test_a_local_run_with_the_fake_jev_serves_turns() -> None:
 
     assert response.status_code == 200
     assert "RUN_FINISHED" in response.text
+
+
+def test_crisis_resources_are_public_with_links_and_no_reviewer(
+    client: TestClient,
+) -> None:
+    response = client.get("/api/crisis-resources")
+
+    assert response.status_code == 200
+    resources = response.json()["resources"]
+    assert [r["key"] for r in resources] == [
+        "sg-sos",
+        "sg-mindline",
+        "sg-navh",
+        "sg-emergency",
+    ]
+    assert resources[0]["channels"][0]["url"].startswith("https://wa.me/6591511767")
+    assert all("verified_by" not in r for r in resources)
