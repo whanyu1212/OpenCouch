@@ -10,10 +10,11 @@ reference for prompts and eval scenarios, not as a design to copy.
 ## Layout
 
 - `apps/agent`: Python service. FastAPI + Pydantic AI, served over AG-UI.
-  Features: `safety/` (screening, conversation-level risk, crisis path) and
-  `sessions/` (thread persistence). Planned: `coach/` (the agent, replacing
-  `agent/`, and the reassurance redirect) and `program/` (program state,
-  content, practice records).
+  Features: `safety/` (the Jev check, risk policy and conversation-level risk,
+  not yet wired into `turn.py`) and `sessions/` (thread persistence). Planned:
+  the gate in the turn pipeline and the crisis responder (in `safety/`),
+  `coach/` (the agent, replacing `agent/`, and the reassurance redirect) and
+  `program/` (program state, content, practice records).
 - `apps/web`: Next.js frontend on `@ag-ui/client`. See `apps/web/AGENTS.md`
   before writing Next.js code.
 
