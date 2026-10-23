@@ -33,9 +33,18 @@ def assistant_message(content: str, message_id: str = "msg-a") -> dict[str, Any]
 
 def reply_text(response: httpx2.Response) -> str:
     """The text the agent streamed in an AG-UI response."""
-    events = [
+    events = _events(response.text)
+    return "".join(e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT")
+
+
+def event_types(body: str) -> list[str]:
+    """The type of each event in a streamed AG-UI response body, in order."""
+    return [event["type"] for event in _events(body)]
+
+
+def _events(body: str) -> list[dict[str, Any]]:
+    return [
         json.loads(line.removeprefix("data: "))
-        for line in response.text.splitlines()
+        for line in body.splitlines()
         if line.startswith("data: ")
     ]
-    return "".join(e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT")
