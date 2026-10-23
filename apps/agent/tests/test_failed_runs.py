@@ -210,6 +210,39 @@ async def test_a_run_that_ignores_cancellation_still_saves_what_was_shown(
     assert await store.claim_turn("thread-1", "next", LEASE)
 
 
+async def test_the_time_limit_holds_even_when_the_run_ignores_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(turn_module, "CANCEL_GRACE_SECONDS", 1.0)
+    store = InMemorySessionStore()
+    await store.claim_turn("thread-1", "token", LEASE)
+
+    async def stuck() -> AsyncIterator[BaseEvent]:
+        yield TextMessageContentEvent(message_id="msg-1", delta=SHOWN)
+        await asyncio.sleep(10)
+
+    run = _ActiveRun(stuck(), CancellationToken(), _recorder(store))
+    guarded = _guard_turn(
+        run,
+        store=store,
+        turn=_UserTurn("thread-1", "token", [], "hi"),
+        turn_timeout=timedelta(seconds=0.2),
+    )
+    started = time.monotonic()
+    types = []
+    async for event in guarded:
+        types.append(event.type)
+        if event.type == "RUN_ERROR":
+            error_after = time.monotonic() - started
+
+    # The client hears about the timeout at the deadline; only cleanup waits
+    # out the grace period.
+    assert types == ["TEXT_MESSAGE_CONTENT", "RUN_ERROR"]
+    assert error_after < 0.6
+    assert _text(_reply((await store.load("thread-1")).history)) == SHOWN
+    assert await store.claim_turn("thread-1", "next", LEASE)
+
+
 async def test_a_disconnect_while_waiting_on_the_model_saves_what_was_shown() -> None:
     store = InMemorySessionStore()
     guarded = await _guarded_turn(

@@ -215,57 +215,67 @@ async def _guard_turn(
     """
     loop = asyncio.get_running_loop()
     deadline = loop.time() + turn_timeout.total_seconds()
-    # At the deadline, cancel through the token rather than abandoning the
-    # wait: cancelling the wait would end the run from outside, and its
-    # partial reply would be lost.
-    stop_at_deadline = loop.call_at(deadline, run.cancellation.cancel)
+    # The run's events are read in one task of their own, so the deadline can
+    # end the wait without cancelling the run from outside, which would lose
+    # its partial reply. The client gets its error on time, and the run is
+    # stopped through its token afterwards.
+    queue: asyncio.Queue[BaseEvent | None] = asyncio.Queue()
+    pump = asyncio.create_task(_pump(run.events, queue))
     try:
         while True:
-            try:
-                # Only a backstop, for a run that ignores cancellation. The
-                # timeout wraps the wait for the next event, never a `yield`,
-                # so it can't fire while the client is being sent data.
-                async with asyncio.timeout_at(deadline + CANCEL_GRACE_SECONDS):
-                    event = await anext(run.events)
-            except StopAsyncIteration:
+            # Sending to a slow client happens at the `yield` below, outside the
+            # timeout, so check the deadline again before each wait.
+            if loop.time() >= deadline:
+                yield RunErrorEvent(message=TURN_TIMEOUT_MESSAGE, code="turn_timeout")
                 return
+            try:
+                async with asyncio.timeout_at(deadline):
+                    event = await queue.get()
             except TimeoutError:
                 yield RunErrorEvent(message=TURN_TIMEOUT_MESSAGE, code="turn_timeout")
                 return
-            # Past the deadline the run is stopping (or a slow client held the
-            # turn up), and what's left of it isn't sent.
-            if loop.time() >= deadline:
-                yield RunErrorEvent(message=TURN_TIMEOUT_MESSAGE, code="turn_timeout")
+            if event is None:
                 return
             run.recorder.observe(event)
             yield event
     finally:
-        stop_at_deadline.cancel()
         # Shielded: a client disconnect cancels this generator, and cleanup must
         # still finish.
         with anyio.CancelScope(shield=True):
-            await _stop_run(run)
+            await _stop_run(run, pump)
             await _save_shown(run.recorder, turn.thread_id)
             await _release_turn(store, turn.thread_id, turn.lease_token)
 
 
-async def _stop_run(run: _ActiveRun) -> None:
+async def _pump(
+    events: AsyncIterator[BaseEvent], queue: asyncio.Queue[BaseEvent | None]
+) -> None:
+    """Read every event of the run into `queue`, then `None`."""
+    try:
+        async for event in events:
+            queue.put_nowait(event)
+    finally:
+        queue.put_nowait(None)
+
+
+async def _stop_run(run: _ActiveRun, pump: asyncio.Task[None]) -> None:
     """Stop an unfinished run so it saves its partial reply, then close it.
 
-    Cancelling through the token, rather than closing the stream, is what
-    makes Pydantic AI hand over the partial reply. The remaining events are
-    read but not sent: the client has gone or already has its error. A run
-    that already ended is left as it is.
+    Cancelling through the token, rather than cancelling the task reading the
+    run, is what makes Pydantic AI hand over the partial reply. The events
+    still to come are read but not sent: the client has gone or already has
+    its error. A run that already ended is left as it is.
     """
     run.cancellation.cancel()
     try:
+        # A run that ignores the token is cancelled from outside once the
+        # grace period is over; what was shown is then saved instead.
         async with asyncio.timeout(CANCEL_GRACE_SECONDS):
-            async for _ in run.events:
-                pass
+            await pump
     except TimeoutError:
         logger.warning("Cancelled run didn't stop in time; saving what was shown")
     except Exception:
-        logger.exception("Stopping the agent run failed")
+        logger.exception("Reading the agent run failed")
     await _close_events(run.events)
 
 
