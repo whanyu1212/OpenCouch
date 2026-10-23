@@ -17,6 +17,7 @@ from opencouch_agent.agent import CompanionDeps, build_companion_agent
 from opencouch_agent.config import Settings, get_settings
 from opencouch_agent.safety import JevClient
 from opencouch_agent.safety.crisis import build_crisis_agent
+from opencouch_agent.safety.crisis_resources import CrisisCatalog, load_shipped_catalog
 from opencouch_agent.safety.jev import TypeSafeJevClient, build_jev_client
 from opencouch_agent.sessions import InMemorySessionStore, SessionStore
 from opencouch_agent.sessions.postgres import PostgresSessionStore
@@ -51,8 +52,12 @@ def create_app(
 
     Raises:
         ValueError: If `jev` isn't given and the settings can't build one.
+        pydantic.ValidationError: If the crisis resource catalog is invalid.
     """
     settings = settings or get_settings()
+    # Safety: load the catalog up front, so a bad entry stops startup instead
+    # of failing in the middle of a crisis.
+    crisis_catalog = load_shipped_catalog()
     agents = TurnAgents(
         companion=agent or build_companion_agent(settings.model),
         crisis=crisis_agent or build_crisis_agent(settings.model),
@@ -91,6 +96,12 @@ def create_app(
     @app.get("/api/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    # Public, with no sign-in: someone in crisis must never hit a sign-up wall
+    # before they see where to get help.
+    @app.get("/api/crisis-resources")
+    async def crisis_resources() -> CrisisCatalog:
+        return crisis_catalog
 
     @app.post("/api/agent")
     async def run_agent(request: Request) -> Response:

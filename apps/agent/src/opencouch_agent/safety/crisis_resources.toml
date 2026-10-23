@@ -1,0 +1,108 @@
+# Vetted crisis resources (HY-209). Fixed, reviewed data: change an entry only
+# after checking it against the service's official page, and update
+# verified_on and verified_by.
+#
+# `number` is what to dial or message: digits only, and WhatsApp numbers start
+# with the country code. `display` is how the number is written locally, the
+# way the web app shows it (e.g. "9151 1767", "1800-777-0000").
+
+[[resources]]
+key = "sg-sos"
+name = "Samaritans of Singapore (SOS)"
+region = "SG"
+crisis_types = ["suicide_self_harm", "general_distress"]
+hours = "24 hours"
+sources = ["https://www.sos.org.sg/"]
+verified_on = 2026-10-23
+verified_by = "whanyu1212"
+
+[[resources.channels]]
+kind = "whatsapp"
+label = "CareText"
+number = "6591511767"
+display = "9151 1767"
+
+[[resources.channels]]
+kind = "call"
+label = "Hotline"
+number = "1767"
+display = "1767"
+
+[[resources]]
+key = "sg-mindline"
+name = "National mindline 1771"
+region = "SG"
+crisis_types = ["general_distress"]
+hours = "24 hours"
+sources = ["https://www.mindline.sg/"]
+verified_on = 2026-10-23
+verified_by = "whanyu1212"
+
+[[resources.channels]]
+kind = "whatsapp"
+label = "Chat with a counsellor"
+number = "6566691771"
+display = "6669 1771"
+
+[[resources.channels]]
+kind = "call"
+label = "Call"
+number = "1771"
+display = "1771"
+
+[[resources]]
+key = "sg-navh"
+name = "National Anti-Violence and Sexual Harassment Helpline (NAVH)"
+region = "SG"
+crisis_types = ["abuse_violence"]
+hours = "24 hours"
+sources = [
+    "https://www.msf.gov.sg/what-we-do/break-the-silence/get-help",
+    "https://familyassist.msf.gov.sg/content/making-decisions/seeking-safety/getting-help/support-services-available/",
+]
+verified_on = 2026-10-23
+verified_by = "whanyu1212"
+
+[[resources.channels]]
+kind = "call"
+label = "Call"
+number = "18007770000"
+display = "1800-777-0000"
+
+[[resources]]
+key = "sg-emergency"
+name = "Emergency services"
+region = "SG"
+emergency = true
+hours = "24 hours"
+sources = [
+    "https://www.police.gov.sg/SMS-70999",
+    "https://www.scdf.gov.sg/home/contact-us",
+    "https://www.scdf.gov.sg/home/about-scdf/emergency-medical-services",
+]
+verified_on = 2026-10-23
+verified_by = "whanyu1212"
+
+[[resources.channels]]
+kind = "call"
+label = "Ambulance and fire (SCDF)"
+number = "995"
+display = "995"
+
+[[resources.channels]]
+kind = "call"
+label = "Police"
+number = "999"
+display = "999"
+
+[[resources.channels]]
+kind = "sms"
+label = "Police, when it's not safe to call"
+number = "70999"
+display = "70999"
+
+[[resources.channels]]
+kind = "sms"
+label ="Ambulance and fire (SCDF), for people who are deaf, hard of hearing or speech-impaired"
+number = "70995"
+display = "70995"
