@@ -34,7 +34,7 @@ from itertools import product
 from pathlib import Path
 from typing import Final
 
-from evals.crisis.runs import RunCheckError, resolve_path
+from evals.crisis.runs import RunCheckError, expected_cases, resolve_path
 from evals.crisis.score import load_run
 from evals.crisis.score_conversations import (
     REPLAY_START,
@@ -47,7 +47,11 @@ from evals.crisis.score_conversations import (
     per_message_escalation,
     score_split,
 )
-from evals.crisis.step_down_cases import StepDownConversation, load_step_down
+from evals.crisis.step_down_cases import (
+    StepDownConversation,
+    load_step_down,
+    step_down_cases,
+)
 from opencouch_agent.safety import RiskLevel, UserSignals
 from opencouch_agent.safety.floor import initial_risk, risk_floor
 from opencouch_agent.safety.risk import (
@@ -168,9 +172,14 @@ def load_step_down_run(
     if meta.source != "step_down":
         raise RunCheckError(f"{run_dir} is not a step-down run")
     signals = exchange_signals(rows)
+    # A run made with --limit covers only its first cases; skip conversations
+    # it doesn't fully cover rather than calling them unfinished.
+    covered = {case.id for case in expected_cases(meta, run_dir)}
     loaded = []
     for conversation in load_step_down(resolve_path(meta.cases_path)):
         if split != "all" and conversation.split != split:
+            continue
+        if any(case.id not in covered for case in step_down_cases(conversation)):
             continue
         exchanges = signals.get(conversation.id, {})
         if len(exchanges) != len(conversation.exchanges):

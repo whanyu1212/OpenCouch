@@ -235,6 +235,21 @@ def test_a_step_down_run_is_recorded_one_case_per_exchange(
     assert load_step_down_run(run_dir, "holdout") == []
 
 
+def test_a_limited_run_loads_only_the_conversations_it_fully_covers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "step_down.jsonl"
+    path.write_text(conversation().model_dump_json() + "\n")
+    monkeypatch.setattr(record, "RESULTS_DIR", tmp_path / "results")
+    run_dir, cases = prepare_run(
+        split=None, cases_path=None, resume=None, step_down_path=path, limit=1
+    )
+    assert [case.id for case in cases] == ["case#1"]
+    (run_dir / RECORDED_FILE).write_text(recorded_row("case#1"))
+
+    assert load_step_down_run(run_dir, "all") == []
+
+
 def test_a_conversation_with_an_errored_exchange_is_refused(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
