@@ -1,4 +1,5 @@
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
+from datetime import timedelta
 
 from fastapi.testclient import TestClient
 from pydantic_ai.messages import (
@@ -8,10 +9,13 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.test import TestModel
 
 from opencouch_agent.agent import build_companion_agent
 from opencouch_agent.config import Settings
 from opencouch_agent.main import create_app
+from opencouch_agent.safety import RiskLevel
+from opencouch_agent.safety.risk import RiskState
 from opencouch_agent.sessions import InMemorySessionStore
 from tests.ag_ui_requests import assistant_message, run_input, user_message
 
@@ -124,8 +128,14 @@ def test_empty_request_is_rejected(client: TestClient) -> None:
     assert response.status_code == 422
 
 
+LEASE = timedelta(seconds=60)
+HELLO: list[ModelMessage] = [ModelRequest(parts=[UserPromptPart("hello")])]
+ELEVATED = RiskState(level=RiskLevel.ELEVATED, peak=RiskLevel.ELEVATED, turns=1)
+
+
 async def test_loading_returns_a_copy(store: InMemorySessionStore) -> None:
-    await store.append_messages("t", [ModelRequest(parts=[UserPromptPart("hello")])])
+    await store.claim_turn("t", "token", LEASE)
+    await store.record_user_turn("t", "token", HELLO, RiskState())
 
     loaded = await store.load("t")
     loaded.history.clear()
@@ -189,3 +199,56 @@ def test_validation_errors_do_not_echo_the_request_body(client: TestClient) -> N
 
     assert response.status_code == 422
     assert "I feel hopeless" not in response.text
+
+
+async def test_new_thread_starts_with_no_risk(store: InMemorySessionStore) -> None:
+    assert (await store.load("t")).risk == RiskState()
+
+
+async def test_recording_a_user_turn_saves_the_message_and_risk(
+    store: InMemorySessionStore,
+) -> None:
+    await store.claim_turn("t", "token", LEASE)
+
+    recorded = await store.record_user_turn("t", "token", HELLO, ELEVATED)
+
+    session = await store.load("t")
+    assert recorded
+    assert session.history == HELLO
+    assert session.risk == ELEVATED
+
+
+async def test_recording_a_user_turn_writes_nothing_after_losing_the_lease(
+    store: InMemorySessionStore,
+) -> None:
+    await store.claim_turn("t", "slow", timedelta(seconds=-1))
+    await store.claim_turn("t", "newer", LEASE)
+
+    recorded = await store.record_user_turn("t", "slow", HELLO, ELEVATED)
+
+    session = await store.load("t")
+    assert not recorded
+    assert session.history == []
+    assert session.risk == RiskState()
+
+
+class _LeaseLostBeforeRecording(InMemorySessionStore):
+    async def record_user_turn(
+        self,
+        thread_id: str,
+        lease_token: str,
+        messages: Sequence[ModelMessage],
+        risk: RiskState,
+    ) -> bool:
+        return False
+
+
+async def test_turn_that_loses_its_lease_before_recording_gets_409() -> None:
+    store = _LeaseLostBeforeRecording()
+    agent = build_companion_agent(TestModel())
+    client = TestClient(create_app(settings=Settings(), agent=agent, store=store))
+
+    response = client.post("/api/agent", json=run_input(user_message("hi")))
+
+    assert response.status_code == 409
+    assert await store.claim_turn("thread-1", "next", LEASE)

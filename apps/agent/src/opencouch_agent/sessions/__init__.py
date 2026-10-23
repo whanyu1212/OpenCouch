@@ -1,4 +1,4 @@
-"""Server-owned conversation sessions: message history and shared state."""
+"""Server-owned conversation sessions: message history, shared state and risk."""
 
 from opencouch_agent.sessions.store import InMemorySessionStore, Session, SessionStore
 

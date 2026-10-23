@@ -9,6 +9,8 @@ from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 
+from opencouch_agent.safety.risk import RiskState
+from opencouch_agent.safety.risk_record import dump_risk_record, load_risk_record
 from opencouch_agent.sessions.store import Session
 
 # Applied on startup. Revisit migrations (e.g. Alembic) before the memory
@@ -19,6 +21,9 @@ CREATE TABLE IF NOT EXISTS conversations (
     -- Reserved for user identity; threads are unauthenticated for now.
     owner_id    TEXT,
     state       JSONB NOT NULL DEFAULT '{}'::jsonb,
+    -- Server-only risk record (safety/risk_record.py); NULL until the first
+    -- screened turn.
+    risk        JSONB,
     -- The turn currently holding the thread, if any; see claim_turn.
     active_turn_token     TEXT,
     turn_lease_expires_at TIMESTAMPTZ,
@@ -30,6 +35,7 @@ CREATE TABLE IF NOT EXISTS conversations (
 -- existing table unchanged, so add them explicitly for older databases.
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS active_turn_token TEXT;
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS turn_lease_expires_at TIMESTAMPTZ;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS risk JSONB;
 
 CREATE TABLE IF NOT EXISTS conversation_messages (
     id          BIGSERIAL PRIMARY KEY,
@@ -40,11 +46,6 @@ CREATE TABLE IF NOT EXISTS conversation_messages (
 
 CREATE INDEX IF NOT EXISTS conversation_messages_thread_id_idx
     ON conversation_messages (thread_id, id);
-"""
-
-_ENSURE_CONVERSATION = """
-INSERT INTO conversations (thread_id) VALUES (%s)
-ON CONFLICT (thread_id) DO UPDATE SET updated_at = now()
 """
 
 # Insert-or-update in one statement, so two turns can't both claim the thread.
@@ -89,7 +90,7 @@ class PostgresSessionStore:
         async with self._pool.connection() as connection:
             state_row = await (
                 await connection.execute(
-                    "SELECT state FROM conversations WHERE thread_id = %s",
+                    "SELECT state, risk FROM conversations WHERE thread_id = %s",
                     (thread_id,),
                 )
             ).fetchone()
@@ -104,16 +105,33 @@ class PostgresSessionStore:
         history = ModelMessagesTypeAdapter.validate_python(
             [row[0] for row in message_rows]
         )
-        state = state_row[0] if state_row else {}
-        return Session(thread_id=thread_id, history=history, state=state)
+        if state_row is None:
+            return Session(thread_id=thread_id, history=history)
+        state, risk_record = state_row
+        # Safety: NULL only means no turn has been screened yet (or the thread
+        # predates the column), so there is no risk to carry. A record that
+        # exists but can't be read fails the load instead.
+        risk = RiskState() if risk_record is None else load_risk_record(risk_record)
+        return Session(thread_id=thread_id, history=history, state=state, risk=risk)
 
-    async def append_messages(
-        self, thread_id: str, messages: Sequence[ModelMessage]
-    ) -> None:
-        """Append messages to a thread's history, creating the thread if needed."""
+    async def record_user_turn(
+        self,
+        thread_id: str,
+        lease_token: str,
+        messages: Sequence[ModelMessage],
+        risk: RiskState,
+    ) -> bool:
+        """Save the user's turn; see `SessionStore.record_user_turn`."""
         async with self._pool.connection() as connection, connection.transaction():
-            await connection.execute(_ENSURE_CONVERSATION, (thread_id,))
+            if not await _hold_lease(connection, thread_id, lease_token):
+                return False
+            await connection.execute(
+                "UPDATE conversations SET risk = %s, updated_at = now()"
+                " WHERE thread_id = %s",
+                (Jsonb(dump_risk_record(risk)), thread_id),
+            )
             await _insert_messages(connection, thread_id, messages)
+        return True
 
     async def save_run(
         self,
@@ -124,15 +142,7 @@ class PostgresSessionStore:
     ) -> bool:
         """Save a run's messages and state; see `SessionStore.save_run`."""
         async with self._pool.connection() as connection, connection.transaction():
-            # Lock the row so the lease can't change hands mid-save.
-            held = await (
-                await connection.execute(
-                    "SELECT 1 FROM conversations"
-                    " WHERE thread_id = %s AND active_turn_token = %s FOR UPDATE",
-                    (thread_id, lease_token),
-                )
-            ).fetchone()
-            if held is None:
+            if not await _hold_lease(connection, thread_id, lease_token):
                 return False
             await connection.execute(
                 "UPDATE conversations SET state = %s, updated_at = now()"
@@ -159,6 +169,20 @@ class PostgresSessionStore:
         """Release a turn claim, but only if `lease_token` still holds it."""
         async with self._pool.connection() as connection:
             await connection.execute(_RELEASE_TURN, (thread_id, lease_token))
+
+
+async def _hold_lease(
+    connection: AsyncConnection[Any], thread_id: str, lease_token: str
+) -> bool:
+    # Lock the row so the lease can't change hands mid-save.
+    held = await (
+        await connection.execute(
+            "SELECT 1 FROM conversations"
+            " WHERE thread_id = %s AND active_turn_token = %s FOR UPDATE",
+            (thread_id, lease_token),
+        )
+    ).fetchone()
+    return held is not None
 
 
 async def _insert_messages(
