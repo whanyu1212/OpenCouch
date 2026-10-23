@@ -1,9 +1,10 @@
 {
   "cases": "single_turn",
   "cases_path": "evals/crisis/samples/single_turn.jsonl",
+  "source": "cases",
   "cases_digest": "7d253a775b86",
   "limit": null,
-  "jev_input_version": "f07fefa16e18",
-  "started_at": "2026-10-18T14:11:07.151337+00:00",
+  "jev_input_version": "ee3dbb561c54",
+  "started_at": "2026-10-23T08:11:32.610022+00:00",
   "dataset": null
 }

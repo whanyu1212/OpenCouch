@@ -182,3 +182,9 @@ def test_levels_are_ordered_by_severity() -> None:
     assert [level.rank for level in RiskLevel] == [0, 1, 2, 3]
     assert RiskLevel.CRISIS.at_least(RiskLevel.ELEVATED)
     assert not RiskLevel.WATCH.at_least(RiskLevel.ELEVATED)
+
+
+def test_latest_adds_risk_never_sets_a_turns_level() -> None:
+    quiet_but_flagged = signals(latest_adds_risk=1.0)
+    assert assess_level(quiet_but_flagged) is RiskLevel.NONE
+    assert noisy_or(quiet_but_flagged) == 0
