@@ -8,6 +8,8 @@ from typing import Any, Protocol
 
 from pydantic_ai.messages import ModelMessage
 
+from opencouch_agent.safety.risk import RiskState
+
 
 @dataclass
 class Session:
@@ -17,11 +19,13 @@ class Session:
         thread_id: The AG-UI thread ID identifying the conversation.
         history: Every persisted message, oldest first.
         state: The server-owned shared state, as a JSON-compatible dict.
+        risk: The conversation's risk. Server-only: never sent to the client.
     """
 
     thread_id: str
     history: list[ModelMessage] = field(default_factory=list)
     state: dict[str, Any] = field(default_factory=dict)
+    risk: RiskState = field(default_factory=RiskState)
 
 
 class SessionStore(Protocol):
@@ -31,10 +35,28 @@ class SessionStore(Protocol):
         """Load a session, returning an empty one if the thread is new."""
         ...
 
-    async def append_messages(
-        self, thread_id: str, messages: Sequence[ModelMessage]
-    ) -> None:
-        """Append messages to a thread's history, creating the thread if needed."""
+    async def record_user_turn(
+        self,
+        thread_id: str,
+        lease_token: str,
+        messages: Sequence[ModelMessage],
+        risk: RiskState,
+    ) -> bool:
+        """Atomically append the user's message and save the conversation's risk.
+
+        Called before the agent runs, so the message and any rise in risk
+        survive a failed run. Like `save_run`, it only writes while
+        `lease_token` holds the thread.
+
+        Args:
+            thread_id: The thread the turn belongs to.
+            lease_token: The token the turn claimed the thread with.
+            messages: The user's new message.
+            risk: The conversation's risk after screening that message.
+
+        Returns:
+            True if saved; False, writing nothing, if the lease was lost.
+        """
         ...
 
     async def save_run(
@@ -98,14 +120,23 @@ class InMemorySessionStore:
             thread_id=thread_id,
             history=list(stored.history),
             state=dict(stored.state),
+            risk=stored.risk,
         )
 
-    async def append_messages(
-        self, thread_id: str, messages: Sequence[ModelMessage]
-    ) -> None:
-        """Append messages to a thread's history, creating the thread if needed."""
+    async def record_user_turn(
+        self,
+        thread_id: str,
+        lease_token: str,
+        messages: Sequence[ModelMessage],
+        risk: RiskState,
+    ) -> bool:
+        """Save the user's turn; see `SessionStore.record_user_turn`."""
+        if not self._holds_lease(thread_id, lease_token):
+            return False
         session = self._sessions.setdefault(thread_id, Session(thread_id=thread_id))
         session.history.extend(messages)
+        session.risk = risk
+        return True
 
     async def save_run(
         self,
@@ -115,8 +146,7 @@ class InMemorySessionStore:
         state: dict[str, Any],
     ) -> bool:
         """Save a run's messages and state; see `SessionStore.save_run`."""
-        current = self._turn_leases.get(thread_id)
-        if current is None or current[0] != lease_token:
+        if not self._holds_lease(thread_id, lease_token):
             return False
         session = self._sessions.setdefault(thread_id, Session(thread_id=thread_id))
         session.history.extend(messages)
@@ -136,6 +166,9 @@ class InMemorySessionStore:
 
     async def release_turn(self, thread_id: str, lease_token: str) -> None:
         """Release a turn claim, but only if `lease_token` still holds it."""
-        current = self._turn_leases.get(thread_id)
-        if current is not None and current[0] == lease_token:
+        if self._holds_lease(thread_id, lease_token):
             del self._turn_leases[thread_id]
+
+    def _holds_lease(self, thread_id: str, lease_token: str) -> bool:
+        current = self._turn_leases.get(thread_id)
+        return current is not None and current[0] == lease_token

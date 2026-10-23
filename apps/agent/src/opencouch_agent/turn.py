@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 LEASE_MARGIN = timedelta(seconds=30)
 
 TURN_TIMEOUT_MESSAGE = "The reply took too long. Please try again."
+TURN_IN_PROGRESS_MESSAGE = "A reply is already in progress for this conversation."
 
 
 async def run_turn(
@@ -61,10 +62,7 @@ async def run_turn(
     lease_token = uuid.uuid4().hex
 
     if not await store.claim_turn(thread_id, lease_token, turn_timeout + LEASE_MARGIN):
-        raise HTTPException(
-            status_code=409,
-            detail="A reply is already in progress for this conversation.",
-        )
+        raise HTTPException(status_code=409, detail=TURN_IN_PROGRESS_MESSAGE)
     try:
         events = await _start_run(
             adapter, store=store, thread_id=thread_id, lease_token=lease_token
@@ -118,9 +116,15 @@ async def _start_run(
     # without leaving a half-recorded turn behind.
     deps = CompanionDeps(state=CompanionState.model_validate(session.state))
     adapter.server_state = session.state
-    # Persist the user's message before the run so it survives a failed run.
-    # A later turn then sees two user messages in a row, which models handle.
-    await store.append_messages(thread_id, adapter.new_user_messages())
+    # Persist the user's message and the conversation's risk before the run, so
+    # both survive a failed run. A later turn then sees two user messages in a
+    # row, which models handle.
+    recorded = await store.record_user_turn(
+        thread_id, lease_token, adapter.new_user_messages(), session.risk
+    )
+    if not recorded:
+        # Another turn took over after this one's lease expired.
+        raise HTTPException(status_code=409, detail=TURN_IN_PROGRESS_MESSAGE)
 
     async def persist_run(result: AgentRunResult[str]) -> None:
         # The user's message is excluded here: it entered the run as history.
