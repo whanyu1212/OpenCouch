@@ -5,6 +5,11 @@ Ported word for word from the FirstRead repo (whanyu1212/firstread,
 numbers hold only for this exact wording, so don't edit a question here
 without re-running its evals.
 
+`latest_adds_risk`, also in FirstRead's wording, goes beyond FirstRead's user
+check: conversation-level risk needs it (HY-208). Adding or removing a
+question changes the Jev input, so every recording has to be made again (see
+`evals/crisis/runs.py`).
+
 Every question is a yes/no `Noul`, so each answer is a probability that
 `policy.py` can threshold. The questions are loosely modelled on the
 structure of the Columbia Suicide Severity Rating Scale (ideation, then plan,
@@ -91,6 +96,16 @@ _USER_TURN_QUESTIONS = {
         "If a trained crisis counselor read this conversation, would they want "
         "to check on the user's safety?"
     ),
+    # For conversation-level risk. Jev reads every message in the context of
+    # the conversation, so after a disclosure the signals above stay high even
+    # on calm turns. This one tells a calm turn from one that adds risk.
+    "latest_adds_risk": (
+        "Considering only the latest user message, and setting aside everything "
+        "said earlier, does this message itself express or add any new sign of "
+        "distress, hopelessness, thoughts of self-harm or suicide, risk to the "
+        "user, or intent to harm someone else? Count only what this message "
+        "adds; repeating an earlier threat or plan counts."
+    ),
 }
 
 # Question text by name: read-only strings, so nothing can change a question
@@ -126,6 +141,7 @@ class UserSignals:
     own_death_wish: float
     disguised_request: float
     counselor_concern: float
+    latest_adds_risk: float
 
     @classmethod
     def from_probabilities(cls, probabilities: Mapping[str, float]) -> Self:

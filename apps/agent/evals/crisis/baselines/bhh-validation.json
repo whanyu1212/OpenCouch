@@ -1,13 +1,13 @@
 {
-  "run": "bhh-validation-q9c07bb2bc1cb-20261018T140817Z",
+  "run": "bhh-validation-qee3dbb561c54-20261023T081217Z",
   "cases": "bhh-validation",
-  "jev_input_version": "f07fefa16e18",
+  "jev_input_version": "ee3dbb561c54",
   "dataset": {
     "dataset": "arnaiztech/llms-mental-health-crisis-benchmark",
     "revision": "7f0a0d31bb8309b0e52e670d535d954d6fa7a386",
     "license": "cc-by-nc-4.0"
   },
-  "scored_at": "2026-10-18T14:52:51.505768+00:00",
+  "scored_at": "2026-10-23T08:17:53.549186+00:00",
   "counts": {
     "scored": 190,
     "invalid": 0,
@@ -19,26 +19,26 @@
       "cases": 34,
       "watch": 1.0,
       "elevated": 1.0,
-      "crisis": 0.6470588235294118
+      "crisis": 0.7647058823529411
     },
     {
       "label": "self_harm",
       "cases": 15,
       "watch": 1.0,
       "elevated": 1.0,
-      "crisis": 0.3333333333333333
+      "crisis": 0.8
     },
     {
       "label": "violent_thoughts",
       "cases": 5,
       "watch": 1.0,
       "elevated": 0.6,
-      "crisis": 0.0
+      "crisis": 0.2
     },
     {
       "label": "anxiety_crisis",
       "cases": 26,
-      "watch": 0.19230769230769232,
+      "watch": 0.23076923076923078,
       "elevated": 0.0,
       "crisis": 0.0
     },
@@ -46,14 +46,14 @@
       "label": "substance_abuse_or_withdrawal",
       "cases": 16,
       "watch": 1.0,
-      "elevated": 0.1875,
+      "elevated": 0.375,
       "crisis": 0.0
     },
     {
       "label": "no_crisis",
       "cases": 94,
-      "watch": 0.19148936170212766,
-      "elevated": 0.0425531914893617,
+      "watch": 0.2765957446808511,
+      "elevated": 0.06382978723404255,
       "crisis": 0.0
     }
   ],
@@ -61,15 +61,15 @@
     "suicide_self_harm_recall_elevated": 1.0,
     "suicide_self_harm_recall_watch": 1.0,
     "violent_thoughts_watch": 1.0,
-    "false_alarms_watch": 0.19148936170212766,
-    "false_alarms_elevated": 0.0425531914893617
+    "false_alarms_watch": 0.2765957446808511,
+    "false_alarms_elevated": 0.06382978723404255
   },
   "separation": {
-    "auc": 0.991098567086409,
+    "auc": 0.9922926617455493,
     "recall_at_false_alarms": [
       {
         "target": 0.03,
-        "recall": 0.7959183673469388,
+        "recall": 0.8979591836734694,
         "false_alarms": 0.02127659574468085
       },
       {
@@ -80,12 +80,12 @@
       {
         "target": 0.1,
         "recall": 1.0,
-        "false_alarms": 0.0851063829787234
+        "false_alarms": 0.09574468085106383
       }
     ]
   },
   "batch_times": {
-    "p50_ms": 560.0,
-    "p90_ms": 618.0
+    "p50_ms": 598.5,
+    "p90_ms": 660.5
   }
 }

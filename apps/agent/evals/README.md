@@ -26,13 +26,15 @@ Code in `evals/crisis/`:
   of the questions and transcript framing. `score` re-scores a recording with
   the current policy offline; it refuses a recording made with a different
   Jev input. Jev's answers vary slightly between recordings (about a point on
-  false alarms), so compare policies on the same recording.
+  false alarms), and can drift more over days: between 2026-10-19 and
+  2026-10-23 the same questions gave about ten points more false alarms at
+  WATCH. Always compare policies on the same recording.
 - **BHH** (Between Help and Harm): AUC, recall at a 5% false-alarm rate,
   recall at ≥ELEVATED and ≥WATCH, false-alarm rate on `no_crisis`, and the
   share of every crisis type reaching each level. The dataset is CC-BY-NC, so
   it is downloaded by a script, never committed. Aggregate baselines are in
   `evals/crisis/baselines/`. On the test split the current policy scores
-  AUC 0.992 with 96% recall at 5% false alarms, matching FirstRead.
+  AUC 0.993 with 97% recall at 5% false alarms (2026-10-23 recording).
 - **CI checks:** 41 single-message cases and the dev conversations, with
   recorded answers, re-scored on every PR. A policy change that changes which
   cases or conversations are missed or over-escalated fails CI until the
@@ -45,7 +47,8 @@ Code in `evals/crisis/`:
   is small. Labels about coming down (`recovery_from`, `settle_by`) assume
   FirstRead's exit rule and are flagged until HY-208 settles ours. Today's
   rule (each message on its own, never lower) misses no CRISIS on holdout but
-  over-escalates 10 of 37 dev conversations; HY-208 is measured against that.
+  over-escalates 13 of 37 dev conversations on the 2026-10-23 recording (9
+  on 2026-10-19: Jev drifted between them); HY-208 is measured against that.
 - These are dataset-level metrics, so they don't use `pydantic-evals`; that
   comes with the multi-turn runner (HY-239).
 

@@ -4,8 +4,11 @@ Pure functions with no API calls, so they are easy to test and tune. Ported
 from the FirstRead repo (whanyu1212/firstread, `packages/firstread/src/policy.ts`
 at `25b8aef`), where the thresholds were tuned on BHH, `cases.jsonl` and
 `conversations.jsonl`. They lean low on purpose: missing a real crisis costs
-far more than a false alarm. Don't change a threshold here without re-running
-FirstRead's evals.
+far more than a false alarm. They are now our measured baseline: change one
+only with evidence from the crisis evals in `evals/crisis/`.
+
+`latest_adds_risk` doesn't set a turn's level; it is for conversation-level
+risk.
 """
 
 from enum import StrEnum
