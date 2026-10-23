@@ -12,9 +12,12 @@ risk.
 """
 
 from enum import StrEnum
-from typing import Final
+from typing import Final, Literal
 
 from opencouch_agent.safety.questions import UserSignals
+
+CrisisRoute = Literal["intent", "imminent", "preparation", "plan_means"]
+"""Which CRISIS rule a turn met. `risk.py` trusts some routes more than others."""
 
 
 class RiskLevel(StrEnum):
@@ -105,13 +108,19 @@ def escalate(previous: RiskLevel, current: RiskLevel) -> RiskLevel:
     return current if current.rank > previous.rank else previous
 
 
+def crisis_routes(signals: UserSignals) -> list[CrisisRoute]:
+    """Every CRISIS rule the turn meets; empty when it isn't CRISIS."""
+    met: dict[CrisisRoute, bool] = {
+        "intent": signals.intent >= INTENT_CRISIS,
+        "imminent": signals.imminent >= IMMINENT_CRISIS,
+        "preparation": signals.preparation >= PREPARATION_CRISIS,
+        "plan_means": signals.plan >= 0.3 and signals.means >= 0.3,
+    }
+    return [route for route, is_met in met.items() if is_met]
+
+
 def _is_crisis(signals: UserSignals) -> bool:
-    return (
-        signals.intent >= INTENT_CRISIS
-        or signals.imminent >= IMMINENT_CRISIS
-        or signals.preparation >= PREPARATION_CRISIS
-        or (signals.plan >= 0.3 and signals.means >= 0.3)
-    )
+    return bool(crisis_routes(signals))
 
 
 def _is_elevated(signals: UserSignals) -> bool:
