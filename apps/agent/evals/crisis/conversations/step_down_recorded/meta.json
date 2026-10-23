@@ -1,0 +1,10 @@
+{
+  "cases": "step_down",
+  "cases_path": "evals/crisis/conversations/step_down.jsonl",
+  "source": "step_down",
+  "cases_digest": "2a3d19bf6030",
+  "limit": null,
+  "jev_input_version": "ee3dbb561c54",
+  "started_at": "2026-10-23T08:21:37.801833+00:00",
+  "dataset": null
+}

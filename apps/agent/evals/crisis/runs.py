@@ -45,7 +45,7 @@ class RunMeta(BaseModel):
 
     cases: str
     cases_path: str
-    source: Literal["cases", "conversations"] = "cases"
+    source: Literal["cases", "conversations", "step_down"] = "cases"
     cases_digest: str
     limit: int | None = None
     jev_input_version: str
@@ -120,9 +120,20 @@ def cases_digest(cases: Sequence[Case]) -> str:
 
 
 def load_source_cases(path: Path, source: str) -> list[Case]:
-    """The cases in a cases file, or one per exchange of a conversations file."""
+    """The cases in a cases file, or one per exchange of a conversations file.
+
+    A conversations file is FirstRead's set or our step-down set.
+    """
+    # Imported in the branches: those modules need cases.py, not this module.
+    if source == "step_down":
+        from evals.crisis.step_down_cases import load_step_down, step_down_cases
+
+        return [
+            case
+            for conversation in load_step_down(path)
+            for case in step_down_cases(conversation)
+        ]
     if source == "conversations":
-        # Imported here: conversations.py needs cases.py, not this module.
         from evals.crisis.conversations import exchange_cases, load_conversations
 
         return [

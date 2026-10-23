@@ -15,6 +15,7 @@ import pytest
 
 from evals.crisis.runs import ERRORS_FILE, RECORDED_FILE, RunCheckError
 from evals.crisis.score_conversations import (
+    conversation_risk,
     per_message_escalation,
     print_results,
     score_run,
@@ -34,6 +35,11 @@ def signals(value: float) -> UserSignals:
 
 def test_todays_rule_never_lowers_the_level() -> None:
     levels = per_message_escalation([signals(0.0), signals(1.0), signals(0.0)])
+    assert levels == [RiskLevel.NONE, RiskLevel.CRISIS, RiskLevel.CRISIS]
+
+
+def test_the_conversation_rule_gives_one_level_per_exchange() -> None:
+    levels = conversation_risk()([signals(0.0), signals(1.0), signals(0.0)])
     assert levels == [RiskLevel.NONE, RiskLevel.CRISIS, RiskLevel.CRISIS]
 
 
