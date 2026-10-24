@@ -6,12 +6,23 @@ import { CoachReply } from "./coach-reply";
 // Follow new text only while the reader is near the bottom, so scrolling back
 // to reread isn't interrupted.
 const FOLLOW_DISTANCE_PX = 160;
+// Space kept between the end of the conversation and the composer.
+const CLEARANCE_PX = 16;
 
 function textOf(message: Message): string {
   return typeof message.content === "string" ? message.content : "";
 }
 
-export function MessageList({ messages, thinking }: { messages: Message[]; thinking: boolean }) {
+export function MessageList({
+  messages,
+  thinking,
+  bottomInset,
+}: {
+  messages: Message[];
+  thinking: boolean;
+  /** Height of whatever floats over the bottom of the page (the composer). */
+  bottomInset: number;
+}) {
   const end = useRef<HTMLDivElement>(null);
   const visible = messages.filter(
     (message) => (message.role === "user" || message.role === "assistant") && textOf(message),
@@ -19,16 +30,19 @@ export function MessageList({ messages, thinking }: { messages: Message[]; think
   const last = visible.at(-1);
 
   useEffect(() => {
-    const page = document.documentElement;
-    const nearBottom =
-      page.scrollHeight - (window.scrollY + window.innerHeight) < FOLLOW_DISTANCE_PX;
+    const element = end.current;
+    if (!element) return;
+    // Measured against the composer's top, not the window's bottom, so a
+    // composer that grows with a long draft doesn't stop the following.
+    const visibleBottom = window.innerHeight - bottomInset;
+    const nearBottom = element.getBoundingClientRect().bottom - visibleBottom < FOLLOW_DISTANCE_PX;
     // Always follow the user's own message; follow the reply only when near.
     // Instant, not smooth: a smooth scroll lags behind a fast reply, falls out
     // of following range, and stops following.
     if (last?.role === "user" || nearBottom) {
-      end.current?.scrollIntoView({ block: "end" });
+      element.scrollIntoView({ block: "end" });
     }
-  }, [last?.id, last?.content, last?.role, thinking]);
+  }, [last?.id, last?.content, last?.role, thinking, bottomInset]);
 
   return (
     <>
@@ -59,7 +73,7 @@ export function MessageList({ messages, thinking }: { messages: Message[]; think
         </p>
       )}
       {/* Stops above the floating composer, not behind it. */}
-      <div ref={end} className="scroll-mb-28" />
+      <div ref={end} style={{ scrollMarginBottom: bottomInset + CLEARANCE_PX }} />
     </>
   );
 }

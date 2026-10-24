@@ -6,14 +6,29 @@ export function Composer({
   draft,
   onDraftChange,
   onSend,
+  onHeightChange,
   disabled,
 }: {
   draft: string;
   onDraftChange: (draft: string) => void;
   onSend: () => void;
+  onHeightChange: (height: number) => void;
   disabled: boolean;
 }) {
+  const form = useRef<HTMLFormElement>(null);
   const field = useRef<HTMLTextAreaElement>(null);
+
+  // The composer floats over the conversation and grows with the draft, so
+  // whatever scrolls the conversation needs its real height.
+  useEffect(() => {
+    const element = form.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() =>
+      onHeightChange(element.getBoundingClientRect().height),
+    );
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [onHeightChange]);
 
   // Grow with the text, up to a few lines, then scroll.
   useEffect(() => {
@@ -43,6 +58,7 @@ export function Composer({
 
   return (
     <form
+      ref={form}
       onSubmit={handleSubmit}
       className="sticky bottom-0 z-10 bg-linear-to-t from-canvas from-40% to-transparent px-3 pt-6 pb-[max(1rem,env(safe-area-inset-bottom))]"
     >

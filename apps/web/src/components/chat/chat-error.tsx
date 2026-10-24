@@ -13,10 +13,13 @@ const EXPLANATIONS: Record<ChatError["kind"], string> = {
 
 export function ChatErrorNotice({
   error,
+  bottomInset,
   onSendAgain,
   onDismiss,
 }: {
   error: ChatError;
+  /** Height of the composer floating over the bottom of the page. */
+  bottomInset: number;
   onSendAgain: (text: string) => void;
   onDismiss: () => void;
 }) {
@@ -33,7 +36,8 @@ export function ChatErrorNotice({
     <div
       ref={notice}
       role="alert"
-      className="scroll-mb-28 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl bg-notice-wash px-4 py-3 text-sm text-notice"
+      style={{ scrollMarginBottom: bottomInset + 16 }}
+      className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl bg-notice-wash px-4 py-3 text-sm text-notice"
     >
       <p className="flex-1 basis-56">{EXPLANATIONS[error.kind]}</p>
       <div className="flex gap-2">

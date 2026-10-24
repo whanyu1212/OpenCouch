@@ -11,6 +11,7 @@ import { MessageList } from "./message-list";
 export function Chat() {
   const { messages, running, error, send, dismissError } = useCompanion();
   const [draft, setDraft] = useState("");
+  const [composerHeight, setComposerHeight] = useState(0);
 
   function sendText(text: string) {
     if (running) return;
@@ -55,19 +56,30 @@ export function Chat() {
           ) : (
             <>
               <h1 className="sr-only">Conversation</h1>
-              <MessageList messages={messages} thinking={running} />
+              <MessageList messages={messages} thinking={running} bottomInset={composerHeight} />
             </>
           )}
 
           {error && (
             <div className="mt-6">
-              <ChatErrorNotice error={error} onSendAgain={sendText} onDismiss={dismissError} />
+              <ChatErrorNotice
+                error={error}
+                bottomInset={composerHeight}
+                onSendAgain={sendText}
+                onDismiss={dismissError}
+              />
             </div>
           )}
         </div>
       </main>
 
-      <Composer draft={draft} onDraftChange={setDraft} onSend={sendDraft} disabled={running} />
+      <Composer
+        draft={draft}
+        onDraftChange={setDraft}
+        onSend={sendDraft}
+        onHeightChange={setComposerHeight}
+        disabled={running}
+      />
     </div>
   );
 }
