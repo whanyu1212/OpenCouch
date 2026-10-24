@@ -1,12 +1,12 @@
 "use client";
 
-import { HttpAgent } from "@ag-ui/client";
 import type { Message } from "@ag-ui/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AGENT_URL } from "./agent-url";
 import { cardKeysIn } from "./crisis-catalog";
 import { loadHistory } from "./history";
+import { NewestMessageAgent } from "./newest-message-agent";
 import { savedThreadId, startThread } from "./thread-id";
 
 /**
@@ -47,7 +47,7 @@ export function useCompanion() {
   );
   // One agent per conversation: a new conversation gets a fresh one.
   const agent = useMemo(
-    () => (threadId === null ? null : new HttpAgent({ url: AGENT_URL, threadId })),
+    () => (threadId === null ? null : new NewestMessageAgent({ url: AGENT_URL, threadId })),
     [threadId],
   );
   const [messages, setMessages] = useState<Message[]>([]);

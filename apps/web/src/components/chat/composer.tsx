@@ -1,6 +1,9 @@
 import { type KeyboardEvent, type SubmitEvent, useEffect, useRef } from "react";
 
 const MAX_HEIGHT_PX = 160;
+// The agent refuses longer messages (`MAX_MESSAGE_CHARS` in turn.py). The
+// browser counts some characters, like emoji, as two, so this is never looser.
+const MAX_MESSAGE_CHARS = 4000;
 
 export function Composer({
   draft,
@@ -74,6 +77,7 @@ export function Composer({
           onChange={(event) => onDraftChange(event.target.value)}
           onKeyDown={handleKeyDown}
           placeholder="Write what's on your mind"
+          maxLength={MAX_MESSAGE_CHARS}
           className="min-h-10.5 flex-1 resize-none bg-transparent py-2 text-ink placeholder:text-ink-soft focus:outline-none"
         />
         <button
