@@ -21,7 +21,7 @@ from opencouch_agent.api.history import (
 )
 from opencouch_agent.config import Settings, get_settings
 from opencouch_agent.safety import JevClient
-from opencouch_agent.safety.crisis import build_crisis_agent
+from opencouch_agent.safety.crisis import CrisisResponder, build_crisis_agent
 from opencouch_agent.safety.crisis_resources import CrisisCatalog, load_shipped_catalog
 from opencouch_agent.safety.jev import TypeSafeJevClient, build_jev_client
 from opencouch_agent.sessions import InMemorySessionStore, SessionStore
@@ -69,7 +69,9 @@ def create_app(
     crisis_catalog = load_shipped_catalog()
     agents = TurnAgents(
         companion=agent or build_companion_agent(settings.model),
-        crisis=crisis_agent or build_crisis_agent(settings.model),
+        crisis=CrisisResponder.from_catalog(
+            crisis_agent or build_crisis_agent(settings.model), crisis_catalog
+        ),
     )
     jev_client = jev or _jev_from_settings(settings)
     session_store: SessionStore = store or InMemorySessionStore()

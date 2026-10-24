@@ -39,7 +39,7 @@ FALLBACK_CRISIS_TYPE: Final[CrisisType] = "general_distress"
 # Neutral by design: never anything from the user's conversation.
 WHATSAPP_OPENER: Final = "Hi, I'd like to talk to someone."
 
-_COUNTRY_CODES: Final[dict[Region, str]] = {"SG": "65"}
+COUNTRY_CODES: Final[dict[Region, str]] = {"SG": "65"}
 _CATALOG_FILE: Final = "crisis_resources.toml"
 
 Digits = Annotated[str, Field(pattern=r"^\d{3,15}$")]
@@ -89,7 +89,7 @@ class CrisisResource(BaseModel):
             raise ValueError(
                 f"{self.key}: list crisis types unless it's the emergency entry"
             )
-        country_code = _COUNTRY_CODES[self.region]
+        country_code = COUNTRY_CODES[self.region]
         for channel in self.channels:
             if channel.kind == "whatsapp" and not channel.number.startswith(
                 country_code

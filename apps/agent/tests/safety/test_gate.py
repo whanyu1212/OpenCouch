@@ -61,3 +61,35 @@ async def test_a_failed_check_goes_to_the_crisis_responder_and_keeps_the_risk() 
     assert jev.screened == ["hello"]
     assert decision.path == "crisis"
     assert decision.risk is elevated
+
+
+@pytest.mark.parametrize(
+    ("reading", "imminent"),
+    [
+        (CRISIS_READING, False),
+        ({"imminent": 0.5, "ideation": 0.8, "latest_adds_risk": 0.9}, True),
+        (
+            {"plan": 0.6, "means": 0.6, "ideation": 0.8, "latest_adds_risk": 0.9},
+            True,
+        ),
+        ({"preparation": 0.6, "ideation": 0.8, "latest_adds_risk": 0.9}, True),
+    ],
+    ids=["intent alone", "imminent", "plan and means", "preparation"],
+)
+async def test_a_crisis_is_imminent_only_on_a_timeline_plan_or_preparation(
+    reading: dict[str, float], imminent: bool
+) -> None:
+    jev = ScriptedJev({"message": reading})
+
+    decision = await run_gate(jev, RiskState(), [], "message", at=AT)
+
+    assert decision.path == "crisis"
+    assert decision.imminent is imminent
+
+
+async def test_a_failed_check_is_not_treated_as_imminent() -> None:
+    jev = ScriptedJev(failing=frozenset({"hello"}))
+
+    decision = await run_gate(jev, RiskState(), [], "hello", at=AT)
+
+    assert decision.imminent is False

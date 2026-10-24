@@ -1,0 +1,1 @@
+I want to make sure you're safe. If you're in danger or might act on thoughts of hurting yourself, call 995 now. To talk to someone, you can call Samaritans of Singapore (SOS) on 1767, or WhatsApp their CareText line on 9151 1767, any time of day. Are you safe right now?

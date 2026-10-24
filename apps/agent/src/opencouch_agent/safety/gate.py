@@ -8,12 +8,12 @@ so a calm message inside a crisis still goes to the crisis responder.
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic_ai.messages import ModelMessage
 
 from opencouch_agent.safety.jev import JevClient
-from opencouch_agent.safety.policy import RiskLevel
+from opencouch_agent.safety.policy import CrisisRoute, RiskLevel, crisis_routes
 from opencouch_agent.safety.risk import RiskState, update_risk
 from opencouch_agent.safety.screening import (
     ScreeningFailed,
@@ -22,6 +22,12 @@ from opencouch_agent.safety.screening import (
 )
 
 ReplyPath = Literal["companion", "crisis"]
+
+# The CRISIS rules that mean the danger may be immediate: a timeline, a plan
+# with the means, or steps already taken. Intent alone isn't.
+_IMMINENT_ROUTES: Final[frozenset[CrisisRoute]] = frozenset(
+    {"imminent", "plan_means", "preparation"}
+)
 
 
 @dataclass(frozen=True)
@@ -32,10 +38,13 @@ class GateDecision:
         risk: The conversation's risk after this turn, to persist before the
             agent runs.
         path: Who replies.
+        imminent: Whether this message suggests the danger is immediate, so
+            the crisis reply puts the emergency number first.
     """
 
     risk: RiskState
     path: ReplyPath
+    imminent: bool = False
 
 
 async def run_gate(
@@ -64,7 +73,10 @@ async def run_gate(
     if isinstance(screening, ScreeningFailed):
         # Fail closed: without a reading, reply as if this could be a crisis.
         # The level stays as it was, since there's no evidence to change it.
+        # Not imminent: there's no reading saying so, and the emergency number
+        # is still shown, just not first.
         return GateDecision(risk=risk, path="crisis")
     updated = update_risk(risk, screening.signals, at=at)
     path: ReplyPath = "crisis" if updated.level is RiskLevel.CRISIS else "companion"
-    return GateDecision(risk=updated, path=path)
+    imminent = bool(_IMMINENT_ROUTES.intersection(crisis_routes(screening.signals)))
+    return GateDecision(risk=updated, path=path, imminent=imminent)
