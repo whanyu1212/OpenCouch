@@ -51,6 +51,10 @@ class RunRecorder:
         # before the run.
         await self._save(result.new_messages())
 
+    async def save_reply(self, text: str) -> None:
+        """Save a reply the server wrote and sent itself, such as a crisis reply."""
+        await self._save([ModelResponse(parts=[TextPart(text)])])
+
     async def save_cancelled(self, cancelled: RunCancelled) -> None:
         """Save a run the turn cancelled, with its partial reply."""
         # A run cancelled before the model said anything leaves an empty

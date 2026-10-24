@@ -30,7 +30,8 @@ from opencouch_agent.api.adapter import ServerOwnedAGUIAdapter
 from opencouch_agent.config import Settings
 from opencouch_agent.main import create_app
 from opencouch_agent.run_recorder import RunRecorder
-from opencouch_agent.safety.crisis import build_crisis_agent
+from opencouch_agent.safety.crisis import CrisisResponder, build_crisis_agent
+from opencouch_agent.safety.crisis_resources import load_shipped_catalog
 from opencouch_agent.sessions import InMemorySessionStore
 from opencouch_agent.turn import (
     TurnAgents,
@@ -336,7 +337,10 @@ async def _guarded_turn(
         agent=agent, run_input=AGUIAdapter.build_run_input(body)
     )
     turn = _UserTurn("thread-1", "token", adapter.new_user_messages(), "hi")
-    agents = TurnAgents(agent, build_crisis_agent(TestModel()))
+    crisis = CrisisResponder.from_catalog(
+        build_crisis_agent(TestModel()), load_shipped_catalog()
+    )
+    agents = TurnAgents(agent, crisis)
     _, run = await _start_run(
         adapter, turn, agents=agents, jev=ScriptedJev(), store=store
     )

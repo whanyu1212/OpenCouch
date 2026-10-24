@@ -6,6 +6,7 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from typing import cast
 
 import anyio
@@ -21,7 +22,8 @@ from opencouch_agent.agent import CompanionDeps, CompanionState
 from opencouch_agent.api.adapter import ServerOwnedAGUIAdapter, UnsupportedRequestError
 from opencouch_agent.run_recorder import RunRecorder
 from opencouch_agent.safety import JevClient, conversation_turns, run_gate
-from opencouch_agent.sessions import SessionStore
+from opencouch_agent.safety.crisis import CrisisResponder, crisis_events, crisis_reply
+from opencouch_agent.sessions import Session, SessionStore
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ class TurnAgents:
     """
 
     companion: Agent[CompanionDeps, str]
-    crisis: Agent[CompanionDeps, str]
+    crisis: CrisisResponder
 
 
 @dataclass(frozen=True)
@@ -186,16 +188,58 @@ async def _start_run(
             turn.thread_id,
         )
 
-    agent = agents.crisis if decision.path == "crisis" else agents.companion
+    recorder = RunRecorder(store, turn.thread_id, turn.lease_token, deps)
+    if decision.path == "crisis":
+        return _start_crisis_reply(
+            adapter, turn, agents.crisis, session, recorder, imminent=decision.imminent
+        )
+    return _start_companion(adapter, agents.companion, session, recorder)
+
+
+def _start_companion(
+    adapter: ServerOwnedAGUIAdapter,
+    agent: Agent[CompanionDeps, str],
+    session: Session,
+    recorder: RunRecorder,
+) -> tuple[ServerOwnedAGUIAdapter, _ActiveRun]:
+    """Start the companion, streaming its reply."""
     routed = replace(adapter, agent=agent, server_state=session.state)
     cancellation = CancellationToken()
-    recorder = RunRecorder(store, turn.thread_id, turn.lease_token, deps)
     events = routed.run_stream(
         message_history=session.history,
-        deps=deps,
+        deps=recorder.deps,
         cancellation_token=cancellation,
         on_complete=recorder.save_completed,
         on_cancel=recorder.save_cancelled,
+    )
+    return routed, _ActiveRun(events, cancellation, recorder)
+
+
+def _start_crisis_reply(
+    adapter: ServerOwnedAGUIAdapter,
+    turn: _UserTurn,
+    responder: CrisisResponder,
+    session: Session,
+    recorder: RunRecorder,
+    *,
+    imminent: bool,
+) -> tuple[ServerOwnedAGUIAdapter, _ActiveRun]:
+    """Start the crisis responder, whose reply is checked and sent whole."""
+    routed = replace(adapter, agent=responder.agent, server_state=session.state)
+    cancellation = CancellationToken()
+    write_reply = partial(
+        crisis_reply,
+        responder,
+        [*session.history, *turn.messages],
+        deps=recorder.deps,
+        imminent=imminent,
+        cancellation=cancellation,
+    )
+    events = crisis_events(
+        write_reply,
+        thread_id=turn.thread_id,
+        run_id=adapter.run_input.run_id,
+        save_reply=recorder.save_reply,
     )
     return routed, _ActiveRun(events, cancellation, recorder)
 

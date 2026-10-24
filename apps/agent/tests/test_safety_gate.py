@@ -5,11 +5,13 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 
+from opencouch_agent.api.history import shown_history
 from opencouch_agent.safety import RiskLevel
+from opencouch_agent.safety.crisis import CRISIS_FALLBACK, IMMINENT_INSTRUCTIONS
 from opencouch_agent.sessions import InMemorySessionStore
 from tests.ag_ui_requests import (
     assistant_message,
@@ -23,6 +25,7 @@ from tests.fake_jev import ScriptedJev
 COMPANION_REPLY = "I'm here with you."
 CRISIS_MESSAGE = "i'm going to take all my pills tonight"
 CRISIS_READING = {"intent": 0.9, "ideation": 0.8, "latest_adds_risk": 0.9}
+IMMINENT_MESSAGE = "i've already taken them"
 ELEVATED_MESSAGE = "i don't see the point of anything"
 ELEVATED_READING = {"ideation": 0.5, "latest_adds_risk": 0.6}
 
@@ -103,20 +106,59 @@ async def test_a_failed_check_is_answered_by_the_crisis_responder() -> None:
     assert (await store.load("thread-1")).risk.level is RiskLevel.NONE
 
 
-async def test_an_escalation_is_saved_even_if_the_reply_fails() -> None:
+async def test_an_escalation_is_saved_and_the_fallback_sent_if_the_reply_fails() -> (
+    None
+):
     store = InMemorySessionStore()
 
-    async def fail(_: list[ModelMessage], __: AgentInfo) -> AsyncIterator[str]:
+    def fail(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
         raise RuntimeError("model unavailable")
-        yield  # Unreachable; makes this an async generator.
 
     jev = ScriptedJev({CRISIS_MESSAGE: CRISIS_READING})
-    client = _client(store, jev, crisis=FunctionModel(stream_function=fail))
-    client.post("/api/agent", json=run_input(user_message(CRISIS_MESSAGE)))
+    client = _client(store, jev, crisis=FunctionModel(fail))
+
+    reply = _reply(client, CRISIS_MESSAGE)
 
     session = await store.load("thread-1")
+    assert reply == CRISIS_FALLBACK
     assert session.risk.level is RiskLevel.CRISIS
-    assert len(session.history) == 1
+    assert shown_history(session.history).messages[-1].content == CRISIS_FALLBACK
+
+
+async def test_an_unvetted_number_reaches_the_user_as_the_fallback() -> None:
+    store = InMemorySessionStore()
+
+    def reply(_: list[ModelMessage], __: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart("Please call 988 right now.")])
+
+    jev = ScriptedJev({CRISIS_MESSAGE: CRISIS_READING})
+    client = _client(store, jev, crisis=FunctionModel(reply))
+
+    shown = _reply(client, CRISIS_MESSAGE)
+
+    saved = shown_history((await store.load("thread-1")).history).messages
+    assert shown == CRISIS_FALLBACK
+    assert saved[-1].content == CRISIS_FALLBACK
+    assert "988" not in str(saved)
+
+
+async def test_an_imminent_reading_tells_the_crisis_responder_to_lead_with_995() -> (
+    None
+):
+    store = InMemorySessionStore()
+    seen: list[str | None] = []
+
+    def reply(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(info.instructions)
+        return ModelResponse(parts=[TextPart("Please call 995 now. Are you alone?")])
+
+    reading = {"imminent": 0.9, "ideation": 0.8, "latest_adds_risk": 0.9}
+    jev = ScriptedJev({IMMINENT_MESSAGE: reading})
+    client = _client(store, jev, crisis=FunctionModel(reply))
+
+    _reply(client, IMMINENT_MESSAGE)
+
+    assert IMMINENT_INSTRUCTIONS.strip() in (seen[0] or "")
 
 
 async def test_client_sent_state_and_history_cannot_lower_the_level() -> None:
