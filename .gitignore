@@ -26,3 +26,7 @@ apps/agent/evals/results/
 
 # The BHH benchmark is CC-BY-NC: downloaded locally, never committed
 apps/agent/evals/data/
+
+# Claude Code: local worktrees and personal settings
+.claude/worktrees/
+.claude/settings.local.json
