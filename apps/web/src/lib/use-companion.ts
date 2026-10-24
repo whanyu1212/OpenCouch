@@ -2,14 +2,25 @@
 
 import { HttpAgent } from "@ag-ui/client";
 import type { Message } from "@ag-ui/core";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 const AGENT_URL =
   process.env.NEXT_PUBLIC_AGENT_URL ?? "http://localhost:8080/api/agent";
 
-const BUSY_MESSAGE =
-  "Your message wasn't sent because the previous reply hasn't finished. Try again in a moment.";
-const NOT_SENT_MESSAGE = "Your message couldn't be sent. Please try again.";
+/**
+ * Why the last send failed.
+ *
+ * `busy`, `not_sent` and `unreachable` mean the server never took the message,
+ * so it is removed from the conversation and handed back to the composer.
+ * `timeout` and `reply_failed` mean the server took it and the reply broke
+ * off, so the message stays and the same text can be sent again.
+ */
+export type ChatError =
+  | { kind: "busy" }
+  | { kind: "not_sent" }
+  | { kind: "unreachable" }
+  | { kind: "timeout"; text: string }
+  | { kind: "reply_failed"; text: string };
 
 /** Whether the message stayed in the conversation or was taken back out. */
 export type SendResult = "kept" | "removed";
@@ -22,21 +33,26 @@ function httpStatus(error: unknown): number | undefined {
   return undefined;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 export function useCompanion() {
   const agent = useMemo(() => new HttpAgent({ url: AGENT_URL }), []);
   const [messages, setMessages] = useState<Message[]>([]);
   const [running, setRunning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ChatError | null>(null);
+  // Set by the stream as it arrives, read after `runAgent` settles.
+  const runStarted = useRef(false);
+  const runError = useRef<"timeout" | "reply_failed" | null>(null);
 
   useEffect(() => {
     const { unsubscribe } = agent.subscribe({
       onMessagesChanged: ({ messages }) => setMessages([...messages]),
+      onRunStartedEvent: () => {
+        runStarted.current = true;
+      },
       // A failure mid-reply arrives as an event; `runAgent` still resolves.
-      onRunErrorEvent: ({ event }) => setError(event.message),
+      // Its message is server text, so only its code is used.
+      onRunErrorEvent: ({ event }) => {
+        runError.current = event.code === "turn_timeout" ? "timeout" : "reply_failed";
+      },
     });
     return () => {
       unsubscribe();
@@ -47,20 +63,30 @@ export function useCompanion() {
   const send = useCallback(
     async (text: string): Promise<SendResult> => {
       const id = crypto.randomUUID();
+      runStarted.current = false;
+      runError.current = null;
       setError(null);
       setRunning(true);
       try {
         agent.addMessage({ id, role: "user", content: text });
         await agent.runAgent();
+        if (runError.current) {
+          setError({ kind: runError.current, text });
+        }
       } catch (err) {
-        const status = httpStatus(err);
-        if (status === undefined) {
-          setError(errorMessage(err));
+        if (runStarted.current) {
+          // The connection broke after the server took the message.
+          setError({ kind: "reply_failed", text });
         } else {
-          // An HTTP error status means the server refused the turn before
-          // streaming, and it stores the message only once a turn starts.
+          // Nothing reached the server, or it refused the turn before
+          // streaming; it stores the message only once a turn starts.
           agent.setMessages(agent.messages.filter((message) => message.id !== id));
-          setError(status === 409 ? BUSY_MESSAGE : NOT_SENT_MESSAGE);
+          const status = httpStatus(err);
+          if (status === undefined) {
+            setError({ kind: "unreachable" });
+          } else {
+            setError({ kind: status === 409 ? "busy" : "not_sent" });
+          }
         }
       } finally {
         setRunning(false);
@@ -70,5 +96,7 @@ export function useCompanion() {
     [agent],
   );
 
-  return { messages, running, error, send };
+  const dismissError = useCallback(() => setError(null), []);
+
+  return { messages, running, error, send, dismissError };
 }

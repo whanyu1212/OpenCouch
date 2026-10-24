@@ -1,26 +1,101 @@
 @import "tailwindcss";
 
+/*
+ * Clean and quiet: neutral surfaces, one teal accent from the brand's sofa,
+ * and frosted glass only on the layers that float over the conversation.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --canvas: #ffffff;
+  --ink: #1b1b1b;
+  --ink-soft: #6b6b6b;
+  --bubble: #eef3f2;
+  --line: rgb(0 0 0 / 0.08);
+  --accent: #2b6a62;
+  --accent-ink: #ffffff;
+  --accent-wash: rgb(43 106 98 / 0.12);
+  --notice: #6f4c12;
+  --notice-wash: #faf1e1;
+  --glass: rgb(255 255 255 / 0.74);
+  --glass-strong: rgb(255 255 255 / 0.8);
+  --sheen: rgb(255 255 255 / 0.9);
+  --shadow: rgb(0 0 0 / 0.07);
+  color-scheme: light;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --canvas: #1c1c1c;
+    --ink: #ececec;
+    --ink-soft: #a3a3a3;
+    --bubble: #2b3433;
+    --line: rgb(255 255 255 / 0.1);
+    --accent: #5aa69b;
+    --accent-ink: #10201e;
+    --accent-wash: rgb(90 166 155 / 0.18);
+    --notice: #f2cf95;
+    --notice-wash: #2e2922;
+    --glass: rgb(28 28 28 / 0.72);
+    --glass-strong: rgb(46 46 46 / 0.72);
+    --sheen: rgb(255 255 255 / 0.08);
+    --shadow: rgb(0 0 0 / 0.35);
+    color-scheme: dark;
   }
 }
 
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-bubble: var(--bubble);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-wash: var(--accent-wash);
+  --color-notice: var(--notice);
+  --color-notice-wash: var(--notice-wash);
+  --font-sans: var(--font-figtree);
+  --text-base: 1.0625rem;
+  --text-base--line-height: 1.6;
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--canvas);
+  color: var(--ink);
+}
+
+/* A bar the conversation scrolls under, frosted. */
+@utility glass-bar {
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* A floating control, frosted, with a light edge and a soft shadow. */
+@utility glass-pill {
+  background: var(--glass-strong);
+  border: 1px solid var(--line);
+  box-shadow:
+    inset 0 1px 0 var(--sheen),
+    0 8px 28px var(--shadow);
+  -webkit-backdrop-filter: blur(24px) saturate(180%);
+  backdrop-filter: blur(24px) saturate(180%);
+}
+
+/* While the coach is writing, its dot pulses, slowly. */
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@utility thinking-dot {
+  animation: pulse-soft 1.6s ease-in-out infinite;
+
+  @media (prefers-reduced-motion: reduce) {
+    animation: none;
+  }
 }
