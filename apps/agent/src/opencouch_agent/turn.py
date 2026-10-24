@@ -41,6 +41,12 @@ CANCEL_GRACE_SECONDS = 5.0
 
 TURN_TIMEOUT_MESSAGE = "The reply took too long. Please try again."
 TURN_IN_PROGRESS_MESSAGE = "A reply is already in progress for this conversation."
+# The client sends only its newest message, so this leaves room for one at
+# MAX_MESSAGE_CHARS plus the rest of the AG-UI request.
+MAX_REQUEST_BYTES = 64_000
+# Longer messages add Jev cost and delay, and push the rest of the
+# conversation out of what Jev reads.
+MAX_MESSAGE_CHARS = 4000
 
 
 @dataclass(frozen=True)
@@ -99,8 +105,10 @@ async def run_turn(
     Raises:
         HTTPException: 422 if the body isn't a valid AG-UI `RunAgentInput`, or
             uses client input the server rejects, such as frontend tools, a
-            history not ending in a user message, or a message with no text.
-            409 if another turn is already running on the thread.
+            history not ending in a user message, or a message with no text or
+            over `MAX_MESSAGE_CHARS`. 413 if the body is over the app's cap
+            (`MAX_REQUEST_BYTES`, enforced by `BodySizeLimit`). 409 if another
+            turn is already running on the thread.
     """
     adapter = await _parse_request(request, agents.companion)
     user_messages = adapter.new_user_messages()
@@ -130,7 +138,7 @@ async def run_turn(
 async def _parse_request(
     request: Request, agent: Agent[CompanionDeps, str]
 ) -> ServerOwnedAGUIAdapter:
-    """Parse and check the request, turning client errors into 422s."""
+    """Parse and check the request, turning client errors into 4xx responses."""
     try:
         # `from_request` is annotated as returning the base class; it builds `cls`.
         adapter = cast(
@@ -156,6 +164,11 @@ def _user_text(messages: list[ModelMessage]) -> str:
         # to screen (an image alone, say) is refused rather than let through.
         raise HTTPException(
             status_code=422, detail="Expected the message to contain text."
+        )
+    if len(text) > MAX_MESSAGE_CHARS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Expected a message of at most {MAX_MESSAGE_CHARS} characters.",
         )
     return text
 

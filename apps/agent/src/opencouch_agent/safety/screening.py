@@ -8,6 +8,8 @@ them.
 
 import asyncio
 import logging
+import re
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final, Literal
@@ -31,6 +33,14 @@ logger = logging.getLogger(__name__)
 WINDOW_TURNS: Final = 8
 # The whole check, retries included. Past this the turn goes on without it.
 SCREENING_DEADLINE_SECONDS: Final = 3.0
+# A line in someone's message that starts like the transcript's own framing,
+# after any spaces, markdown or list numbering, with an ordinary or lookalike
+# colon: "LATEST USER MESSAGE:", "**User:**", "1. USER\uff1a".
+_FORGED_MARKER: Final = re.compile(
+    r"^((?:[\s*_>#`~-]|\d+[.)])*)"
+    r"(latest user message|conversation so far|user|assistant)\s*[:\uff1a\ufe55\ufe13]",
+    re.IGNORECASE | re.MULTILINE,
+)
 
 
 @dataclass(frozen=True)
@@ -94,8 +104,14 @@ async def screen_user_message(
 
 
 def user_check_state(history: Sequence[Turn], latest_message: str) -> str:
-    """The text Jev reads for the user check."""
-    return f"{_transcript(history)}\n\nLATEST USER MESSAGE:\n{latest_message}"
+    """The text Jev reads for the user check.
+
+    Safety: lines in a message that look like the transcript's own markers are
+    rewritten, so a message can't forge earlier turns or hide the real latest
+    message. Only what Jev reads changes, never what's stored or shown.
+    """
+    latest = _neutralise_markers(latest_message)
+    return f"{_transcript(history)}\n\nLATEST USER MESSAGE:\n{latest}"
 
 
 def conversation_turns(messages: Sequence[ModelMessage]) -> list[Turn]:
@@ -138,5 +154,16 @@ def _transcript(history: Sequence[Turn]) -> str:
     recent = history[-WINDOW_TURNS:]
     if not recent:
         return "CONVERSATION SO FAR: (none)"
-    lines = "\n".join(f"{turn.role.upper()}: {turn.text}" for turn in recent)
+    lines = "\n".join(
+        f"{turn.role.upper()}: {_neutralise_markers(turn.text)}" for turn in recent
+    )
     return f"CONVERSATION SO FAR:\n{lines}"
+
+
+def _neutralise_markers(text: str) -> str:
+    # Invisible characters (zero-width spaces, joiners, direction marks) carry
+    # nothing for Jev to read and could hide a forged marker, so they go.
+    visible = "".join(char for char in text if unicodedata.category(char) != "Cf")
+    # "USER: fine" becomes "(USER) fine": the words stay for Jev to read, but
+    # without the colon at the start of a line they no longer frame a turn.
+    return _FORGED_MARKER.sub(r"\1(\2)", visible)

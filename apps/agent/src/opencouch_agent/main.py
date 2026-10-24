@@ -14,6 +14,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from opencouch_agent.agent import CompanionDeps, CompanionState, build_companion_agent
+from opencouch_agent.api.body_limit import BodySizeLimit
 from opencouch_agent.api.history import (
     ConversationHistory,
     shown_history,
@@ -26,7 +27,12 @@ from opencouch_agent.safety.crisis_resources import CrisisCatalog, load_shipped_
 from opencouch_agent.safety.jev import TypeSafeJevClient, build_jev_client
 from opencouch_agent.sessions import InMemorySessionStore, SessionStore
 from opencouch_agent.sessions.postgres import PostgresSessionStore
-from opencouch_agent.turn import CANCEL_GRACE_SECONDS, TurnAgents, run_turn
+from opencouch_agent.turn import (
+    CANCEL_GRACE_SECONDS,
+    MAX_REQUEST_BYTES,
+    TurnAgents,
+    run_turn,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,6 +103,8 @@ def create_app(
             yield
 
     app = FastAPI(title="OpenCouch Agent", lifespan=lifespan)
+    # Added before CORS, so CORS wraps it and a 413 still reaches the browser.
+    app.add_middleware(BodySizeLimit, max_bytes=MAX_REQUEST_BYTES)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
