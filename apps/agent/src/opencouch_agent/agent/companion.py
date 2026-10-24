@@ -1,16 +1,20 @@
 """The companion agent."""
 
+from importlib import resources
+from typing import Final
+
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 
 from opencouch_agent.agent.deps import CompanionDeps
 
-# Placeholder until the therapeutic prompts are ported from main.
-INSTRUCTIONS = """\
-You are OpenCouch, a warm and supportive companion. Listen carefully, reflect
-what you hear, and keep replies short and conversational. You are not a
-therapist and do not diagnose.
-"""
+# An interim coach prompt for the demo (HY-351), until HY-215 builds the
+# coach's instructions from program state. Its three skills are demo-only until
+# a clinician reviews them. It names 995 as the one number the coach may give,
+# when a life is in danger; every other helpline comes from the crisis path.
+INSTRUCTIONS: Final = (
+    resources.files(__package__).joinpath("coach_prompt.md").read_text(encoding="utf-8")
+)
 
 
 def build_companion_agent(model: Model | str) -> Agent[CompanionDeps, str]:
