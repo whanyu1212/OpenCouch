@@ -101,6 +101,10 @@ class SessionStore(Protocol):
         """Release a turn claim, but only if `lease_token` still holds it."""
         ...
 
+    async def turn_in_progress(self, thread_id: str) -> bool:
+        """Whether an unexpired turn holds the thread."""
+        ...
+
 
 class InMemorySessionStore:
     """Session store backed by a dict. For tests and local runs only."""
@@ -168,6 +172,11 @@ class InMemorySessionStore:
         """Release a turn claim, but only if `lease_token` still holds it."""
         if self._holds_lease(thread_id, lease_token):
             del self._turn_leases[thread_id]
+
+    async def turn_in_progress(self, thread_id: str) -> bool:
+        """Whether an unexpired turn holds the thread."""
+        current = self._turn_leases.get(thread_id)
+        return current is not None and current[1] > time.monotonic()
 
     def _holds_lease(self, thread_id: str, lease_token: str) -> bool:
         current = self._turn_leases.get(thread_id)

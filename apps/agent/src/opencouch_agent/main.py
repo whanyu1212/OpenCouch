@@ -14,7 +14,11 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from opencouch_agent.agent import CompanionDeps, build_companion_agent
-from opencouch_agent.api.history import ConversationHistory, shown_history
+from opencouch_agent.api.history import (
+    ConversationHistory,
+    shown_history,
+    wait_for_turn,
+)
 from opencouch_agent.config import Settings, get_settings
 from opencouch_agent.safety import JevClient
 from opencouch_agent.safety.crisis import build_crisis_agent
@@ -22,9 +26,13 @@ from opencouch_agent.safety.crisis_resources import CrisisCatalog, load_shipped_
 from opencouch_agent.safety.jev import TypeSafeJevClient, build_jev_client
 from opencouch_agent.sessions import InMemorySessionStore, SessionStore
 from opencouch_agent.sessions.postgres import PostgresSessionStore
-from opencouch_agent.turn import TurnAgents, run_turn
+from opencouch_agent.turn import CANCEL_GRACE_SECONDS, TurnAgents, run_turn
 
 logger = logging.getLogger(__name__)
+
+# Long enough for a disconnected turn to stop and save its cut-off reply, and
+# short enough to fit in the web client's 10-second limit on the history load.
+HISTORY_WAIT = timedelta(seconds=CANCEL_GRACE_SECONDS + 1)
 
 
 def create_app(
@@ -109,6 +117,7 @@ def create_app(
     # the password-protected demo (HY-352).
     @app.get("/api/threads/{thread_id}/messages")
     async def thread_messages(thread_id: str) -> ConversationHistory:
+        await wait_for_turn(session_store, thread_id, HISTORY_WAIT)
         session = await session_store.load(thread_id)
         return shown_history(session.history)
 

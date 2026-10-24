@@ -170,6 +170,19 @@ class PostgresSessionStore:
         async with self._pool.connection() as connection:
             await connection.execute(_RELEASE_TURN, (thread_id, lease_token))
 
+    async def turn_in_progress(self, thread_id: str) -> bool:
+        """Whether an unexpired turn holds the thread."""
+        async with self._pool.connection() as connection:
+            held = await (
+                await connection.execute(
+                    "SELECT 1 FROM conversations WHERE thread_id = %s"
+                    " AND active_turn_token IS NOT NULL"
+                    " AND turn_lease_expires_at > now()",
+                    (thread_id,),
+                )
+            ).fetchone()
+        return held is not None
+
 
 async def _hold_lease(
     connection: AsyncConnection[Any], thread_id: str, lease_token: str

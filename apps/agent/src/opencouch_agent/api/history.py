@@ -4,16 +4,20 @@ Only what was said goes out: the user's messages and the coach's text. Tool
 calls, instructions, shared state and risk stay on the server.
 """
 
+import asyncio
 from collections.abc import Sequence
+from datetime import timedelta
 from typing import Final, Literal
 
 from pydantic import BaseModel
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
 from opencouch_agent.safety import conversation_turns
+from opencouch_agent.sessions import SessionStore
 
 # Where `AGUIAdapter` keeps the id the client gave a user message.
 _UI_METADATA_KEY: Final = "__pydantic_ai__"
+_POLL_SECONDS: Final = 0.1
 
 
 class ShownMessage(BaseModel):
@@ -30,6 +34,22 @@ class ConversationHistory(BaseModel):
     """The messages of one conversation, oldest first."""
 
     messages: list[ShownMessage]
+
+
+async def wait_for_turn(store: SessionStore, thread_id: str, limit: timedelta) -> None:
+    """Wait until no turn holds the thread, or `limit` has passed.
+
+    A reload drops the connection of a reply still streaming, and that turn
+    saves the cut-off reply while it stops, after the client has gone. Loading
+    before then would leave the reply out of the reloaded conversation. The
+    limit stops a reply streaming in another tab from holding the load up.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + limit.total_seconds()
+    # Polled: the claim lives in the store, which another worker may hold, so
+    # there's no in-process event to wait on.
+    while await store.turn_in_progress(thread_id) and loop.time() < deadline:  # noqa: ASYNC110
+        await asyncio.sleep(_POLL_SECONDS)
 
 
 def shown_history(history: Sequence[ModelMessage]) -> ConversationHistory:

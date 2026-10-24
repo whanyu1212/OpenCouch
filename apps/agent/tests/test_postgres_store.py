@@ -194,6 +194,20 @@ async def test_release_frees_the_thread(store: PostgresSessionStore) -> None:
     assert await store.claim_turn(thread_id, "second", timedelta(seconds=60))
 
 
+async def test_a_turn_is_in_progress_only_while_its_lease_holds(
+    store: PostgresSessionStore,
+) -> None:
+    held, expired = _thread_id(), _thread_id()
+    await store.claim_turn(held, "running", timedelta(seconds=60))
+    await store.claim_turn(expired, "crashed", timedelta(seconds=-1))
+
+    assert await store.turn_in_progress(held)
+    assert not await store.turn_in_progress(expired)
+    await store.release_turn(held, "running")
+    assert not await store.turn_in_progress(held)
+    assert not await store.turn_in_progress(_thread_id())
+
+
 async def test_claiming_keeps_existing_history(store: PostgresSessionStore) -> None:
     thread_id = _thread_id()
     await _record(store, thread_id, [ModelRequest(parts=[UserPromptPart("hi")])])

@@ -1,5 +1,9 @@
 """A conversation's saved history can be shown again after a reload (HY-350)."""
 
+import asyncio
+import time
+from datetime import timedelta
+
 from fastapi.testclient import TestClient
 from pydantic_ai.messages import (
     ModelMessage,
@@ -12,7 +16,8 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 
-from opencouch_agent.api.history import shown_history
+from opencouch_agent.api.history import shown_history, wait_for_turn
+from opencouch_agent.safety.risk import RiskState
 from opencouch_agent.sessions import InMemorySessionStore
 from tests.ag_ui_requests import run_input, user_message
 from tests.apps import build_app
@@ -89,3 +94,44 @@ def test_each_prompt_in_one_request_gets_its_own_id() -> None:
     shown = shown_history(history).messages
 
     assert [m.id for m in shown] == ["history-0", "history-0-1"]
+
+
+async def test_loading_waits_for_a_stopping_turn_to_save_its_cut_off_reply() -> None:
+    store = InMemorySessionStore()
+    await store.claim_turn("thread-1", "turn", timedelta(seconds=60))
+    await store.record_user_turn(
+        "thread-1", "turn", [ModelRequest(parts=[UserPromptPart("hi")])], RiskState()
+    )
+
+    async def stop_turn() -> None:
+        await asyncio.sleep(0.05)
+        reply = ModelResponse(parts=[TextPart("Let's")], state="interrupted")
+        await store.save_run("thread-1", "turn", [reply], {})
+        await store.release_turn("thread-1", "turn")
+
+    stopping = asyncio.create_task(stop_turn())
+    await wait_for_turn(store, "thread-1", timedelta(seconds=5))
+    shown = shown_history((await store.load("thread-1")).history).messages
+    await stopping
+
+    assert [(m.content, m.interrupted) for m in shown] == [
+        ("hi", False),
+        ("Let's", True),
+    ]
+
+
+async def test_loading_stops_waiting_for_a_turn_running_elsewhere() -> None:
+    store = InMemorySessionStore()
+    await store.claim_turn("thread-1", "other-tab", timedelta(seconds=60))
+
+    started = time.monotonic()
+    await wait_for_turn(store, "thread-1", timedelta(seconds=0.2))
+
+    assert time.monotonic() - started < 1
+
+
+async def test_a_turn_whose_lease_expired_does_not_hold_up_loading() -> None:
+    store = InMemorySessionStore()
+    await store.claim_turn("thread-1", "crashed", timedelta(seconds=-1))
+
+    assert not await store.turn_in_progress("thread-1")
