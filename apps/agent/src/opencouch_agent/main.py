@@ -14,6 +14,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from opencouch_agent.agent import CompanionDeps, build_companion_agent
+from opencouch_agent.api.history import ConversationHistory, shown_history
 from opencouch_agent.config import Settings, get_settings
 from opencouch_agent.safety import JevClient
 from opencouch_agent.safety.crisis import build_crisis_agent
@@ -102,6 +103,14 @@ def create_app(
     @app.get("/api/crisis-resources")
     async def crisis_resources() -> CrisisCatalog:
         return crisis_catalog
+
+    # Only what was said; tool calls, state and risk stay on the server.
+    # Unauthenticated until HY-221 ties each thread to its owner, so only for
+    # the password-protected demo (HY-352).
+    @app.get("/api/threads/{thread_id}/messages")
+    async def thread_messages(thread_id: str) -> ConversationHistory:
+        session = await session_store.load(thread_id)
+        return shown_history(session.history)
 
     @app.post("/api/agent")
     async def run_agent(request: Request) -> Response:

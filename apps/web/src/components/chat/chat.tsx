@@ -9,7 +9,16 @@ import { Composer } from "./composer";
 import { MessageList } from "./message-list";
 
 export function Chat() {
-  const { messages, running, error, send, dismissError } = useCompanion();
+  const {
+    messages,
+    interrupted,
+    loading,
+    running,
+    error,
+    send,
+    startNewConversation,
+    dismissError,
+  } = useCompanion();
   const [draft, setDraft] = useState("");
   const [composerHeight, setComposerHeight] = useState(0);
 
@@ -36,14 +45,24 @@ export function Chat() {
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="glass-bar sticky top-0 z-10 border-b border-line px-5 pt-[max(1rem,env(safe-area-inset-top))] pb-3">
-        <div className="mx-auto max-w-2xl">
+        <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
           <p className="text-xl font-semibold tracking-tight">opencouch</p>
+          {!empty && (
+            <button
+              type="button"
+              onClick={startNewConversation}
+              disabled={running}
+              className="rounded-full border border-line px-3.5 py-1.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
+            >
+              New conversation
+            </button>
+          )}
         </div>
       </header>
 
       <main className="flex flex-1 flex-col px-5 pt-6 pb-8">
         <div className="mx-auto flex w-full max-w-2xl flex-1 flex-col">
-          {empty ? (
+          {loading ? null : empty ? (
             <div className="mt-24 max-w-lg">
               <h1 className="text-3xl font-semibold tracking-tight text-balance">
                 What&apos;s on your mind?
@@ -56,7 +75,12 @@ export function Chat() {
           ) : (
             <>
               <h1 className="sr-only">Conversation</h1>
-              <MessageList messages={messages} thinking={running} bottomInset={composerHeight} />
+              <MessageList
+                messages={messages}
+                interrupted={interrupted}
+                thinking={running}
+                bottomInset={composerHeight}
+              />
             </>
           )}
 
@@ -78,7 +102,7 @@ export function Chat() {
         onDraftChange={setDraft}
         onSend={sendDraft}
         onHeightChange={setComposerHeight}
-        disabled={running}
+        disabled={running || loading}
       />
     </div>
   );

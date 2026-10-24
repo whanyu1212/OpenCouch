@@ -7,6 +7,8 @@ const EXPLANATIONS: Record<ChatError["kind"], string> = {
   not_sent: "Your message didn't go through. It's back in the box below, ready to send again.",
   unreachable:
     "OpenCouch can't be reached right now. Check your connection, then send your message again.",
+  history_unavailable:
+    "Your earlier messages couldn't be loaded. They're still saved; reload the page to try again.",
   timeout: "The reply took too long and stopped.",
   reply_failed: "The reply stopped partway through.",
 };

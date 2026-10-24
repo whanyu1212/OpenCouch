@@ -28,12 +28,19 @@ const components: Components = {
 };
 
 // Memoised: while a reply streams, only that reply's markdown is re-parsed.
-export const CoachReply = memo(function CoachReply({ text }: { text: string }) {
+export const CoachReply = memo(function CoachReply({
+  text,
+  interrupted,
+}: {
+  text: string;
+  interrupted: boolean;
+}) {
   return (
     <div className="max-w-xl">
       <Markdown allowedElements={ALLOWED} unwrapDisallowed components={components}>
         {text}
       </Markdown>
+      {interrupted && <p className="mt-2 text-sm text-ink-soft">This reply was cut off.</p>}
     </div>
   );
 });
