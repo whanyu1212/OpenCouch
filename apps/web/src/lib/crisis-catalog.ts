@@ -113,7 +113,7 @@ export function useCrisisCatalog(needed: boolean): CrisisCatalog {
   const retry = needed && catalog.status === "unavailable";
 
   // A retry that works loads the catalog once more as `retry` turns back off:
-  // one small request, only after a failure.
+  // one small request, only after a failure, whose own failure is ignored.
   useEffect(() => {
     const controller = new AbortController();
     loadCrisisCatalog(controller.signal)
@@ -121,7 +121,9 @@ export function useCrisisCatalog(needed: boolean): CrisisCatalog {
         if (!controller.signal.aborted) setCatalog({ status: "ready", resources });
       })
       .catch(() => {
-        if (!controller.signal.aborted) setCatalog({ status: "unavailable" });
+        if (controller.signal.aborted) return;
+        // A catalog already loaded is never thrown away by a later failure.
+        setCatalog((current) => (current.status === "ready" ? current : { status: "unavailable" }));
       });
     return () => controller.abort();
   }, [retry]);
