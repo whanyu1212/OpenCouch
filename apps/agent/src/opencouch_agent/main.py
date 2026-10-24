@@ -85,10 +85,14 @@ def create_app(
     turn_timeout = timedelta(seconds=settings.turn_timeout_seconds)
 
     if store is None and settings.database_url:
-        pool = AsyncConnectionPool(settings.database_url, open=False)
+        # No prepared statements: a pooled connection (Neon's, through PgBouncer)
+        # can hand each transaction to a different server session.
+        pool = AsyncConnectionPool(
+            settings.database_url, open=False, kwargs={"prepare_threshold": None}
+        )
         session_store = PostgresSessionStore(pool)
     elif store is None:
-        logger.warning("OPENCOUCH_DATABASE_URL is unset; using in-memory sessions.")
+        logger.warning("No database URL is set; using in-memory sessions.")
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
