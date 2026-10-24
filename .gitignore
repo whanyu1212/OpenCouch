@@ -30,3 +30,6 @@ apps/agent/evals/data/
 # Claude Code: local worktrees and personal settings
 .claude/worktrees/
 .claude/settings.local.json
+
+# Vercel: the local project link
+.vercel

@@ -2,7 +2,7 @@
 
 from functools import lru_cache
 
-from pydantic import Field, SecretStr
+from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,7 +17,11 @@ class Settings(BaseSettings):
 
     model: str = "openai:gpt-6.1-sol"
     # Unset means an in-memory session store: history is lost on restart.
-    database_url: str | None = None
+    # DATABASE_URL is what a Neon database added through Vercel sets.
+    database_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("OPENCOUCH_DATABASE_URL", "DATABASE_URL"),
+    )
     cors_origins: list[str] = ["http://localhost:3000"]
     # Hard limit on the agent's reply, including streaming it. Screening runs
     # first, under its own 3-second deadline.

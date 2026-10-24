@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { AGENT_URL } from "./agent-url";
+import { agentUrl } from "./agent-url";
 
 // Past this, the card falls back to the emergency number alone.
 const CATALOG_TIMEOUT_MS = 10_000;
@@ -84,7 +84,7 @@ function parseResource(value: unknown): CrisisResource | null {
  */
 async function loadCrisisCatalog(signal: AbortSignal): Promise<Map<string, CrisisResource>> {
   // Resolved next to the agent endpoint, like the history request.
-  const url = new URL("crisis-resources", AGENT_URL);
+  const url = new URL("crisis-resources", agentUrl());
   const response = await fetch(url, {
     signal: AbortSignal.any([signal, AbortSignal.timeout(CATALOG_TIMEOUT_MS)]),
   });

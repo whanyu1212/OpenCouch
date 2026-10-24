@@ -41,15 +41,35 @@ keys, run it against Pydantic AI's test model with a fake Jev:
 `OPENCOUCH_MODEL=test OPENCOUCH_FAKE_JEV=true`. The fake reads every message as
 no risk, so it is refused with any other model.
 
-Conversation history is stored in Postgres when `OPENCOUCH_DATABASE_URL` is set,
-and kept in memory (lost on restart) otherwise. To run the Postgres-backed
-tests locally, set `OPENCOUCH_TEST_POSTGRES_URL`.
+Conversation history is stored in Postgres when `OPENCOUCH_DATABASE_URL` (or
+`DATABASE_URL`) is set, and kept in memory (lost on restart) otherwise. To run
+the Postgres-backed tests locally, set `OPENCOUCH_TEST_POSTGRES_URL`.
 
 To run Postgres and the agent in Docker instead:
 
 ```bash
 docker compose up --build
 ```
+
+## The private demo
+
+The demo runs on Vercel as one project with two
+[Services](https://vercel.com/docs/services), configured in `vercel.json`:
+`apps/agent` serves `/api/*` and `apps/web` serves everything else, so the
+browser calls the agent on the same site (`apps/web/.env.production`).
+
+- **Access:** Deployment Protection with Vercel Authentication covers every
+  deployment, the agent's routes included, so there is no public URL. Testers
+  get the project's shareable link (Hobby allows one per account), which can be
+  revoked from the deployment's Share menu. The agent has no sign-in of its own
+  until HY-221, so the protection is what keeps conversations private.
+- **Environment variables:** `OPENAI_API_KEY`, `AI_GATEWAY_API_KEY`, and
+  `DATABASE_URL` from the Neon database added through the Vercel Marketplace.
+  Never `OPENCOUCH_FAKE_JEV`.
+- **Deploying:** `vercel deploy --target preview` for a preview, then
+  `vercel deploy --prod` for production. A smoke test after deploying: send a
+  calm message and a crisis message, and check the crisis one gets the resource
+  card.
 
 ## Checks
 

@@ -3,7 +3,7 @@
 import type { Message } from "@ag-ui/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { AGENT_URL } from "./agent-url";
+import { agentUrl } from "./agent-url";
 import { cardKeysIn } from "./crisis-catalog";
 import { loadHistory } from "./history";
 import { NewestMessageAgent } from "./newest-message-agent";
@@ -47,7 +47,7 @@ export function useCompanion() {
   );
   // One agent per conversation: a new conversation gets a fresh one.
   const agent = useMemo(
-    () => (threadId === null ? null : new NewestMessageAgent({ url: AGENT_URL, threadId })),
+    () => (threadId === null ? null : new NewestMessageAgent({ url: agentUrl(), threadId })),
     [threadId],
   );
   const [messages, setMessages] = useState<Message[]>([]);
@@ -90,7 +90,7 @@ export function useCompanion() {
   useEffect(() => {
     if (!agent) return;
     const controller = new AbortController();
-    loadHistory(AGENT_URL, agent.threadId, controller.signal)
+    loadHistory(agent.url, agent.threadId, controller.signal)
       .then((history) => {
         // A newer conversation started while this one was loading.
         if (controller.signal.aborted) return;

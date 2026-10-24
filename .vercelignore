@@ -1,0 +1,19 @@
+# Kept out of what `vercel deploy` uploads: secrets, local tooling and caches,
+# and data that must never leave the machine (the BHH benchmark is CC-BY-NC).
+**/.env*
+!apps/web/.env.production
+!**/.env.example
+.claude
+.agents
+skills-lock.json
+assets
+apps/agent/evals/data
+apps/agent/evals/results
+**/.venv
+**/node_modules
+**/.next
+**/__pycache__
+**/.mypy_cache
+**/.ruff_cache
+**/.pytest_cache
+**/*.tsbuildinfo
