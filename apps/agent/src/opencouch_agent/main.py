@@ -13,7 +13,7 @@ from pydantic_ai import Agent
 from starlette.requests import Request
 from starlette.responses import Response
 
-from opencouch_agent.agent import CompanionDeps, build_companion_agent
+from opencouch_agent.agent import CompanionDeps, CompanionState, build_companion_agent
 from opencouch_agent.api.history import (
     ConversationHistory,
     shown_history,
@@ -121,7 +121,8 @@ def create_app(
     async def thread_messages(thread_id: str) -> ConversationHistory:
         await wait_for_turn(session_store, thread_id, HISTORY_WAIT)
         session = await session_store.load(thread_id)
-        return shown_history(session.history)
+        state = CompanionState.model_validate(session.state)
+        return shown_history(session.history, crisis_resources=state.crisis_resources)
 
     @app.post("/api/agent")
     async def run_agent(request: Request) -> Response:

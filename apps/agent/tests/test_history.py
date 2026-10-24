@@ -51,10 +51,12 @@ def test_an_unknown_thread_has_no_history(client: TestClient) -> None:
     response = client.get("/api/threads/never-started/messages")
 
     assert response.status_code == 200
-    assert response.json() == {"messages": []}
+    assert response.json() == {"messages": [], "crisis_resources": []}
 
 
 def test_history_never_includes_risk_or_other_server_data() -> None:
+    # The resource card's keys are the one crisis detail sent: the person
+    # was shown that card in their own conversation. The risk never is.
     store = InMemorySessionStore()
     jev = ScriptedJev({CRISIS_MESSAGE: CRISIS_READING})
     client = TestClient(build_app(store, TestModel(), jev=jev))
@@ -62,10 +64,9 @@ def test_history_never_includes_risk_or_other_server_data() -> None:
 
     response = client.get("/api/threads/thread-1/messages")
 
-    assert set(response.json()) == {"messages"}
+    assert set(response.json()) == {"messages", "crisis_resources"}
     for message in response.json()["messages"]:
         assert set(message) == {"id", "role", "content", "interrupted"}
-    assert "crisis" not in response.text.lower()
 
 
 def test_tool_calls_are_left_out_and_cut_off_replies_are_marked() -> None:

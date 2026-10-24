@@ -2,16 +2,19 @@
 
 import { useState } from "react";
 
+import { useCrisisCatalog } from "@/lib/crisis-catalog";
 import { useCompanion } from "@/lib/use-companion";
 
 import { ChatErrorNotice } from "./chat-error";
 import { Composer } from "./composer";
+import { CrisisCard } from "./crisis-card";
 import { MessageList } from "./message-list";
 
 export function Chat() {
   const {
     messages,
     interrupted,
+    crisisResources,
     loading,
     running,
     error,
@@ -19,6 +22,7 @@ export function Chat() {
     startNewConversation,
     dismissError,
   } = useCompanion();
+  const catalog = useCrisisCatalog(crisisResources.length > 0);
   const [draft, setDraft] = useState("");
   const [composerHeight, setComposerHeight] = useState(0);
 
@@ -80,6 +84,11 @@ export function Chat() {
                 interrupted={interrupted}
                 thinking={running}
                 bottomInset={composerHeight}
+                footer={
+                  crisisResources.length > 0 ? (
+                    <CrisisCard keys={crisisResources} catalog={catalog} />
+                  ) : null
+                }
               />
             </>
           )}

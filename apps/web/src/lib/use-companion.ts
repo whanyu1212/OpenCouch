@@ -4,11 +4,10 @@ import { HttpAgent } from "@ag-ui/client";
 import type { Message } from "@ag-ui/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { AGENT_URL } from "./agent-url";
+import { cardKeysIn } from "./crisis-catalog";
 import { loadHistory } from "./history";
 import { savedThreadId, startThread } from "./thread-id";
-
-const AGENT_URL =
-  process.env.NEXT_PUBLIC_AGENT_URL ?? "http://localhost:8080/api/agent";
 
 /**
  * Why something failed.
@@ -59,6 +58,8 @@ export function useCompanion() {
   const [error, setError] = useState<ChatError | null>(null);
   // Replies cut off by an error, a timeout or a disconnect.
   const [interrupted, setInterrupted] = useState<ReadonlySet<string>>(new Set());
+  // Catalog keys for the crisis resource card. Only the server sets them.
+  const [crisisResources, setCrisisResources] = useState<string[]>([]);
   // Set by the stream as it arrives, read after `runAgent` settles.
   const runStarted = useRef(false);
   const runError = useRef<"timeout" | "reply_failed" | null>(null);
@@ -69,7 +70,10 @@ export function useCompanion() {
       onMessagesChanged: ({ messages }) => setMessages([...messages]),
       onRunStartedEvent: () => {
         runStarted.current = true;
+        // The card belongs to crisis turns, which send it straight after this.
+        setCrisisResources([]);
       },
+      onStateSnapshotEvent: ({ event }) => setCrisisResources(cardKeysIn(event.snapshot)),
       // A failure mid-reply arrives as an event; `runAgent` still resolves.
       // Its message is server text, so only its code is used.
       onRunErrorEvent: ({ event }) => {
@@ -92,6 +96,7 @@ export function useCompanion() {
         if (controller.signal.aborted) return;
         agent.setMessages(history.messages);
         setInterrupted(history.interrupted);
+        setCrisisResources(history.crisisResources);
       })
       .catch(() => {
         if (!controller.signal.aborted) setError({ kind: "history_unavailable" });
@@ -151,6 +156,7 @@ export function useCompanion() {
   const startNewConversation = useCallback(() => {
     setMessages([]);
     setInterrupted(new Set());
+    setCrisisResources([]);
     setError(null);
     setLoading(true);
     setThreadId(startThread());
@@ -161,6 +167,7 @@ export function useCompanion() {
   return {
     messages,
     interrupted,
+    crisisResources,
     loading,
     running,
     error,

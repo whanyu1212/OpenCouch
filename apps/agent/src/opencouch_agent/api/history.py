@@ -31,9 +31,11 @@ class ShownMessage(BaseModel):
 
 
 class ConversationHistory(BaseModel):
-    """The messages of one conversation, oldest first."""
+    """The messages of one conversation, oldest first, and its resource card."""
 
     messages: list[ShownMessage]
+    crisis_resources: list[str]
+    """Catalog keys for the crisis resource card shown after the latest reply."""
 
 
 async def wait_for_turn(store: SessionStore, thread_id: str, limit: timedelta) -> None:
@@ -52,7 +54,9 @@ async def wait_for_turn(store: SessionStore, thread_id: str, limit: timedelta) -
         await asyncio.sleep(_POLL_SECONDS)
 
 
-def shown_history(history: Sequence[ModelMessage]) -> ConversationHistory:
+def shown_history(
+    history: Sequence[ModelMessage], *, crisis_resources: Sequence[str] = ()
+) -> ConversationHistory:
     """The user and coach messages in a stored history, oldest first."""
     shown: list[ShownMessage] = []
     for index, message in enumerate(history):
@@ -72,7 +76,7 @@ def shown_history(history: Sequence[ModelMessage]) -> ConversationHistory:
                     interrupted=interrupted,
                 )
             )
-    return ConversationHistory(messages=shown)
+    return ConversationHistory(messages=shown, crisis_resources=list(crisis_resources))
 
 
 def _message_id(message: ModelMessage, index: int) -> str:
