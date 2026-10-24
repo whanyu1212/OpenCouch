@@ -9,7 +9,7 @@ back once shown. Anything that goes wrong sends a fixed, reviewed fallback.
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncGenerator, Awaitable, Callable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from importlib import resources
@@ -19,6 +19,7 @@ from ag_ui.core import (
     BaseEvent,
     RunFinishedEvent,
     RunStartedEvent,
+    StateSnapshotEvent,
     TextMessageContentEvent,
     TextMessageEndEvent,
     TextMessageStartEvent,
@@ -105,9 +106,17 @@ def build_crisis_agent(model: Model | str) -> Agent[CompanionDeps, str]:
     )
 
 
+def crisis_services(
+    responder: CrisisResponder, *, imminent: bool
+) -> list[CrisisResource]:
+    """The vetted services for this crisis turn, in the order to show them."""
+    return select_resources(responder.catalog, _REGION, None, imminent=imminent)
+
+
 async def crisis_reply(
     responder: CrisisResponder,
     history: Sequence[ModelMessage],
+    services: Sequence[CrisisResource],
     *,
     deps: CompanionDeps,
     imminent: bool,
@@ -118,6 +127,7 @@ async def crisis_reply(
     Args:
         responder: The crisis agent and catalog.
         history: The conversation, ending with the user's new message.
+        services: The services the reply may point to; see `crisis_services`.
         deps: The run's dependencies.
         imminent: Whether the danger may be immediate.
         cancellation: Stops the model call when the turn ends early.
@@ -129,7 +139,6 @@ async def crisis_reply(
         RunCancelled: If the turn was cancelled; nothing was shown, so
             nothing is sent.
     """
-    services = select_resources(responder.catalog, _REGION, None, imminent=imminent)
     try:
         async with asyncio.timeout(REPLY_TIMEOUT.total_seconds()):
             result = await responder.agent.run(
@@ -176,6 +185,7 @@ async def crisis_events(
     *,
     thread_id: str,
     run_id: str,
+    state: Mapping[str, object],
     save_reply: Callable[[str], Awaitable[None]],
 ) -> AsyncGenerator[BaseEvent]:
     """The AG-UI events of a crisis turn, with its reply sent in one piece.
@@ -184,9 +194,12 @@ async def crisis_events(
         write_reply: Writes the checked reply; see `crisis_reply`.
         thread_id: The turn's thread.
         run_id: The turn's run.
+        state: The shared state, sent before the reply so the resource card
+            shows while the reply is being written.
         save_reply: Saves the reply exactly as it was sent.
     """
     yield RunStartedEvent(thread_id=thread_id, run_id=run_id)
+    yield StateSnapshotEvent(snapshot=dict(state))
     try:
         text = await write_reply()
     except RunCancelled:

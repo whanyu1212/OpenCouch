@@ -1,5 +1,5 @@
 import type { Message } from "@ag-ui/core";
-import { useEffect, useRef } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 
 import { CoachReply } from "./coach-reply";
 
@@ -18,6 +18,7 @@ export function MessageList({
   interrupted,
   thinking,
   bottomInset,
+  footer,
 }: {
   messages: Message[];
   /** Ids of replies that were cut off. */
@@ -25,18 +26,33 @@ export function MessageList({
   thinking: boolean;
   /** Height of whatever floats over the bottom of the page (the composer). */
   bottomInset: number;
+  /** Shown after the latest message, such as the crisis resource card. */
+  footer: ReactNode;
 }) {
   const end = useRef<HTMLDivElement>(null);
+  const lastReply = useRef<HTMLLIElement>(null);
+  // The reply last shown from its start above the crisis card, so that's done
+  // once per reply and later scrolling isn't taken over.
+  const startShown = useRef<string | null>(null);
   // A reloaded conversation opens at its latest message, however long it is.
   const shownLatest = useRef(false);
   const visible = messages.filter(
     (message) => (message.role === "user" || message.role === "assistant") && textOf(message),
   );
   const last = visible.at(-1);
+  const hasFooter = footer !== null;
 
   useEffect(() => {
     const element = end.current;
     if (!element) return;
+    // With the crisis card below it, the reply is shown from its start:
+    // scrolling to the end would leave a short phone showing only the card.
+    if (hasFooter && last?.role === "assistant" && startShown.current !== last.id) {
+      startShown.current = last.id;
+      shownLatest.current = true;
+      lastReply.current?.scrollIntoView({ block: "start" });
+      return;
+    }
     if (!shownLatest.current) {
       shownLatest.current = true;
       element.scrollIntoView({ block: "end" });
@@ -52,7 +68,7 @@ export function MessageList({
     if (last?.role === "user" || nearBottom) {
       element.scrollIntoView({ block: "end" });
     }
-  }, [last?.id, last?.content, last?.role, thinking, bottomInset]);
+  }, [last?.id, last?.content, last?.role, thinking, bottomInset, hasFooter]);
 
   return (
     <>
@@ -67,7 +83,11 @@ export function MessageList({
               {textOf(message)}
             </li>
           ) : (
-            <li key={message.id}>
+            <li
+              key={message.id}
+              ref={message.id === last?.id ? lastReply : undefined}
+              className="scroll-mt-20"
+            >
               <CoachReply text={textOf(message)} interrupted={interrupted.has(message.id)} />
             </li>
           ),
@@ -82,6 +102,7 @@ export function MessageList({
           Thinking about your message…
         </p>
       )}
+      {footer}
       {/* Stops above the floating composer, not behind it. */}
       <div ref={end} style={{ scrollMarginBottom: bottomInset + CLEARANCE_PX }} />
     </>

@@ -15,8 +15,10 @@ from opencouch_agent.safety.crisis import CRISIS_FALLBACK, IMMINENT_INSTRUCTIONS
 from opencouch_agent.sessions import InMemorySessionStore
 from tests.ag_ui_requests import (
     assistant_message,
+    event_types,
     reply_text,
     run_input,
+    state_snapshots,
     user_message,
 )
 from tests.apps import CRISIS_REPLY, build_app
@@ -159,6 +161,55 @@ async def test_an_imminent_reading_tells_the_crisis_responder_to_lead_with_995()
     _reply(client, IMMINENT_MESSAGE)
 
     assert IMMINENT_INSTRUCTIONS.strip() in (seen[0] or "")
+
+
+async def test_a_crisis_turn_shows_the_resource_card_before_its_reply() -> None:
+    store = InMemorySessionStore()
+    client = _client(store, ScriptedJev({CRISIS_MESSAGE: CRISIS_READING}))
+
+    response = client.post("/api/agent", json=run_input(user_message(CRISIS_MESSAGE)))
+
+    types = event_types(response.text)
+    assert types.index("STATE_SNAPSHOT") < types.index("TEXT_MESSAGE_START")
+    card = state_snapshots(response.text)[0]["crisis_resources"]
+    assert card == ["sg-sos", "sg-emergency"]
+    history = client.get("/api/threads/thread-1/messages").json()
+    assert history["crisis_resources"] == card
+
+
+async def test_an_imminent_crisis_puts_emergency_services_first_on_the_card() -> None:
+    store = InMemorySessionStore()
+    reading = {"imminent": 0.9, "ideation": 0.8, "latest_adds_risk": 0.9}
+    client = _client(store, ScriptedJev({IMMINENT_MESSAGE: reading}))
+
+    response = client.post("/api/agent", json=run_input(user_message(IMMINENT_MESSAGE)))
+
+    card = state_snapshots(response.text)[0]["crisis_resources"]
+    assert card == ["sg-emergency", "sg-sos"]
+
+
+async def test_the_card_is_cleared_once_the_companion_replies_again() -> None:
+    store = InMemorySessionStore()
+    # A failed check takes the crisis path without raising the level, so the
+    # next calm message goes back to the companion.
+    client = _client(store, ScriptedJev(failing=frozenset({"hello"})))
+    _reply(client, "hello", "m1")
+
+    _reply(client, "just checking in", "m2")
+
+    history = client.get("/api/threads/thread-1/messages").json()
+    assert history["crisis_resources"] == []
+
+
+async def test_client_sent_state_cannot_show_a_resource_card() -> None:
+    store = InMemorySessionStore()
+    client = _client(store, ScriptedJev())
+    state = {"crisis_resources": ["sg-made-up"]}
+
+    client.post("/api/agent", json=run_input(user_message("hi"), state=state))
+
+    history = client.get("/api/threads/thread-1/messages").json()
+    assert history["crisis_resources"] == []
 
 
 async def test_client_sent_state_and_history_cannot_lower_the_level() -> None:

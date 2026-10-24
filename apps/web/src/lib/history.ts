@@ -1,12 +1,15 @@
 import type { Message } from "@ag-ui/core";
 
+import { cardKeysIn } from "./crisis-catalog";
+
 // Past this, the chat gives up waiting and lets the user carry on.
 const HISTORY_TIMEOUT_MS = 10_000;
 
-/** A conversation's saved messages, and which replies were cut off. */
+/** A conversation's saved messages, which replies were cut off, and its resource card. */
 export type LoadedHistory = {
   messages: Message[];
   interrupted: Set<string>;
+  crisisResources: string[];
 };
 
 type ShownMessage = {
@@ -58,5 +61,6 @@ export async function loadHistory(
   return {
     messages: raw.map(({ id, role, content }) => ({ id, role, content })),
     interrupted: new Set(raw.filter((message) => message.interrupted).map(({ id }) => id)),
+    crisisResources: cardKeysIn(body),
   };
 }

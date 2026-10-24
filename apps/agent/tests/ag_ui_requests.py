@@ -42,6 +42,11 @@ def event_types(body: str) -> list[str]:
     return [event["type"] for event in _events(body)]
 
 
+def state_snapshots(body: str) -> list[dict[str, Any]]:
+    """The state in each snapshot event of a streamed AG-UI response, in order."""
+    return [e["snapshot"] for e in _events(body) if e["type"] == "STATE_SNAPSHOT"]
+
+
 def _events(body: str) -> list[dict[str, Any]]:
     return [
         json.loads(line.removeprefix("data: "))

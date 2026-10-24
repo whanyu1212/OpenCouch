@@ -27,11 +27,13 @@ from opencouch_agent.safety.crisis import (
     build_crisis_agent,
     crisis_events,
     crisis_reply,
+    crisis_services,
 )
 from opencouch_agent.safety.crisis_reply_check import allowed_numbers, reply_problem
 from opencouch_agent.safety.crisis_resources import load_shipped_catalog
 
 CATALOG = load_shipped_catalog()
+STATE = {"crisis_resources": ["sg-sos", "sg-emergency"]}
 HISTORY: list[ModelMessage] = [
     ModelRequest(parts=[UserPromptPart("i'm going to take all my pills tonight")])
 ]
@@ -51,9 +53,11 @@ def _replying(text: str, seen: list[AgentInfo] | None = None) -> FunctionModel:
 
 
 async def _reply(model: FunctionModel, *, imminent: bool = False) -> str:
+    responder = _responder(model)
     return await crisis_reply(
-        _responder(model),
+        responder,
         HISTORY,
+        crisis_services(responder, imminent=imminent),
         deps=CompanionDeps(),
         imminent=imminent,
         cancellation=CancellationToken(),
@@ -119,9 +123,11 @@ async def test_a_cancelled_turn_sends_nothing() -> None:
     cancellation.cancel()
 
     with pytest.raises(RunCancelled):
+        responder = _responder(_replying("Are you safe right now?"))
         await crisis_reply(
-            _responder(_replying("Are you safe right now?")),
+            responder,
             HISTORY,
+            crisis_services(responder, imminent=False),
             deps=CompanionDeps(),
             imminent=False,
             cancellation=cancellation,
@@ -164,12 +170,13 @@ async def test_the_reply_is_sent_whole_and_saved_before_the_run_finishes() -> No
         order.append(f"saved: {text}")
 
     async for event in crisis_events(
-        write, thread_id="thread-1", run_id="run-1", save_reply=save
+        write, thread_id="thread-1", run_id="run-1", state=STATE, save_reply=save
     ):
         order.append(event.type)
 
     assert order == [
         "RUN_STARTED",
+        "STATE_SNAPSHOT",
         "TEXT_MESSAGE_START",
         "TEXT_MESSAGE_CONTENT",
         "TEXT_MESSAGE_END",
@@ -189,7 +196,11 @@ async def test_nothing_is_saved_if_the_turn_ends_before_the_reply_is_written() -
         saved.append(text)
 
     events: AsyncGenerator[BaseEvent] = crisis_events(
-        never_finishes, thread_id="thread-1", run_id="run-1", save_reply=save
+        never_finishes,
+        thread_id="thread-1",
+        run_id="run-1",
+        state=STATE,
+        save_reply=save,
     )
     first = await anext(events)
     await events.aclose()
@@ -210,9 +221,13 @@ async def test_a_turn_cancelled_while_writing_ends_quietly_with_nothing_saved() 
     events = [
         event.type
         async for event in crisis_events(
-            cancelled, thread_id="thread-1", run_id="run-1", save_reply=save
+            cancelled,
+            thread_id="thread-1",
+            run_id="run-1",
+            state=STATE,
+            save_reply=save,
         )
     ]
 
-    assert events == ["RUN_STARTED"]
+    assert events == ["RUN_STARTED", "STATE_SNAPSHOT"]
     assert saved == []
