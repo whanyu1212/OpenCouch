@@ -21,6 +21,8 @@ ALLOWED = allowed_numbers(load_shipped_catalog())
         "If it's not safe to call, text 70999.",
         "Call SOS on 1767 24 hours a day.",
         "Call 995 or 999 now.",
+        "Call 995 999 now.",
+        "Call +65 1767.",
     ],
 )
 def test_catalog_numbers_and_plain_text_may_be_sent(text: str) -> None:
@@ -37,6 +39,8 @@ def test_catalog_numbers_and_plain_text_may_be_sent(text: str) -> None:
         "This has been going on since 2026.",
         "Call 6 1 2 3 4.",
         "Call 98 8.",
+        "Call +44 9151 1767 now.",
+        "Call 1767-12.",
     ],
 )
 def test_any_other_number_fails_the_reply(text: str) -> None:

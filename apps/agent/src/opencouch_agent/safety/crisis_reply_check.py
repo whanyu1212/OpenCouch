@@ -44,18 +44,15 @@ def reply_problem(text: str, allowed: frozenset[str]) -> ReplyProblem | None:
 
 
 def _is_allowed(number: str, allowed: frozenset[str]) -> bool:
+    # A short figure after a space isn't part of the number ("1767 24 hours").
+    # Nothing else is dropped: a wrong country code or an extension must fail.
+    head, _, tail = number.rpartition(" ")
+    if head and len(_digits(tail)) < 3:
+        number = head
     if _digits(number) in allowed:
         return True
-    groups = [_digits(group) for group in _SEPARATOR.split(number)]
-    # A short group at either end is a country code or a figure next to the
-    # number ("1767 24 hours"), not part of it.
-    if groups and len(groups[0]) < 3:
-        groups = groups[1:]
-    if groups and len(groups[-1]) < 3:
-        groups = groups[:-1]
-    return bool(groups) and (
-        "".join(groups) in allowed or all(group in allowed for group in groups)
-    )
+    # Two numbers written side by side ("995 999").
+    return all(_digits(group) in allowed for group in _SEPARATOR.split(number))
 
 
 def _number_forms(catalog: CrisisCatalog) -> Iterator[str]:
