@@ -15,15 +15,20 @@ function textOf(message: Message): string {
 
 export function MessageList({
   messages,
+  interrupted,
   thinking,
   bottomInset,
 }: {
   messages: Message[];
+  /** Ids of replies that were cut off. */
+  interrupted: ReadonlySet<string>;
   thinking: boolean;
   /** Height of whatever floats over the bottom of the page (the composer). */
   bottomInset: number;
 }) {
   const end = useRef<HTMLDivElement>(null);
+  // A reloaded conversation opens at its latest message, however long it is.
+  const shownLatest = useRef(false);
   const visible = messages.filter(
     (message) => (message.role === "user" || message.role === "assistant") && textOf(message),
   );
@@ -32,6 +37,11 @@ export function MessageList({
   useEffect(() => {
     const element = end.current;
     if (!element) return;
+    if (!shownLatest.current) {
+      shownLatest.current = true;
+      element.scrollIntoView({ block: "end" });
+      return;
+    }
     // Measured against the composer's top, not the window's bottom, so a
     // composer that grows with a long draft doesn't stop the following.
     const visibleBottom = window.innerHeight - bottomInset;
@@ -58,7 +68,7 @@ export function MessageList({
             </li>
           ) : (
             <li key={message.id}>
-              <CoachReply text={textOf(message)} />
+              <CoachReply text={textOf(message)} interrupted={interrupted.has(message.id)} />
             </li>
           ),
         )}
