@@ -7,3 +7,14 @@ This version has breaking changes — APIs, conventions, and file structure may 
 This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
 <!-- END:nextjs-agent-rules -->
+
+# Web app
+
+The root `AGENTS.md` covers the layout, commands and architecture rules. These
+are the standards for the TypeScript code here.
+
+## TypeScript standards
+
+- TypeScript strict; no `any`. ESLint must pass.
+- Components render from typed AG-UI messages and state; keep protocol handling
+  in `src/lib/`, not in components.
