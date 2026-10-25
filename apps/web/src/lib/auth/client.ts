@@ -1,5 +1,9 @@
 import { createAuthClient } from "@neondatabase/auth/next";
 
+// Past this, a token request counts as failed, so a stalled auth service
+// shows an error instead of leaving the chat waiting.
+const TOKEN_TIMEOUT_MS = 10_000;
+
 /** Neon Auth in the browser, through our own `/api/auth` routes. */
 export const authClient = createAuthClient();
 
@@ -40,14 +44,19 @@ export async function callNeonAuth<T>(
  * Headers proving who is sending a request to the agent: a Neon Auth JWT,
  * which lasts 15 minutes, so a fresh one is fetched for every request.
  *
+ * @param signal Cancels the request, alongside its own time limit.
  * @throws {SignedOutError} If there's no session.
- * @throws If the session can't be checked right now.
+ * @throws If the session can't be checked right now, in time.
  */
-export async function agentAuthHeaders(): Promise<Record<string, string>> {
+export async function agentAuthHeaders(signal?: AbortSignal): Promise<Record<string, string>> {
   // Straight from our token route: Neon's client can answer `token()` from
   // its session cache, and that session holds Better Auth's opaque session
   // token, not the JWT the agent checks.
-  const response = await fetch("/api/auth/token", { cache: "no-store" });
+  const timeout = AbortSignal.timeout(TOKEN_TIMEOUT_MS);
+  const response = await fetch("/api/auth/token", {
+    cache: "no-store",
+    signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+  });
   if (response.status === 401) throw new SignedOutError();
   if (!response.ok) throw new Error(`Sign-in couldn't be checked (${response.status})`);
   const body: unknown = await response.json();

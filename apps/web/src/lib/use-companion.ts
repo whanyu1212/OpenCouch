@@ -8,7 +8,7 @@ import { agentAuthHeaders, SignedOutError } from "./auth/client";
 import { cardKeysIn } from "./crisis-catalog";
 import { loadHistory } from "./history";
 import { NewestMessageAgent } from "./newest-message-agent";
-import { savedThreadId, startThread } from "./thread-id";
+import { onThreadChangedElsewhere, savedThreadId, startThread } from "./thread-id";
 
 /**
  * Why something failed.
@@ -97,11 +97,16 @@ export function useCompanion() {
     };
   }, [agent]);
 
+  // Someone signed out, or in as someone else, in another tab. Reloading
+  // checks the session again, so this tab never sends one person's messages
+  // into another's conversation.
+  useEffect(() => onThreadChangedElsewhere(() => window.location.reload()), []);
+
   // Load what was already said in this conversation; a new one has nothing.
   useEffect(() => {
     if (!agent) return;
     const controller = new AbortController();
-    agentAuthHeaders()
+    agentAuthHeaders(controller.signal)
       .then((headers) => loadHistory(agent.url, agent.threadId, headers, controller.signal))
       .then((history) => {
         // A newer conversation started while this one was loading.

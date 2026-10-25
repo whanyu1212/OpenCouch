@@ -37,6 +37,20 @@ export function forgetThread(): void {
   }
 }
 
+/**
+ * Call `onChange` when another tab changes the saved conversation or who is
+ * signed in, as signing out or in does.
+ *
+ * @returns A function that stops listening.
+ */
+export function onThreadChangedElsewhere(onChange: () => void): () => void {
+  const listener = (event: StorageEvent) => {
+    if (event.key === STORAGE_KEY || event.key === USER_KEY) onChange();
+  };
+  window.addEventListener("storage", listener);
+  return () => window.removeEventListener("storage", listener);
+}
+
 /** Start a new conversation, remembered from now on. */
 export function startThread(): string {
   const id = crypto.randomUUID();
