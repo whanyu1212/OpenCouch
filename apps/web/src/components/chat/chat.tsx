@@ -10,6 +10,7 @@ import { Composer } from "./composer";
 import { CrisisCard } from "./crisis-card";
 import { MessageList } from "./message-list";
 import { SignOutButton } from "./sign-out-button";
+import { Waitlist } from "./waitlist";
 
 export function Chat() {
   const {
@@ -19,6 +20,7 @@ export function Chat() {
     loading,
     running,
     error,
+    notInvited,
     send,
     startNewConversation,
     dismissError,
@@ -46,6 +48,8 @@ export function Chat() {
   }
 
   const empty = messages.length === 0;
+
+  if (notInvited) return <Waitlist />;
 
   return (
     <div className="flex min-h-dvh flex-col">

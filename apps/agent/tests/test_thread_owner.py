@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic_ai.models.test import TestModel
 
+from opencouch_agent.api.identity import SignedInUser
 from opencouch_agent.sessions import InMemorySessionStore
 from tests.ag_ui_requests import reply_text, run_input, user_message
 from tests.apps import build_app
@@ -13,8 +14,8 @@ from tests.fake_jev import ScriptedJev
 class _NamedUser:
     """Signs in whoever the bearer token names: `Bearer alice` is alice."""
 
-    async def user_id(self, authorization: str | None) -> str:
-        return (authorization or "").removeprefix("Bearer ")
+    async def identify(self, authorization: str | None) -> SignedInUser:
+        return SignedInUser((authorization or "").removeprefix("Bearer "))
 
 
 def _as(user: str) -> dict[str, str]:

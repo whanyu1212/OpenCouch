@@ -6,7 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentUrl } from "./agent-url";
 import { agentAuthHeaders, SignedOutError } from "./auth/client";
 import { cardKeysIn } from "./crisis-catalog";
-import { ConversationNotFoundError, loadHistory } from "./history";
+import { ConversationNotFoundError, loadHistory, NotInvitedError } from "./history";
+import { isNotInvited } from "./not-invited";
 import { NewestMessageAgent } from "./newest-message-agent";
 import { onThreadChangedElsewhere, savedThreadId, startThread } from "./thread-id";
 
@@ -32,12 +33,27 @@ export type ChatError =
 /** Whether the message stayed in the conversation or was taken back out. */
 export type SendResult = "kept" | "removed";
 
+/** Whether `@ag-ui/client` refused a send because the agent says they aren't invited. */
+function refusedAsNotInvited(error: unknown): boolean {
+  return (
+    httpStatus(error) === 403 &&
+    error instanceof Error &&
+    "payload" in error &&
+    isNotInvited(error.payload)
+  );
+}
+
 /** The HTTP status `@ag-ui/client` attaches to errors from non-2xx responses. */
 function httpStatus(error: unknown): number | undefined {
   if (error instanceof Error && "status" in error && typeof error.status === "number") {
     return error.status;
   }
   return undefined;
+}
+
+// Why the saved conversation couldn't be shown.
+function historyError(error: unknown): ChatError {
+  return { kind: error instanceof SignedOutError ? "signed_out" : "history_unavailable" };
 }
 
 // Why a message the server never took wasn't sent.
@@ -67,6 +83,8 @@ export function useCompanion() {
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<ChatError | null>(null);
+  // Signed in but not invited to the private beta: the chat gives way to the waitlist.
+  const [notInvited, setNotInvited] = useState(false);
   // Replies cut off by an error, a timeout or a disconnect.
   const [interrupted, setInterrupted] = useState<ReadonlySet<string>>(new Set());
   // Catalog keys for the crisis resource card. Only the server sets them.
@@ -134,7 +152,11 @@ export function useCompanion() {
           openNewThread();
           return;
         }
-        setError({ kind: err instanceof SignedOutError ? "signed_out" : "history_unavailable" });
+        if (err instanceof NotInvitedError) {
+          setNotInvited(true);
+        } else {
+          setError(historyError(err));
+        }
         setLoading(false);
       });
     return () => controller.abort();
@@ -173,7 +195,11 @@ export function useCompanion() {
           // Nothing reached the server, or it refused the turn before
           // streaming; it stores the message only once a turn starts.
           agent.setMessages(agent.messages.filter((message) => message.id !== id));
-          setError(sendError(err));
+          if (refusedAsNotInvited(err)) {
+            setNotInvited(true);
+          } else {
+            setError(sendError(err));
+          }
           // The conversation isn't theirs (say, saved before threads had
           // owners), so they go on in a new one; the message is handed back.
           if (httpStatus(err) === 404) openNewThread();
@@ -200,6 +226,7 @@ export function useCompanion() {
     loading,
     running,
     error,
+    notInvited,
     send,
     startNewConversation,
     dismissError,

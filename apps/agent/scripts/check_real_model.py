@@ -41,6 +41,7 @@ from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 from opencouch_agent.agent import CompanionDeps
 from opencouch_agent.agent.companion import INSTRUCTIONS
 from opencouch_agent.api.identity import FakeUserVerifier
+from opencouch_agent.beta.invites import BetaInvites
 from opencouch_agent.config import Settings
 from opencouch_agent.main import create_app
 from opencouch_agent.sessions import InMemorySessionStore
@@ -143,6 +144,7 @@ async def run_conversation(store: InMemorySessionStore) -> list[TurnResult]:
         agent=build_check_agent(),
         store=store,
         verifier=FakeUserVerifier(),
+        invites=BetaInvites(everyone=True),
     )
     server = uvicorn.Server(uvicorn.Config(app, port=PORT, log_level="warning"))
     serving = asyncio.create_task(server.serve())

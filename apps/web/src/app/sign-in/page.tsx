@@ -1,11 +1,15 @@
 import type { Metadata } from "next";
 
 import { CrisisServices } from "@/components/sign-in/crisis-services";
-import { SignInForm } from "@/components/sign-in/sign-in-form";
+import { Entry, type EntryPath } from "@/components/sign-in/entry";
 
 export const metadata: Metadata = { title: "Sign in · OpenCouch" };
 
-export default function SignIn() {
+export default async function SignIn({ searchParams }: PageProps<"/sign-in">) {
+  // The waitlist links here with `?path=request` to open the request form.
+  const { path } = await searchParams;
+  const initialPath: EntryPath = path === "request" ? "request" : "choose";
+
   return (
     <div className="flex min-h-dvh flex-col">
       <header className="border-b border-line px-5 pt-[max(1rem,env(safe-area-inset-top))] pb-3">
@@ -13,11 +17,14 @@ export default function SignIn() {
       </header>
       <main className="px-5 pt-16 pb-[max(2rem,env(safe-area-inset-bottom))]">
         <div className="mx-auto max-w-md">
-          <h1 className="text-3xl font-semibold tracking-tight text-balance">Sign in</h1>
+          <h1 className="text-3xl font-semibold tracking-tight text-balance">
+            A coach for when worry takes over
+          </h1>
           <p className="mt-3 text-ink-soft">
-            We&apos;ll email you a code. No password, and no name needed.
+            A guided self-help program for anxiety, with a coach that helps you practise a few
+            simple skills. We&apos;re in a small private beta for now.
           </p>
-          <SignInForm />
+          <Entry initialPath={initialPath} />
           <CrisisServices />
         </div>
       </main>
