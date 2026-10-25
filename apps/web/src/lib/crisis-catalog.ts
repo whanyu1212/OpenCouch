@@ -78,6 +78,23 @@ function parseResource(value: unknown): CrisisResource | null {
 }
 
 /**
+ * Check the agent's catalog response and key its resources by catalog key.
+ *
+ * @throws If the response, or any entry in it, isn't in the expected shape.
+ */
+export function parseCrisisCatalog(body: unknown): Map<string, CrisisResource> {
+  const raw = typeof body === "object" && body !== null && "resources" in body ? body.resources : null;
+  if (!Array.isArray(raw)) throw new Error("Catalog response was not in the expected shape");
+  const resources = raw.map(parseResource);
+  if (resources.some((resource) => resource === null)) {
+    throw new Error("Catalog response had an entry not in the expected shape");
+  }
+  return new Map(
+    resources.filter((resource) => resource !== null).map((resource) => [resource.key, resource]),
+  );
+}
+
+/**
  * Load the vetted crisis resources from the agent.
  *
  * @throws If the agent can't be reached in time, or answers with something unexpected.
@@ -89,16 +106,7 @@ async function loadCrisisCatalog(signal: AbortSignal): Promise<Map<string, Crisi
     signal: AbortSignal.any([signal, AbortSignal.timeout(CATALOG_TIMEOUT_MS)]),
   });
   if (!response.ok) throw new Error(`Catalog request failed with ${response.status}`);
-  const body: unknown = await response.json();
-  const raw = typeof body === "object" && body !== null && "resources" in body ? body.resources : null;
-  if (!Array.isArray(raw)) throw new Error("Catalog response was not in the expected shape");
-  const resources = raw.map(parseResource);
-  if (resources.some((resource) => resource === null)) {
-    throw new Error("Catalog response had an entry not in the expected shape");
-  }
-  return new Map(
-    resources.filter((resource) => resource !== null).map((resource) => [resource.key, resource]),
-  );
+  return parseCrisisCatalog(await response.json());
 }
 
 /**
