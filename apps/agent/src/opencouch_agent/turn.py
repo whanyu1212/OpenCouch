@@ -21,6 +21,7 @@ from starlette.responses import Response
 from opencouch_agent.agent import CompanionDeps, CompanionState
 from opencouch_agent.agent.companion import UNSCREENED_INSTRUCTIONS
 from opencouch_agent.api.adapter import ServerOwnedAGUIAdapter, UnsupportedRequestError
+from opencouch_agent.api.history import THREAD_NOT_FOUND_MESSAGE
 from opencouch_agent.run_recorder import RunRecorder
 from opencouch_agent.safety import JevClient, run_gate
 from opencouch_agent.safety.audit import AuditEntry, CrisisAuditLog, audit_entries
@@ -85,6 +86,7 @@ class _ActiveRun:
 async def run_turn(
     request: Request,
     *,
+    user_id: str,
     agents: TurnAgents,
     jev: JevClient,
     store: SessionStore,
@@ -99,6 +101,7 @@ async def run_turn(
 
     Args:
         request: The incoming AG-UI `RunAgentInput` request.
+        user_id: The verified user sending the turn.
         agents: The companion and the crisis responder.
         jev: The Jev client for the safety gate.
         store: Where conversation history, state and risk are persisted.
@@ -115,8 +118,9 @@ async def run_turn(
             uses client input the server rejects, such as frontend tools, a
             history not ending in a user message, or a message with no text or
             over `MAX_MESSAGE_CHARS`. 413 if the body is over the app's cap
-            (`MAX_REQUEST_BYTES`, enforced by `BodySizeLimit`). 409 if another
-            turn is already running on the thread.
+            (`MAX_REQUEST_BYTES`, enforced by `BodySizeLimit`). 404 if the
+            thread is someone else's. 409 if another turn is already running
+            on the thread.
     """
     adapter = await _parse_request(request, agents.companion)
     user_messages = adapter.new_user_messages()
@@ -127,6 +131,10 @@ async def run_turn(
         messages=user_messages,
     )
 
+    # 404, not 403, so whether someone else's thread exists stays hidden. Checked
+    # before the lease, so a stranger can't hold someone else's thread either.
+    if not await store.claim_thread(turn.thread_id, user_id):
+        raise HTTPException(status_code=404, detail=THREAD_NOT_FOUND_MESSAGE)
     lease = turn_timeout + LEASE_MARGIN
     if not await store.claim_turn(turn.thread_id, turn.lease_token, lease):
         raise HTTPException(status_code=409, detail=TURN_IN_PROGRESS_MESSAGE)

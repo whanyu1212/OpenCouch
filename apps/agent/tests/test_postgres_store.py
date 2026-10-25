@@ -280,3 +280,33 @@ async def test_create_schema_adds_the_risk_column_to_an_older_table(
     thread_id = _thread_id()
     await _record(store, thread_id, [], IN_CRISIS)
     assert (await store.load(thread_id)).risk == IN_CRISIS
+
+
+async def test_the_first_claim_makes_a_thread_its_owners(
+    store: PostgresSessionStore,
+) -> None:
+    thread_id = _thread_id()
+
+    assert await store.claim_thread(thread_id, "alice")
+    assert await store.claim_thread(thread_id, "alice")
+    assert not await store.claim_thread(thread_id, "bob")
+
+
+async def test_only_the_owner_can_read_a_thread(store: PostgresSessionStore) -> None:
+    thread_id = _thread_id()
+    await store.claim_thread(thread_id, "alice")
+
+    assert await store.can_read(thread_id, "alice")
+    assert not await store.can_read(thread_id, "bob")
+    assert await store.can_read(_thread_id(), "bob")
+
+
+async def test_a_thread_from_before_sign_in_belongs_to_nobody(
+    store: PostgresSessionStore,
+) -> None:
+    thread_id = _thread_id()
+    # Threads saved before HY-221 have no owner.
+    await store.claim_turn(thread_id, "token", LEASE)
+
+    assert not await store.claim_thread(thread_id, "alice")
+    assert not await store.can_read(thread_id, "alice")

@@ -6,6 +6,14 @@ import { cardKeysIn } from "./crisis-catalog";
 // Past this, the chat gives up waiting and lets the user carry on.
 const HISTORY_TIMEOUT_MS = 10_000;
 
+/** The saved conversation isn't this person's, such as one from before sign-in. */
+export class ConversationNotFoundError extends Error {
+  constructor() {
+    super("No such conversation");
+    this.name = "ConversationNotFoundError";
+  }
+}
+
 /** A conversation's saved messages, which replies were cut off, and its resource card. */
 export type LoadedHistory = {
   messages: Message[];
@@ -40,6 +48,7 @@ function isShownMessage(value: unknown): value is ShownMessage {
  * Load a conversation's saved messages from the agent.
  *
  * @throws {SignedOutError} If the agent doesn't accept the sign-in.
+ * @throws {ConversationNotFoundError} If the conversation isn't this person's.
  * @throws If the agent can't be reached in time, or answers with something unexpected.
  */
 export async function loadHistory(
@@ -56,6 +65,7 @@ export async function loadHistory(
     signal: AbortSignal.any([signal, AbortSignal.timeout(HISTORY_TIMEOUT_MS)]),
   });
   if (response.status === 401) throw new SignedOutError();
+  if (response.status === 404) throw new ConversationNotFoundError();
   if (!response.ok) throw new Error(`History request failed with ${response.status}`);
   const body: unknown = await response.json();
   const raw =

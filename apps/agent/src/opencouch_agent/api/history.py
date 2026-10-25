@@ -9,11 +9,15 @@ from collections.abc import Sequence
 from datetime import timedelta
 from typing import Final, Literal
 
+from fastapi import HTTPException
 from pydantic import BaseModel
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
+from opencouch_agent.agent import CompanionState
 from opencouch_agent.safety import conversation_turns
 from opencouch_agent.sessions import SessionStore
+
+THREAD_NOT_FOUND_MESSAGE: Final = "There's no conversation with that ID."
 
 # Where `AGUIAdapter` keeps the id the client gave a user message.
 _UI_METADATA_KEY: Final = "__pydantic_ai__"
@@ -36,6 +40,31 @@ class ConversationHistory(BaseModel):
     messages: list[ShownMessage]
     crisis_resources: list[str]
     """Catalog keys for the crisis resource card shown after the latest reply."""
+
+
+async def thread_history(
+    store: SessionStore, thread_id: str, user_id: str, *, wait: timedelta
+) -> ConversationHistory:
+    """What the chat shows again for a thread, once any running turn has saved.
+
+    Args:
+        store: Where the conversation is stored.
+        thread_id: The thread to load.
+        user_id: The verified user asking for it.
+        wait: How long to wait for a running turn; see `wait_for_turn`.
+
+    Raises:
+        HTTPException: 404 if the thread is someone else's. Not 403, so
+            whether it exists stays hidden.
+    """
+    await wait_for_turn(store, thread_id, wait)
+    session = await store.load(thread_id)
+    # Checked after loading: a thread can get its owner while this waits, and
+    # a check made first would then hand someone else's messages over.
+    if not await store.can_read(thread_id, user_id):
+        raise HTTPException(status_code=404, detail=THREAD_NOT_FOUND_MESSAGE)
+    state = CompanionState.model_validate(session.state)
+    return shown_history(session.history, crisis_resources=state.crisis_resources)
 
 
 async def wait_for_turn(store: SessionStore, thread_id: str, limit: timedelta) -> None:

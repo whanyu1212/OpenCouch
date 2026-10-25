@@ -18,7 +18,8 @@ from opencouch_agent.sessions.store import Session
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS conversations (
     thread_id   TEXT PRIMARY KEY,
-    -- Reserved for user identity; threads are unauthenticated for now.
+    -- The Neon Auth user who started the thread (HY-221). Threads saved before
+    -- HY-221, signed in or not, have none, so nobody can open them.
     owner_id    TEXT,
     state       JSONB NOT NULL DEFAULT '{}'::jsonb,
     -- Server-only risk record (safety/risk_record.py); NULL until the first
@@ -63,6 +64,16 @@ WHERE conversations.active_turn_token IS NULL
 RETURNING thread_id
 """
 
+# Creates the thread for its owner, or returns who owns it. The no-op update
+# locks and returns the latest row even when it was committed after this
+# statement started, so two first turns at once both see the same owner.
+_CLAIM_THREAD = """
+INSERT INTO conversations (thread_id, owner_id)
+VALUES (%(thread_id)s, %(owner_id)s)
+ON CONFLICT (thread_id) DO UPDATE SET owner_id = conversations.owner_id
+RETURNING owner_id
+"""
+
 _RELEASE_TURN = """
 UPDATE conversations
 SET active_turn_token = NULL, turn_lease_expires_at = NULL
@@ -84,6 +95,27 @@ class PostgresSessionStore:
         """Create the session tables if they don't exist."""
         async with self._pool.connection() as connection:
             await connection.execute(SCHEMA)
+
+    async def claim_thread(self, thread_id: str, owner_id: str) -> bool:
+        """Own or check a thread; see `SessionStore.claim_thread`."""
+        async with self._pool.connection() as connection:
+            row = await (
+                await connection.execute(
+                    _CLAIM_THREAD, {"thread_id": thread_id, "owner_id": owner_id}
+                )
+            ).fetchone()
+        return row is not None and row[0] == owner_id
+
+    async def can_read(self, thread_id: str, user_id: str) -> bool:
+        """Whether `user_id` may read a thread; see `SessionStore.can_read`."""
+        async with self._pool.connection() as connection:
+            row = await (
+                await connection.execute(
+                    "SELECT owner_id FROM conversations WHERE thread_id = %s",
+                    (thread_id,),
+                )
+            ).fetchone()
+        return row is None or row[0] == user_id
 
     async def load(self, thread_id: str) -> Session:
         """Load a session, returning an empty one if the thread is new."""

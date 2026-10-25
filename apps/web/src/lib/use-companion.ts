@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentUrl } from "./agent-url";
 import { agentAuthHeaders, SignedOutError } from "./auth/client";
 import { cardKeysIn } from "./crisis-catalog";
-import { loadHistory } from "./history";
+import { ConversationNotFoundError, loadHistory } from "./history";
 import { NewestMessageAgent } from "./newest-message-agent";
 import { onThreadChangedElsewhere, savedThreadId, startThread } from "./thread-id";
 
@@ -102,6 +102,15 @@ export function useCompanion() {
   // into another's conversation.
   useEffect(() => onThreadChangedElsewhere(() => window.location.reload()), []);
 
+  // A fresh conversation on screen and in storage; any error stays showing.
+  const openNewThread = useCallback(() => {
+    setMessages([]);
+    setInterrupted(new Set());
+    setCrisisResources([]);
+    setLoading(true);
+    setThreadId(startThread());
+  }, []);
+
   // Load what was already said in this conversation; a new one has nothing.
   useEffect(() => {
     if (!agent) return;
@@ -114,16 +123,22 @@ export function useCompanion() {
         agent.setMessages(history.messages);
         setInterrupted(history.interrupted);
         setCrisisResources(history.crisisResources);
+        setLoading(false);
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
+        if (err instanceof ConversationNotFoundError) {
+          // Nothing of theirs to show, so they start a conversation of their
+          // own. It stays loading until that one's history is in, so nothing
+          // sent meanwhile can be wiped by it.
+          openNewThread();
+          return;
+        }
         setError({ kind: err instanceof SignedOutError ? "signed_out" : "history_unavailable" });
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setLoading(false);
+        setLoading(false);
       });
     return () => controller.abort();
-  }, [agent]);
+  }, [agent, openNewThread]);
 
   const markLastReplyInterrupted = useCallback(() => {
     const last = agent?.messages.at(-1);
@@ -159,23 +174,22 @@ export function useCompanion() {
           // streaming; it stores the message only once a turn starts.
           agent.setMessages(agent.messages.filter((message) => message.id !== id));
           setError(sendError(err));
+          // The conversation isn't theirs (say, saved before threads had
+          // owners), so they go on in a new one; the message is handed back.
+          if (httpStatus(err) === 404) openNewThread();
         }
       } finally {
         setRunning(false);
       }
       return agent.messages.some((message) => message.id === id) ? "kept" : "removed";
     },
-    [agent, markLastReplyInterrupted],
+    [agent, markLastReplyInterrupted, openNewThread],
   );
 
   const startNewConversation = useCallback(() => {
-    setMessages([]);
-    setInterrupted(new Set());
-    setCrisisResources([]);
     setError(null);
-    setLoading(true);
-    setThreadId(startThread());
-  }, []);
+    openNewThread();
+  }, [openNewThread]);
 
   const dismissError = useCallback(() => setError(null), []);
 

@@ -247,3 +247,29 @@ async def test_turn_that_loses_its_lease_before_recording_gets_409() -> None:
 
     assert response.status_code == 409
     assert await store.claim_turn("thread-1", "next", LEASE)
+
+
+async def test_the_first_claim_makes_a_thread_its_owners() -> None:
+    store = InMemorySessionStore()
+
+    assert await store.claim_thread("t", "alice")
+    assert await store.claim_thread("t", "alice")
+    assert not await store.claim_thread("t", "bob")
+
+
+async def test_only_the_owner_can_read_a_thread() -> None:
+    store = InMemorySessionStore()
+    await store.claim_thread("t", "alice")
+
+    assert await store.can_read("t", "alice")
+    assert not await store.can_read("t", "bob")
+    assert await store.can_read("someone-new", "bob")
+
+
+async def test_a_thread_saved_without_an_owner_belongs_to_nobody() -> None:
+    store = InMemorySessionStore()
+    # Threads saved before HY-221 have no owner, as in Postgres.
+    await store.claim_turn("t", "token", LEASE)
+
+    assert not await store.claim_thread("t", "alice")
+    assert not await store.can_read("t", "alice")
