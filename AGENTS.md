@@ -43,7 +43,7 @@ uv run pytest
 OPENCOUCH_MODEL=test OPENCOUCH_FAKE_JEV=true OPENCOUCH_FAKE_AUTH=true OPENCOUCH_BETA_OPEN=true uv run opencouch-agent
 
 # Web (run from the repo root)
-pnpm lint:web && pnpm test:web && pnpm build:web
+pnpm format:web && pnpm lint:web && pnpm test:web && pnpm build:web
 ```
 
 ## Architecture rules

@@ -10,7 +10,12 @@ const whatsapp = {
   display: "9151 1767",
   url: "https://wa.me/6591511767",
 };
-const resource = { key: "sos", name: "Samaritans of Singapore", hours: "24 hours", channels: [call] };
+const resource = {
+  key: "sos",
+  name: "Samaritans of Singapore",
+  hours: "24 hours",
+  channels: [call],
+};
 
 const ENTRY_ERROR = "Catalog response had an entry not in the expected shape";
 
@@ -44,7 +49,9 @@ describe("parseCrisisCatalog", () => {
     { case: "no resources", body: {} },
     { case: "resources not a list", body: { resources: resource } },
   ])("rejects a response with $case", ({ body }) => {
-    expect(() => parseCrisisCatalog(body)).toThrow("Catalog response was not in the expected shape");
+    expect(() => parseCrisisCatalog(body)).toThrow(
+      "Catalog response was not in the expected shape",
+    );
   });
 
   it.each([
@@ -82,7 +89,11 @@ describe("parseCrisisCatalog", () => {
 
 describe("cardKeysIn", () => {
   it.each([
-    { case: "a list of keys", state: { crisis_resources: ["sos", "imh"] }, expected: ["sos", "imh"] },
+    {
+      case: "a list of keys",
+      state: { crisis_resources: ["sos", "imh"] },
+      expected: ["sos", "imh"],
+    },
     { case: "null state", state: null, expected: [] },
     { case: "non-object state", state: "sos", expected: [] },
     { case: "no card", state: {}, expected: [] },

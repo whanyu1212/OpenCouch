@@ -80,8 +80,8 @@ export function Chat() {
                 What&apos;s on your mind?
               </h1>
               <p className="mt-3 text-ink-soft">
-                Write it here in your own words. The coach will help you work through it, one
-                small step at a time.
+                Write it here in your own words. The coach will help you work through it, one small
+                step at a time.
               </p>
             </div>
           ) : (

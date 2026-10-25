@@ -17,9 +17,8 @@ export function Waitlist() {
         <div className="mx-auto max-w-md">
           <h1 className="text-3xl font-semibold tracking-tight text-balance">Not quite yet</h1>
           <p className="mt-3 text-ink-soft">
-            OpenCouch is in a small private beta, and this address isn&apos;t on the invite
-            list. You can ask for a place, or sign out and sign in with the address you were
-            invited with.
+            OpenCouch is in a small private beta, and this address isn&apos;t on the invite list.
+            You can ask for a place, or sign out and sign in with the address you were invited with.
           </p>
           <a href="/sign-in?path=request" className={`block text-center ${PRIMARY}`}>
             Request early access

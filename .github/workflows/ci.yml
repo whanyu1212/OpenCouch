@@ -65,6 +65,9 @@ jobs:
       - name: Lint
         run: pnpm --filter web lint
 
+      - name: Format
+        run: pnpm --filter web format:check
+
       - name: Test
         run: pnpm --filter web test
 

@@ -51,8 +51,8 @@ export function RequestAccessForm() {
   return (
     <form onSubmit={handleSubmit} className="mt-8">
       <p className="text-ink-soft">
-        Leave your email and we&apos;ll let you know when there&apos;s a place. We&apos;ll only
-        use it for that. To have it deleted, email{" "}
+        Leave your email and we&apos;ll let you know when there&apos;s a place. We&apos;ll only use
+        it for that. To have it deleted, email{" "}
         <a
           href={`mailto:${REMOVAL_CONTACT}`}
           className="font-medium text-ink underline underline-offset-2"

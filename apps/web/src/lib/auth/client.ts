@@ -60,8 +60,7 @@ export async function agentAuthHeaders(signal?: AbortSignal): Promise<Record<str
   if (response.status === 401) throw new SignedOutError();
   if (!response.ok) throw new Error(`Sign-in couldn't be checked (${response.status})`);
   const body: unknown = await response.json();
-  const token =
-    typeof body === "object" && body !== null && "token" in body ? body.token : null;
+  const token = typeof body === "object" && body !== null && "token" in body ? body.token : null;
   if (typeof token !== "string" || !token) throw new SignedOutError();
   return { Authorization: `Bearer ${token}` };
 }

@@ -32,3 +32,9 @@ repos:
         language: system
         files: ^apps/web/.*\.(ts|tsx|js|mjs)$
         pass_filenames: false
+      - id: prettier
+        name: prettier (web)
+        entry: pnpm --filter web format
+        language: system
+        files: ^apps/web/.*\.(ts|tsx|js|mjs|css|json|md)$
+        pass_filenames: false
