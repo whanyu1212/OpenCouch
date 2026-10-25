@@ -18,3 +18,6 @@ are the standards for the TypeScript code here.
 - TypeScript strict; no `any`. ESLint must pass.
 - Components render from typed AG-UI messages and state; keep protocol handling
   in `src/lib/`, not in components.
+- Tests use Vitest and sit next to the code as `*.test.ts`. Keep the logic
+  worth testing in plain functions in `src/lib/`, so it can be tested without
+  a DOM or a network.
