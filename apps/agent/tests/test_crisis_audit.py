@@ -1,11 +1,13 @@
 """The crisis audit log in the turn pipeline: what is recorded, and what isn't."""
 
+import asyncio
 import logging
 
 import pytest
 from fastapi.testclient import TestClient
 from pydantic_ai.models.test import TestModel
 
+from opencouch_agent import turn as turn_module
 from opencouch_agent.safety import FailureReason, RiskLevel
 from opencouch_agent.safety.audit import (
     STORED_LEVEL_KEPT,
@@ -27,6 +29,11 @@ CRISIS_READING = {"intent": 0.9, "ideation": 0.8, "latest_adds_risk": 0.9}
 class _FailingAuditLog:
     async def append(self, entry: AuditEntry) -> None:
         raise ConnectionError("database unavailable")
+
+
+class _StalledAuditLog:
+    async def append(self, entry: AuditEntry) -> None:
+        await asyncio.sleep(60)
 
 
 def _client(jev: ScriptedJev, audit: CrisisAuditLog) -> TestClient:
@@ -85,6 +92,19 @@ def test_a_failed_audit_write_is_logged_and_the_reply_still_sent(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     client = _client(ScriptedJev({CRISIS_MESSAGE: CRISIS_READING}), _FailingAuditLog())
+
+    with caplog.at_level(logging.ERROR, logger="opencouch_agent.turn"):
+        reply = _reply(client, CRISIS_MESSAGE)
+
+    assert reply == CRISIS_REPLY
+    assert "Writing the crisis audit log failed" in caplog.text
+
+
+def test_a_stalled_audit_write_is_abandoned_and_the_reply_still_sent(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(turn_module, "AUDIT_WRITE_SECONDS", 0.05)
+    client = _client(ScriptedJev({CRISIS_MESSAGE: CRISIS_READING}), _StalledAuditLog())
 
     with caplog.at_level(logging.ERROR, logger="opencouch_agent.turn"):
         reply = _reply(client, CRISIS_MESSAGE)

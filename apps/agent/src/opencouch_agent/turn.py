@@ -48,6 +48,9 @@ MAX_REQUEST_BYTES = 64_000
 # Longer messages add Jev cost and delay, and push the rest of the
 # conversation out of what Jev reads.
 MAX_MESSAGE_CHARS = 4000
+# The audit write runs before the reply starts, outside the turn's time limit,
+# so it gets a short limit of its own.
+AUDIT_WRITE_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -377,10 +380,12 @@ async def _close_events(events: AsyncIterator[BaseEvent]) -> None:
 
 
 async def _append_audit(audit: CrisisAuditLog, entry: AuditEntry) -> None:
-    # Safety: the audit log is a record, not part of the reply. A failed write
-    # is logged loudly but never stops or changes what the user gets.
+    # Safety: the audit log is a record, not part of the reply. A failed or
+    # stalled write is logged loudly but never holds up or changes what the
+    # user gets.
     try:
-        await audit.append(entry)
+        async with asyncio.timeout(AUDIT_WRITE_SECONDS):
+            await audit.append(entry)
     except Exception:
         logger.exception(
             "Writing the crisis audit log failed for thread %s", entry.thread_id
