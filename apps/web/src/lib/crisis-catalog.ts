@@ -83,7 +83,8 @@ function parseResource(value: unknown): CrisisResource | null {
  * @throws If the response, or any entry in it, isn't in the expected shape.
  */
 export function parseCrisisCatalog(body: unknown): Map<string, CrisisResource> {
-  const raw = typeof body === "object" && body !== null && "resources" in body ? body.resources : null;
+  const raw =
+    typeof body === "object" && body !== null && "resources" in body ? body.resources : null;
   if (!Array.isArray(raw)) throw new Error("Catalog response was not in the expected shape");
   const resources = raw.map(parseResource);
   if (resources.some((resource) => resource === null)) {

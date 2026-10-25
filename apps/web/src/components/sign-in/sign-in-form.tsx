@@ -10,7 +10,6 @@ import { FIELD, PRIMARY } from "./styles";
 
 type Step = { name: "email" } | { name: "code"; email: string };
 
-
 /** Sign in with a one-time code sent to an email address; a first sign-in creates the account. */
 export function SignInForm() {
   const router = useRouter();

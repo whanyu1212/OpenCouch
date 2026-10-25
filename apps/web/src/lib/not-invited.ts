@@ -6,6 +6,9 @@ export function isNotInvited(body: unknown): boolean {
   if (typeof body !== "object" || body === null || !("detail" in body)) return false;
   const { detail } = body;
   return (
-    typeof detail === "object" && detail !== null && "code" in detail && detail.code === "not_invited"
+    typeof detail === "object" &&
+    detail !== null &&
+    "code" in detail &&
+    detail.code === "not_invited"
   );
 }

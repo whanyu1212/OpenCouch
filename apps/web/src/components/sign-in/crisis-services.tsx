@@ -11,8 +11,8 @@ export function CrisisServices() {
   return (
     <div className="mt-12">
       <p className="text-ink-soft">
-        Need to talk to someone right now? You don&apos;t need an account for this. If
-        you&apos;re in danger, call <strong className="font-semibold text-ink">995</strong> now.
+        Need to talk to someone right now? You don&apos;t need an account for this. If you&apos;re
+        in danger, call <strong className="font-semibold text-ink">995</strong> now.
       </p>
       <CrisisCard keys={keys} catalog={catalog} />
     </div>

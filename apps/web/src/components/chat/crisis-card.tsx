@@ -39,7 +39,11 @@ function Service({ resource }: { resource: CrisisResource }) {
       {resource.hours && <p className="text-sm text-ink-soft">Open {resource.hours}</p>}
       <ul className="mt-2 space-y-2">
         {resource.channels.map((channel) => (
-          <Channel key={`${channel.kind}-${channel.display}`} channel={channel} service={resource.name} />
+          <Channel
+            key={`${channel.kind}-${channel.display}`}
+            channel={channel}
+            service={resource.name}
+          />
         ))}
       </ul>
     </li>
@@ -55,7 +59,10 @@ export function CrisisCard({ keys, catalog }: { keys: string[]; catalog: CrisisC
     catalog.status === "ready" ? keys.flatMap((key) => catalog.resources.get(key) ?? []) : [];
 
   return (
-    <section aria-labelledby="crisis-card-title" className="mt-6 rounded-3xl border border-line px-5 pt-4 pb-1">
+    <section
+      aria-labelledby="crisis-card-title"
+      className="mt-6 rounded-3xl border border-line px-5 pt-4 pb-1"
+    >
       <h2 id="crisis-card-title" className="font-semibold">
         Reach someone now
       </h2>
