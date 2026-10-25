@@ -208,3 +208,24 @@ async def test_a_rechecked_turn_that_was_imminent_puts_the_emergency_number_firs
 
     assert calm.path == unscreened.path == "crisis"
     assert calm.imminent is unscreened.imminent is True
+
+
+async def test_a_calm_recheck_cannot_lower_the_level_when_the_new_message_fails() -> (
+    None
+):
+    # One more calm turn would settle ELEVATED to WATCH.
+    settling = RiskState(
+        level=RiskLevel.ELEVATED,
+        peak=RiskLevel.ELEVATED,
+        calm_turns=3,
+        unscreened=(MISSED_TURN,),
+    )
+    jev = ScriptedJev(failing=frozenset({"hello"}))
+
+    failed = await run_gate(jev, settling, HISTORY, _said("hello"), at=AT)
+    screened = await run_gate(ScriptedJev(), settling, HISTORY, _said("hello"), at=AT)
+
+    assert failed.path == "crisis"
+    assert failed.risk.level is RiskLevel.ELEVATED
+    assert failed.risk.unscreened == (MISSED_TURN, UnscreenedTurn(2, 1))
+    assert screened.risk.level is RiskLevel.WATCH

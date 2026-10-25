@@ -96,7 +96,10 @@ async def run_gate(
         asyncio.gather(*(_recheck(jev, history, turn) for turn in pending)),
         screen_user_message(jev, conversation_turns(history), turn_text(latest)),
     )
-    rechecked = _apply_rechecks(risk, pending, rechecks, at=at)
+    failed = isinstance(screening, ScreeningFailed)
+    rechecked = _apply_rechecks(
+        risk, pending, rechecks, at=at, floor=risk.level if failed else None
+    )
     if isinstance(screening, ScreeningFailed):
         missed = UnscreenedTurn(start=len(history), count=len(latest))
         return _unscreened_decision(rechecked, missed, screening.reason)
@@ -145,11 +148,13 @@ def _apply_rechecks(
     rechecks: Sequence[ScreeningResult | None],
     *,
     at: datetime,
+    floor: RiskLevel | None,
 ) -> _Rechecked:
     """Apply the rechecked turns oldest first; the rest wait for the next turn.
 
-    A turn after one whose recheck failed waits too, so turns always reach
-    `update_risk` in the order they were sent.
+    A turn after one that waits waits too, so turns always reach `update_risk`
+    in the order they were sent. With a `floor`, a recheck that would take the
+    level below it waits for a turn whose own screening succeeds.
     """
     waiting: list[UnscreenedTurn] = []
     imminent = False
@@ -169,7 +174,13 @@ def _apply_rechecks(
         elif waiting:
             waiting.append(turn)
         else:
-            risk = _rechecked(risk, recheck.signals, at=at)
+            updated = _rechecked(risk, recheck.signals, at=at)
+            # Safety: on a turn whose own screening failed the level can't go
+            # down, so a calm recheck can't settle it before routing.
+            if floor is not None and updated.level.rank < floor.rank:
+                waiting.append(turn)
+                continue
+            risk = updated
             imminent = imminent or _imminent(recheck.signals)
     return _Rechecked(replace(risk, unscreened=tuple(waiting)), imminent, abandoned)
 
