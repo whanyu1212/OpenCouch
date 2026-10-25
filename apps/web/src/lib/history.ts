@@ -80,7 +80,16 @@ export async function loadHistory(
   }
   if (response.status === 404) throw new ConversationNotFoundError();
   if (!response.ok) throw new Error(`History request failed with ${response.status}`);
-  const body: unknown = await response.json();
+  return parseHistory(await response.json());
+}
+
+/**
+ * Check the agent's history response and split it into messages, cut-off
+ * replies and the resource card.
+ *
+ * @throws If the response, or any message in it, isn't in the expected shape.
+ */
+export function parseHistory(body: unknown): LoadedHistory {
   const raw =
     typeof body === "object" && body !== null && "messages" in body ? body.messages : null;
   if (!Array.isArray(raw) || !raw.every(isShownMessage)) {
