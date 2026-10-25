@@ -6,66 +6,27 @@ reading the same records. Every call takes the user ID and only ever reads
 or changes that user's records.
 """
 
-import uuid
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import datetime
-from typing import Literal, Protocol
+from typing import Protocol
 
-WorrySource = Literal["quick_capture", "chat"]
-WorryStatus = Literal["parked", "reviewed"]
-WorrySort = Literal["solvable", "hypothetical"]
-
-
-@dataclass(frozen=True)
-class ProgramPosition:
-    """Where a user is in the program.
-
-    Only the program state machine (HY-226) should change it.
-
-    Attributes:
-        enrolled_at: When they started the program.
-        week: The program week, from 1.
-        step: The step within the week; names come with the program content.
-    """
-
-    enrolled_at: datetime
-    week: int
-    step: str
-
-    def __post_init__(self) -> None:
-        require_timezone(self.enrolled_at)
-        if self.week < 1:
-            raise ValueError(f"week must be 1 or more, not {self.week}")
-
-
-@dataclass(frozen=True)
-class Worry:
-    """A worry the user caught, parked until worry time.
-
-    Attributes:
-        id: The worry's ID.
-        text: What the user wrote.
-        captured_at: When they caught it.
-        source: Quick capture or a conversation with the coach.
-        status: Parked until worry time, then reviewed.
-        sort: How a reviewed worry was sorted. A reviewed worry with no sort
-            no longer mattered by worry time.
-        next_step: The one step agreed for a solvable worry.
-    """
-
-    id: str
-    text: str
-    captured_at: datetime
-    source: WorrySource
-    status: WorryStatus = "parked"
-    sort: WorrySort | None = None
-    next_step: str | None = None
-
-    def __post_init__(self) -> None:
-        require_timezone(self.captured_at)
-        if self.status == "parked" and self.sort is not None:
-            raise ValueError("a parked worry isn't sorted yet")
-        check_review(self.sort, self.next_step)
+from opencouch_agent.program.models import (
+    CheckIn,
+    FormulationEntry,
+    FormulationKind,
+    ProgramPosition,
+    Questionnaire,
+    Worry,
+    WorrySort,
+    WorrySource,
+    WorryStatus,
+    check_entry_text,
+    check_review,
+    confirmed_entry,
+    parked_worry,
+    require_timezone,
+    scored_check_in,
+)
 
 
 class RecordStore(Protocol):
@@ -132,17 +93,76 @@ class RecordStore(Protocol):
         """Delete one of the user's worries. Returns whether there was one."""
         ...
 
+    async def add_check_in(
+        self,
+        user_id: str,
+        questionnaire: Questionnaire,
+        answers: tuple[int, ...],
+        *,
+        taken_at: datetime,
+    ) -> CheckIn:
+        """Save a completed questionnaire, with its total.
+
+        Raises:
+            ValueError: If the answers don't fit the questionnaire.
+        """
+        ...
+
+    async def check_ins(
+        self, user_id: str, *, questionnaire: Questionnaire | None = None
+    ) -> list[CheckIn]:
+        """The user's check-ins, oldest first; only one questionnaire's if given."""
+        ...
+
+    async def delete_check_in(self, user_id: str, check_in_id: str) -> bool:
+        """Delete one of the user's check-ins. Returns whether there was one."""
+        ...
+
+    async def add_formulation_entry(
+        self, user_id: str, kind: FormulationKind, text: str, *, confirmed_at: datetime
+    ) -> FormulationEntry:
+        """Save an entry the user confirmed for their worry map.
+
+        Raises:
+            ValueError: If the text is blank.
+        """
+        ...
+
+    async def formulation(self, user_id: str) -> list[FormulationEntry]:
+        """The user's worry map, oldest entry first."""
+        ...
+
+    async def edit_formulation_entry(
+        self, user_id: str, entry_id: str, text: str
+    ) -> FormulationEntry | None:
+        """Change an entry's wording; None if the user has no entry with that ID.
+
+        Raises:
+            ValueError: If the text is blank.
+        """
+        ...
+
+    async def delete_formulation_entry(self, user_id: str, entry_id: str) -> bool:
+        """Delete one of the user's entries. Returns whether there was one."""
+        ...
+
     async def delete_user(self, user_id: str) -> None:
         """Delete every program record the user has."""
         ...
 
 
 class InMemoryRecordStore:
-    """Record store backed by dicts. For tests and local runs only."""
+    """Record store backed by dicts. For tests and local runs only.
+
+    Each user's records keep insertion order, which breaks ties the way the
+    Postgres store's sequences do.
+    """
 
     def __init__(self) -> None:
         self._positions: dict[str, ProgramPosition] = {}
         self._worries: dict[str, dict[str, Worry]] = {}
+        self._check_ins: dict[str, dict[str, CheckIn]] = {}
+        self._formulation: dict[str, dict[str, FormulationEntry]] = {}
 
     async def position(self, user_id: str) -> ProgramPosition | None:
         """The user's place in the program; see `RecordStore.position`."""
@@ -170,7 +190,6 @@ class InMemoryRecordStore:
         """The user's worries; see `RecordStore.worries`."""
         if since is not None:
             require_timezone(since)
-        # Insertion order breaks ties, as Postgres's sequence does.
         found = [
             worry
             for worry in self._worries.get(user_id, {}).values()
@@ -202,32 +221,68 @@ class InMemoryRecordStore:
         """Delete a worry; see `RecordStore.delete_worry`."""
         return self._worries.get(user_id, {}).pop(worry_id, None) is not None
 
+    async def add_check_in(
+        self,
+        user_id: str,
+        questionnaire: Questionnaire,
+        answers: tuple[int, ...],
+        *,
+        taken_at: datetime,
+    ) -> CheckIn:
+        """Save a check-in; see `RecordStore.add_check_in`."""
+        check_in = scored_check_in(questionnaire, answers, taken_at=taken_at)
+        self._check_ins.setdefault(user_id, {})[check_in.id] = check_in
+        return check_in
+
+    async def check_ins(
+        self, user_id: str, *, questionnaire: Questionnaire | None = None
+    ) -> list[CheckIn]:
+        """The user's check-ins; see `RecordStore.check_ins`."""
+        found = [
+            check_in
+            for check_in in self._check_ins.get(user_id, {}).values()
+            if questionnaire is None or check_in.questionnaire == questionnaire
+        ]
+        return sorted(found, key=lambda check_in: check_in.taken_at)
+
+    async def delete_check_in(self, user_id: str, check_in_id: str) -> bool:
+        """Delete a check-in; see `RecordStore.delete_check_in`."""
+        return self._check_ins.get(user_id, {}).pop(check_in_id, None) is not None
+
+    async def add_formulation_entry(
+        self, user_id: str, kind: FormulationKind, text: str, *, confirmed_at: datetime
+    ) -> FormulationEntry:
+        """Save an entry; see `RecordStore.add_formulation_entry`."""
+        entry = confirmed_entry(kind, text, confirmed_at=confirmed_at)
+        self._formulation.setdefault(user_id, {})[entry.id] = entry
+        return entry
+
+    async def formulation(self, user_id: str) -> list[FormulationEntry]:
+        """The user's worry map; see `RecordStore.formulation`."""
+        entries = self._formulation.get(user_id, {}).values()
+        return sorted(entries, key=lambda entry: entry.confirmed_at)
+
+    async def edit_formulation_entry(
+        self, user_id: str, entry_id: str, text: str
+    ) -> FormulationEntry | None:
+        """Reword an entry; see `RecordStore.edit_formulation_entry`."""
+        check_entry_text(text)
+        mine = self._formulation.get(user_id, {})
+        if entry_id not in mine:
+            return None
+        mine[entry_id] = replace(mine[entry_id], text=text)
+        return mine[entry_id]
+
+    async def delete_formulation_entry(self, user_id: str, entry_id: str) -> bool:
+        """Delete an entry; see `RecordStore.delete_formulation_entry`."""
+        return self._formulation.get(user_id, {}).pop(entry_id, None) is not None
+
     async def delete_user(self, user_id: str) -> None:
         """Delete everything; see `RecordStore.delete_user`."""
-        self._positions.pop(user_id, None)
-        self._worries.pop(user_id, None)
-
-
-def parked_worry(text: str, *, source: WorrySource, captured_at: datetime) -> Worry:
-    """A new worry, parked until worry time, with a fresh unguessable ID."""
-    return Worry(str(uuid.uuid4()), text, captured_at, source)
-
-
-def check_review(sort: WorrySort | None, next_step: str | None) -> None:
-    """Check a worry-time outcome before applying it.
-
-    Raises:
-        ValueError: If a next step is given for a worry that isn't solvable.
-    """
-    if next_step is not None and sort != "solvable":
-        raise ValueError("only a solvable worry has a next step")
-
-
-def require_timezone(moment: datetime) -> None:
-    """Refuse a time with no timezone, which would compare wrongly.
-
-    Raises:
-        ValueError: If `moment` has no timezone.
-    """
-    if moment.tzinfo is None:
-        raise ValueError("record times must be timezone-aware")
+        for records in (
+            self._positions,
+            self._worries,
+            self._check_ins,
+            self._formulation,
+        ):
+            records.pop(user_id, None)

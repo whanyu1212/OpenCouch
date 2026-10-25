@@ -26,10 +26,10 @@ These instructions are for every coding agent. Each app has its own
   the gate that screens every turn in `turn.py`, the crisis responder, the
   vetted crisis resource catalog and the crisis audit log), `sessions/`
   (thread persistence), `beta/` (invites and requests for early access) and
-  `program/` (per-user records that span threads: program position and
-  worries so far). Planned: `coach/` (the agent, replacing `agent/`, and the
-  reassurance redirect), and the program's state machine and content in
-  `program/`. Python standards are in `apps/agent/AGENTS.md`.
+  `program/` (per-user records that span threads: program position, worries,
+  check-ins and the formulation). Planned: `coach/` (the agent, replacing
+  `agent/`, and the reassurance redirect), and the program's state machine and
+  content in `program/`. Python standards are in `apps/agent/AGENTS.md`.
 - `apps/web`: Next.js frontend on `@ag-ui/client`. See `apps/web/AGENTS.md`
   before writing Next.js code.
 
