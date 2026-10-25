@@ -15,7 +15,9 @@ are the standards for the TypeScript code here.
 
 ## TypeScript standards
 
-- TypeScript strict; no `any`. ESLint must pass.
+- TypeScript strict; no `any`. ESLint must pass, including a complexity limit
+  of 10 per function, as in the agent. Read untrusted JSON with `isRecord` and
+  destructuring rather than long `typeof`/`in` chains.
 - Prettier formats the code (`pnpm format:web`); CI fails on unformatted files.
 - Components render from typed AG-UI messages and state; keep protocol handling
   in `src/lib/`, not in components.

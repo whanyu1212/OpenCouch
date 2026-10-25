@@ -2,6 +2,7 @@ import type { Message } from "@ag-ui/core";
 
 import { SignedOutError } from "./auth/client";
 import { cardKeysIn } from "./crisis-catalog";
+import { isRecord } from "./is-record";
 import { isNotInvited } from "./not-invited";
 
 // Past this, the chat gives up waiting and lets the user carry on.
@@ -39,17 +40,13 @@ type ShownMessage = {
 
 // The response is untrusted input, so it is checked field by field.
 function isShownMessage(value: unknown): value is ShownMessage {
+  if (!isRecord(value)) return false;
+  const { id, role, content, interrupted } = value;
   return (
-    typeof value === "object" &&
-    value !== null &&
-    "id" in value &&
-    typeof value.id === "string" &&
-    "role" in value &&
-    (value.role === "user" || value.role === "assistant") &&
-    "content" in value &&
-    typeof value.content === "string" &&
-    "interrupted" in value &&
-    typeof value.interrupted === "boolean"
+    typeof id === "string" &&
+    (role === "user" || role === "assistant") &&
+    typeof content === "string" &&
+    typeof interrupted === "boolean"
   );
 }
 
@@ -80,7 +77,16 @@ export async function loadHistory(
   }
   if (response.status === 404) throw new ConversationNotFoundError();
   if (!response.ok) throw new Error(`History request failed with ${response.status}`);
-  const body: unknown = await response.json();
+  return parseHistory(await response.json());
+}
+
+/**
+ * Check the agent's history response and split it into messages, cut-off
+ * replies and the resource card.
+ *
+ * @throws If the response, or any message in it, isn't in the expected shape.
+ */
+export function parseHistory(body: unknown): LoadedHistory {
   const raw =
     typeof body === "object" && body !== null && "messages" in body ? body.messages : null;
   if (!Array.isArray(raw) || !raw.every(isShownMessage)) {
