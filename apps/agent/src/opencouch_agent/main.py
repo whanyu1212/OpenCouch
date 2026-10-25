@@ -32,6 +32,7 @@ from opencouch_agent.beta.access_requests import (
 from opencouch_agent.beta.invites import BetaInvites, build_beta_invites
 from opencouch_agent.beta.postgres import PostgresAccessRequests
 from opencouch_agent.config import Settings, get_settings
+from opencouch_agent.program.postgres import PostgresRecordStore
 from opencouch_agent.safety import JevClient
 from opencouch_agent.safety.audit import CrisisAuditLog, InMemoryCrisisAuditLog
 from opencouch_agent.safety.crisis import CrisisResponder, build_crisis_agent
@@ -214,6 +215,7 @@ def _lifespan(
                 await PostgresSessionStore(pool).create_schema()
                 await PostgresCrisisAuditLog(pool).create_schema()
                 await PostgresAccessRequests(pool).create_schema()
+                await PostgresRecordStore(pool).create_schema()
             yield
 
     return lifespan

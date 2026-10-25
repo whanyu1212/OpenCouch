@@ -24,10 +24,12 @@ These instructions are for every coding agent. Each app has its own
 - `apps/agent`: Python service. FastAPI + Pydantic AI, served over AG-UI.
   Features: `safety/` (the Jev check, risk policy, conversation-level risk,
   the gate that screens every turn in `turn.py`, the crisis responder, the
-  vetted crisis resource catalog and the crisis audit log) and `sessions/`
-  (thread persistence). Planned: `coach/` (the agent, replacing `agent/`, and
-  the reassurance redirect) and `program/` (program state, content, practice
-  records). Python standards are in `apps/agent/AGENTS.md`.
+  vetted crisis resource catalog and the crisis audit log), `sessions/`
+  (thread persistence), `beta/` (invites and requests for early access) and
+  `program/` (per-user records that span threads: program position and
+  worries so far). Planned: `coach/` (the agent, replacing `agent/`, and the
+  reassurance redirect), and the program's state machine and content in
+  `program/`. Python standards are in `apps/agent/AGENTS.md`.
 - `apps/web`: Next.js frontend on `@ag-ui/client`. See `apps/web/AGENTS.md`
   before writing Next.js code.
 
