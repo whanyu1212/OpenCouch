@@ -22,9 +22,11 @@ from opencouch_agent.api.history import (
 )
 from opencouch_agent.config import Settings, get_settings
 from opencouch_agent.safety import JevClient
+from opencouch_agent.safety.audit import CrisisAuditLog, InMemoryCrisisAuditLog
 from opencouch_agent.safety.crisis import CrisisResponder, build_crisis_agent
 from opencouch_agent.safety.crisis_resources import CrisisCatalog, load_shipped_catalog
 from opencouch_agent.safety.jev import TypeSafeJevClient, build_jev_client
+from opencouch_agent.safety.postgres_audit import PostgresCrisisAuditLog
 from opencouch_agent.sessions import InMemorySessionStore, SessionStore
 from opencouch_agent.sessions.postgres import PostgresSessionStore
 from opencouch_agent.turn import (
@@ -47,6 +49,7 @@ def create_app(
     store: SessionStore | None = None,
     crisis_agent: Agent[CompanionDeps, str] | None = None,
     jev: JevClient | None = None,
+    audit: CrisisAuditLog | None = None,
 ) -> FastAPI:
     """Create the FastAPI app.
 
@@ -61,6 +64,8 @@ def create_app(
             model; by default it is built from `settings.model`.
         jev: The Jev client for the safety gate. Tests pass a fake; by default
             it is built from the settings, which fails without a key.
+        audit: The crisis audit log. Tests pass one directly; by default it
+            shares the default store's Postgres database, otherwise in-memory.
 
     Returns:
         The configured app.
@@ -93,6 +98,7 @@ def create_app(
         session_store = PostgresSessionStore(pool)
     elif store is None:
         logger.warning("No database URL is set; using in-memory sessions.")
+    audit_log = audit or _default_audit_log(pool)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -104,6 +110,7 @@ def create_app(
                 await pool.open()
                 stack.push_async_callback(pool.close)
                 await PostgresSessionStore(pool).create_schema()
+                await PostgresCrisisAuditLog(pool).create_schema()
             yield
 
     app = FastAPI(title="OpenCouch Agent", lifespan=lifespan)
@@ -143,10 +150,17 @@ def create_app(
             agents=agents,
             jev=jev_client,
             store=session_store,
+            audit=audit_log,
             turn_timeout=turn_timeout,
         )
 
     return app
+
+
+def _default_audit_log(pool: AsyncConnectionPool | None) -> CrisisAuditLog:
+    if pool is None:
+        return InMemoryCrisisAuditLog()
+    return PostgresCrisisAuditLog(pool)
 
 
 def _jev_from_settings(settings: Settings) -> JevClient:

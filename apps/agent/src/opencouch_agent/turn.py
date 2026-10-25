@@ -22,6 +22,7 @@ from opencouch_agent.agent import CompanionDeps, CompanionState
 from opencouch_agent.api.adapter import ServerOwnedAGUIAdapter, UnsupportedRequestError
 from opencouch_agent.run_recorder import RunRecorder
 from opencouch_agent.safety import JevClient, conversation_turns, run_gate
+from opencouch_agent.safety.audit import AuditEntry, CrisisAuditLog, audit_entry
 from opencouch_agent.safety.crisis import (
     CrisisResponder,
     crisis_events,
@@ -83,6 +84,7 @@ async def run_turn(
     agents: TurnAgents,
     jev: JevClient,
     store: SessionStore,
+    audit: CrisisAuditLog,
     turn_timeout: timedelta,
 ) -> Response:
     """Handle one AG-UI turn with server-owned history, state and risk.
@@ -96,6 +98,8 @@ async def run_turn(
         agents: The companion and the crisis responder.
         jev: The Jev client for the safety gate.
         store: Where conversation history, state and risk are persisted.
+        audit: Where turns that change the risk level or fail screening are
+            recorded.
         turn_timeout: Hard limit on the agent's reply, including streaming
             it. Screening runs before it, under its own deadline.
 
@@ -124,7 +128,7 @@ async def run_turn(
         raise HTTPException(status_code=409, detail=TURN_IN_PROGRESS_MESSAGE)
     try:
         routed, run = await _start_run(
-            adapter, turn, agents=agents, jev=jev, store=store
+            adapter, turn, agents=agents, jev=jev, store=store, audit=audit
         )
     except BaseException:
         await _release_turn(store, turn.thread_id, turn.lease_token)
@@ -180,15 +184,15 @@ async def _start_run(
     agents: TurnAgents,
     jev: JevClient,
     store: SessionStore,
+    audit: CrisisAuditLog,
 ) -> tuple[ServerOwnedAGUIAdapter, _ActiveRun]:
     """Load the session, run the gate, record the turn and start the chosen agent."""
     session = await store.load(turn.thread_id)
     # Validate stored state before writing anything, so a bad session fails
     # without leaving a half-recorded turn behind.
     deps = CompanionDeps(state=CompanionState.model_validate(session.state))
-    decision = await run_gate(
-        jev, session.risk, session.history, turn.text, at=datetime.now(UTC)
-    )
+    at = datetime.now(UTC)
+    decision = await run_gate(jev, session.risk, session.history, turn.text, at=at)
     # Safety: persist the user's message and the new risk before any agent
     # runs, so a failed run can't lose an escalation. A later turn then sees
     # two user messages in a row, which models handle.
@@ -205,6 +209,9 @@ async def _start_run(
             decision.risk.level,
             turn.thread_id,
         )
+    entry = audit_entry(turn.thread_id, session.risk, decision, at=at)
+    if entry is not None:
+        await _append_audit(audit, entry)
 
     # The resource card belongs to crisis turns, so every other turn clears it.
     deps.state.crisis_resources = []
@@ -367,6 +374,17 @@ async def _close_events(events: AsyncIterator[BaseEvent]) -> None:
         await aclose()
     except Exception:
         logger.exception("Closing the agent event stream failed")
+
+
+async def _append_audit(audit: CrisisAuditLog, entry: AuditEntry) -> None:
+    # Safety: the audit log is a record, not part of the reply. A failed write
+    # is logged loudly but never stops or changes what the user gets.
+    try:
+        await audit.append(entry)
+    except Exception:
+        logger.exception(
+            "Writing the crisis audit log failed for thread %s", entry.thread_id
+        )
 
 
 async def _release_turn(store: SessionStore, thread_id: str, lease_token: str) -> None:

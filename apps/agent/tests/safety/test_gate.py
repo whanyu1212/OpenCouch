@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from opencouch_agent.safety import RiskLevel, run_gate
+from opencouch_agent.safety import FailureReason, RiskLevel, run_gate
 from opencouch_agent.safety.risk import RiskState
 from tests.fake_jev import ScriptedJev
 
@@ -31,6 +31,7 @@ async def test_each_level_takes_its_path(
 
     assert decision.risk.level is level
     assert decision.path == path
+    assert decision.screening_failure is None
 
 
 async def test_a_calm_message_in_a_crisis_still_goes_to_the_crisis_responder() -> None:
@@ -61,6 +62,7 @@ async def test_a_failed_check_goes_to_the_crisis_responder_and_keeps_the_risk() 
     assert jev.screened == ["hello"]
     assert decision.path == "crisis"
     assert decision.risk is elevated
+    assert decision.screening_failure is FailureReason.ERROR
 
 
 @pytest.mark.parametrize(
