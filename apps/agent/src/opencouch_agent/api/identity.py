@@ -1,30 +1,53 @@
-"""Who is calling: the user ID behind each request to a protected route (HY-207).
+"""Who is calling: the user behind each request to a protected route (HY-207).
 
 The web app signs people in with Neon Auth (managed Better Auth) and sends a
 short-lived Neon Auth JWT as `Authorization: Bearer <token>`. The agent checks
-it against Neon Auth's published keys and trusts only its `sub`.
+it against Neon Auth's published keys and trusts its `sub`, plus its `email`
+when `emailVerified` says Neon checked it (for the beta invites, HY-353).
 """
 
 import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Annotated, Final, Protocol
 from urllib.parse import urlsplit
 
 import jwt
 from fastapi import Header, HTTPException
 
+from opencouch_agent.beta.invites import BetaInvites
+
 logger = logging.getLogger(__name__)
 
 # The ID every request gets from the fake verifier, for local runs.
 LOCAL_USER_ID: Final = "local-user"
+# The 403 body for someone signed in but not invited. The code tells the web
+# app it's this, not a 403 from something in front of the agent.
+NOT_INVITED: Final = {
+    "code": "not_invited",
+    "message": "OpenCouch is invite-only for now.",
+}
 # Fetching the keys happens at most once per key rotation, but it mustn't
 # hold a turn up for long when Neon Auth is unreachable.
 JWKS_TIMEOUT_SECONDS: Final = 5.0
 
 SigningKeyLookup = Callable[[str], jwt.PyJWK]
 """The public key a token was signed with, found from the token's header."""
+
+
+@dataclass(frozen=True)
+class SignedInUser:
+    """A verified caller.
+
+    Attributes:
+        id: Their Neon Auth user ID.
+        verified_email: Their email, if Neon Auth has verified it.
+    """
+
+    id: str
+    verified_email: str | None = None
 
 
 class NotAuthenticatedError(Exception):
@@ -38,8 +61,8 @@ class IdentityUnavailableError(Exception):
 class UserVerifier(Protocol):
     """Finds the verified user behind a request."""
 
-    async def user_id(self, authorization: str | None) -> str:
-        """The user ID for a request's `Authorization` header.
+    async def identify(self, authorization: str | None) -> SignedInUser:
+        """The user behind a request's `Authorization` header.
 
         Raises:
             NotAuthenticatedError: If the header is missing or its token isn't valid.
@@ -74,8 +97,8 @@ class NeonAuthVerifier:
             signing_key = jwks.get_signing_key_from_jwt
         self._signing_key = signing_key
 
-    async def user_id(self, authorization: str | None) -> str:
-        """The user ID in a valid Neon Auth token; see `UserVerifier.user_id`."""
+    async def identify(self, authorization: str | None) -> SignedInUser:
+        """The user in a valid Neon Auth token; see `UserVerifier.identify`."""
         token = _bearer_token(authorization)
         key = await self._key_for(token)
         try:
@@ -97,7 +120,9 @@ class NeonAuthVerifier:
         # Neon Auth can also issue tokens to visitors who never signed in.
         if claims.get("role") == "anonymous":
             raise NotAuthenticatedError
-        return subject
+        email = claims.get("email")
+        verified = claims.get("emailVerified") is True and isinstance(email, str)
+        return SignedInUser(subject, email if verified else None)
 
     async def _key_for(self, token: str) -> jwt.PyJWK:
         try:
@@ -115,9 +140,9 @@ class NeonAuthVerifier:
 class FakeUserVerifier:
     """Treats every request as `LOCAL_USER_ID`. For tests and local runs only."""
 
-    async def user_id(self, authorization: str | None) -> str:
+    async def identify(self, authorization: str | None) -> SignedInUser:
         """Always `LOCAL_USER_ID`, whatever the request carries."""
-        return LOCAL_USER_ID
+        return SignedInUser(LOCAL_USER_ID)
 
 
 def build_user_verifier(
@@ -151,22 +176,30 @@ def build_user_verifier(
     return NeonAuthVerifier(base_url)
 
 
-def signed_in_user(verifier: UserVerifier) -> Callable[..., Awaitable[str]]:
-    """A FastAPI dependency giving the request's verified user ID.
+def signed_in_user(
+    verifier: UserVerifier, invites: BetaInvites
+) -> Callable[..., Awaitable[str]]:
+    """A FastAPI dependency giving the ID of a verified, invited user.
 
-    It raises `HTTPException` 401 without a valid sign-in, and 503 if the
-    sign-in can't be checked right now.
+    It raises `HTTPException` 401 without a valid sign-in, 403 for someone
+    signed in but not invited to the beta, and 503 if the sign-in can't be
+    checked right now.
     """
 
     async def user_id(authorization: Annotated[str | None, Header()] = None) -> str:
-        return await _verified_user_id(verifier, authorization)
+        user = await _verified_user(verifier, authorization)
+        if not invites.allows(user.verified_email):
+            raise HTTPException(status_code=403, detail=NOT_INVITED)
+        return user.id
 
     return user_id
 
 
-async def _verified_user_id(verifier: UserVerifier, authorization: str | None) -> str:
+async def _verified_user(
+    verifier: UserVerifier, authorization: str | None
+) -> SignedInUser:
     try:
-        return await verifier.user_id(authorization)
+        return await verifier.identify(authorization)
     except NotAuthenticatedError as error:
         raise HTTPException(
             status_code=401,

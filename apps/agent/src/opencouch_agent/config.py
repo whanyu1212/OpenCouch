@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     )
     # Local runs without Neon Auth only, and only with the test model.
     fake_auth: bool = False
+    # Comma-separated email addresses invited to the private beta (HY-353).
+    # Unset means nobody gets in.
+    beta_invites: str | None = None
+    # Local runs and tests only, and only with the test model: no invite needed.
+    beta_open: bool = False
     host: str = "0.0.0.0"
     port: int = 8080
 

@@ -46,6 +46,21 @@ database: its `main` branch serves the demo and its `dev` branch local
 development (`neon neon-auth status --branch dev` shows the URL). Only email
 codes are on; password and Google sign-in are off.
 
+The demo is a private beta. The sign-in page offers two ways in: "I've been
+invited", where only invited addresses are sent a code (everyone sees the same
+reply, so the page never says who's invited), and "Request early access",
+which stores just the email so it can be invited by hand. The agent also
+checks the verified email on every request, so it stays the gate even if
+someone calls Neon Auth directly.
+
+- **Invite or remove someone:** edit `OPENCOUCH_BETA_INVITES` (comma-separated)
+  on Vercel, where both services read it, and redeploy. With none set, nobody
+  gets in. For local runs with the test model, `OPENCOUCH_BETA_OPEN=true` lets
+  everyone in.
+- **See or remove requests for early access:** `scripts/access_requests.py`
+  in `apps/agent` (`list`, `remove <email>`); its docstring shows how to point
+  it at the demo's database.
+
 Every turn is screened by Jev through Vercel AI Gateway before the agent
 replies, so the agent won't start without `AI_GATEWAY_API_KEY`. Without API
 keys, run it against Pydantic AI's test model with a fake Jev:
@@ -78,9 +93,10 @@ browser calls the agent on the same site (`apps/web/.env.production`).
   else gets a 404.
 - **Environment variables:** `OPENAI_API_KEY`, `AI_GATEWAY_API_KEY`,
   `DATABASE_URL` from the Neon database added through the Vercel Marketplace,
-  `NEON_AUTH_BASE_URL` for both services, and `NEON_AUTH_COOKIE_SECRET` (32+
-  random bytes, `openssl rand -base64 32`) for the web app. Never
-  `OPENCOUCH_FAKE_JEV` or `OPENCOUCH_FAKE_AUTH`.
+  `NEON_AUTH_BASE_URL` for both services, `NEON_AUTH_COOKIE_SECRET` (32+
+  random bytes, `openssl rand -base64 32`) for the web app, and
+  `OPENCOUCH_BETA_INVITES`. Never `OPENCOUCH_FAKE_JEV`, `OPENCOUCH_FAKE_AUTH`
+  or `OPENCOUCH_BETA_OPEN`.
 - **Deploying:** `vercel deploy --target preview` for a preview, then
   `vercel deploy --prod` for production. A smoke test after deploying: send a
   calm message and a crisis message, and check the crisis one gets the resource

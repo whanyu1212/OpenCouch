@@ -6,12 +6,10 @@ import { type SubmitEvent, useState } from "react";
 import { authClient, callNeonAuth } from "@/lib/auth/client";
 import { rememberSignedInUser } from "@/lib/thread-id";
 
+import { FIELD, PRIMARY } from "./styles";
+
 type Step = { name: "email" } | { name: "code"; email: string };
 
-const FIELD =
-  "mt-1.5 w-full rounded-2xl border border-line bg-transparent px-4 py-2.5 text-ink placeholder:text-ink-soft focus:border-accent focus:outline-none";
-const PRIMARY =
-  "mt-4 w-full rounded-full bg-accent px-4 py-2.5 font-medium text-accent-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40";
 
 /** Sign in with a one-time code sent to an email address; a first sign-in creates the account. */
 export function SignInForm() {
@@ -80,8 +78,11 @@ export function SignInForm() {
         </label>
       ) : (
         <>
+          {/* The same words whether or not the address is invited, so the
+              page never says who is. */}
           <p className="text-ink-soft">
-            We sent a 6-digit code to <span className="font-medium text-ink">{step.email}</span>.
+            If <span className="font-medium text-ink">{step.email}</span> is invited, we&apos;ve
+            sent it a 6-digit code.
           </p>
           <label className="mt-4 block text-sm font-medium">
             Code

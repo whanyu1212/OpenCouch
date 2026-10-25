@@ -2,6 +2,7 @@ import type { Message } from "@ag-ui/core";
 
 import { SignedOutError } from "./auth/client";
 import { cardKeysIn } from "./crisis-catalog";
+import { isNotInvited } from "./not-invited";
 
 // Past this, the chat gives up waiting and lets the user carry on.
 const HISTORY_TIMEOUT_MS = 10_000;
@@ -11,6 +12,14 @@ export class ConversationNotFoundError extends Error {
   constructor() {
     super("No such conversation");
     this.name = "ConversationNotFoundError";
+  }
+}
+
+/** The person is signed in but not invited to the private beta (HY-353). */
+export class NotInvitedError extends Error {
+  constructor() {
+    super("Not invited to the beta");
+    this.name = "NotInvitedError";
   }
 }
 
@@ -48,6 +57,7 @@ function isShownMessage(value: unknown): value is ShownMessage {
  * Load a conversation's saved messages from the agent.
  *
  * @throws {SignedOutError} If the agent doesn't accept the sign-in.
+ * @throws {NotInvitedError} If the person isn't invited to the beta.
  * @throws {ConversationNotFoundError} If the conversation isn't this person's.
  * @throws If the agent can't be reached in time, or answers with something unexpected.
  */
@@ -65,6 +75,9 @@ export async function loadHistory(
     signal: AbortSignal.any([signal, AbortSignal.timeout(HISTORY_TIMEOUT_MS)]),
   });
   if (response.status === 401) throw new SignedOutError();
+  if (response.status === 403 && isNotInvited(await response.json().catch(() => null))) {
+    throw new NotInvitedError();
+  }
   if (response.status === 404) throw new ConversationNotFoundError();
   if (!response.ok) throw new Error(`History request failed with ${response.status}`);
   const body: unknown = await response.json();

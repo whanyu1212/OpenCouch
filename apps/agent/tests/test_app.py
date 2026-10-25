@@ -34,7 +34,9 @@ def test_agent_streams_ag_ui_events(client: TestClient) -> None:
 
 
 def test_a_local_run_with_the_fakes_serves_turns() -> None:
-    app = create_app(settings=Settings(model="test", fake_jev=True, fake_auth=True))
+    app = create_app(
+        settings=Settings(model="test", fake_jev=True, fake_auth=True, beta_open=True)
+    )
 
     with TestClient(app) as client:
         response = client.post("/api/agent", json=run_input(user_message("hi")))

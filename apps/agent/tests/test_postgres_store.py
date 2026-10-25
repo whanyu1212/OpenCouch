@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 
+from opencouch_agent.beta.postgres import PostgresAccessRequests
 from opencouch_agent.safety import RiskLevel
 from opencouch_agent.safety.risk import RiskChange, RiskState
 from opencouch_agent.sessions.postgres import PostgresSessionStore
@@ -310,3 +311,19 @@ async def test_a_thread_from_before_sign_in_belongs_to_nobody(
 
     assert not await store.claim_thread(thread_id, "alice")
     assert not await store.can_read(thread_id, "alice")
+
+
+async def test_access_requests_round_trip() -> None:
+    assert POSTGRES_URL
+    email = f"{uuid.uuid4()}@example.com"
+    async with AsyncConnectionPool(POSTGRES_URL) as pool:
+        requests = PostgresAccessRequests(pool)
+        await requests.create_schema()
+
+        await requests.add(email)
+        await requests.add(email)
+        listed = [address for address, _ in await requests.all()]
+
+        assert listed.count(email) == 1
+        assert await requests.remove(email)
+        assert not await requests.remove(email)

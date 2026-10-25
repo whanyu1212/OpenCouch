@@ -1,8 +1,8 @@
 """FastAPI app exposing the companion agent over AG-UI."""
 
 import logging
-from collections.abc import AsyncIterator
-from contextlib import AsyncExitStack, asynccontextmanager
+from collections.abc import AsyncIterator, Callable
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from datetime import timedelta
 from typing import Annotated
 
@@ -15,6 +15,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from opencouch_agent.agent import CompanionDeps, build_companion_agent
+from opencouch_agent.api.access import record_access_request
 from opencouch_agent.api.body_limit import BodySizeLimit
 from opencouch_agent.api.history import ConversationHistory, thread_history
 from opencouch_agent.api.identity import (
@@ -22,6 +23,14 @@ from opencouch_agent.api.identity import (
     build_user_verifier,
     signed_in_user,
 )
+from opencouch_agent.beta.access_requests import (
+    AccessRequestBody,
+    AccessRequestReceived,
+    AccessRequests,
+    InMemoryAccessRequests,
+)
+from opencouch_agent.beta.invites import BetaInvites, build_beta_invites
+from opencouch_agent.beta.postgres import PostgresAccessRequests
 from opencouch_agent.config import Settings, get_settings
 from opencouch_agent.safety import JevClient
 from opencouch_agent.safety.audit import CrisisAuditLog, InMemoryCrisisAuditLog
@@ -53,6 +62,8 @@ def create_app(
     jev: JevClient | None = None,
     audit: CrisisAuditLog | None = None,
     verifier: UserVerifier | None = None,
+    invites: BetaInvites | None = None,
+    access_requests: AccessRequests | None = None,
 ) -> FastAPI:
     """Create the FastAPI app.
 
@@ -71,6 +82,10 @@ def create_app(
             shares the default store's Postgres database, otherwise in-memory.
         verifier: Checks who is calling. Tests pass a fake; by default it
             checks Neon Auth tokens, which fails without a Neon Auth URL.
+        invites: Who may use the coach. Tests pass their own; by default
+            they come from `OPENCOUCH_BETA_INVITES`, and nobody without it.
+        access_requests: Where requests for early access go. Tests pass one;
+            by default it shares the default store's Postgres database.
 
     Returns:
         The configured app.
@@ -93,7 +108,10 @@ def create_app(
     jev_client = jev or _jev_from_settings(settings)
     # Checked before the route runs, so an unknown caller never claims a
     # thread or reaches Jev.
-    signed_in = signed_in_user(verifier or _verifier_from_settings(settings))
+    signed_in = signed_in_user(
+        verifier or _verifier_from_settings(settings),
+        invites or _invites_from_settings(settings),
+    )
     session_store: SessionStore = store or InMemorySessionStore()
     pool: AsyncConnectionPool | None = None
     turn_timeout = timedelta(seconds=settings.turn_timeout_seconds)
@@ -108,21 +126,11 @@ def create_app(
     elif store is None:
         logger.warning("No database URL is set; using in-memory sessions.")
     audit_log = audit or _default_audit_log(pool)
+    requests = access_requests or _default_access_requests(pool)
 
-    @asynccontextmanager
-    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        async with AsyncExitStack() as stack:
-            # Close only a client this app built; a caller's is theirs.
-            if jev is None and isinstance(jev_client, TypeSafeJevClient):
-                stack.push_async_callback(jev_client.aclose)
-            if pool is not None:
-                await pool.open()
-                stack.push_async_callback(pool.close)
-                await PostgresSessionStore(pool).create_schema()
-                await PostgresCrisisAuditLog(pool).create_schema()
-            yield
-
-    app = FastAPI(title="OpenCouch Agent", lifespan=lifespan)
+    # Close only a client this app built; a caller's is theirs.
+    owned_jev = jev_client if jev is None else None
+    app = FastAPI(title="OpenCouch Agent", lifespan=_lifespan(pool, owned_jev))
     # Added before CORS, so CORS wraps it and a 413 still reaches the browser.
     app.add_middleware(BodySizeLimit, max_bytes=MAX_REQUEST_BYTES)
     app.add_middleware(
@@ -151,6 +159,14 @@ def create_app(
             session_store, thread_id, user_id, wait=HISTORY_WAIT
         )
 
+    # Public, like the crisis catalog: it's how someone without an invite asks
+    # for one. Every valid request gets the same reply, so whether an address
+    # is already invited or has asked before stays private.
+    @app.post("/api/access-requests", status_code=202)
+    async def request_access(body: AccessRequestBody) -> AccessRequestReceived:
+        await record_access_request(requests, body.email)
+        return AccessRequestReceived()
+
     @app.post("/api/agent")
     async def run_agent(
         request: Request, user_id: Annotated[str, Depends(signed_in)]
@@ -178,6 +194,41 @@ def _verifier_from_settings(settings: Settings) -> UserVerifier:
     return build_user_verifier(
         base_url=settings.neon_auth_base_url,
         fake=settings.fake_auth,
+        model=settings.model,
+    )
+
+
+def _lifespan(
+    pool: AsyncConnectionPool | None, owned_jev: JevClient | None
+) -> Callable[[FastAPI], AbstractAsyncContextManager[None]]:
+    """Open the pool and create the tables on startup; close what the app opened."""
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+        async with AsyncExitStack() as stack:
+            if isinstance(owned_jev, TypeSafeJevClient):
+                stack.push_async_callback(owned_jev.aclose)
+            if pool is not None:
+                await pool.open()
+                stack.push_async_callback(pool.close)
+                await PostgresSessionStore(pool).create_schema()
+                await PostgresCrisisAuditLog(pool).create_schema()
+                await PostgresAccessRequests(pool).create_schema()
+            yield
+
+    return lifespan
+
+
+def _default_access_requests(pool: AsyncConnectionPool | None) -> AccessRequests:
+    if pool is None:
+        return InMemoryAccessRequests()
+    return PostgresAccessRequests(pool)
+
+
+def _invites_from_settings(settings: Settings) -> BetaInvites:
+    return build_beta_invites(
+        invites=settings.beta_invites,
+        everyone=settings.beta_open,
         model=settings.model,
     )
 

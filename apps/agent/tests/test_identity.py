@@ -16,6 +16,7 @@ from opencouch_agent.api.identity import (
     IdentityUnavailableError,
     NeonAuthVerifier,
     NotAuthenticatedError,
+    SignedInUser,
     build_user_verifier,
 )
 from opencouch_agent.sessions import InMemorySessionStore
@@ -59,7 +60,9 @@ def _verifier() -> NeonAuthVerifier:
 
 
 async def test_a_valid_token_gives_its_subject() -> None:
-    assert await _verifier().user_id(f"Bearer {_token()}") == "user-123"
+    user = await _verifier().identify(f"Bearer {_token()}")
+
+    assert user == SignedInUser("user-123")
 
 
 @pytest.mark.parametrize(
@@ -97,7 +100,7 @@ async def test_anything_but_a_valid_neon_auth_token_is_rejected(
     authorization: str | None,
 ) -> None:
     with pytest.raises(NotAuthenticatedError):
-        await _verifier().user_id(authorization)
+        await _verifier().identify(authorization)
 
 
 async def test_a_token_signed_with_another_algorithm_is_rejected() -> None:
@@ -108,12 +111,30 @@ async def test_a_token_signed_with_another_algorithm_is_rejected() -> None:
     )
 
     with pytest.raises(NotAuthenticatedError):
-        await _verifier().user_id(f"Bearer {forged}")
+        await _verifier().identify(f"Bearer {forged}")
+
+
+@pytest.mark.parametrize(
+    ("claims", "email"),
+    [
+        ({"email": "alice@example.com", "emailVerified": True}, "alice@example.com"),
+        ({"email": "alice@example.com", "emailVerified": False}, None),
+        ({"email": "alice@example.com"}, None),
+        ({"emailVerified": True}, None),
+    ],
+    ids=["verified", "unverified", "no verified flag", "no email"],
+)
+async def test_keeps_only_a_verified_email(
+    claims: dict[str, Any], email: str | None
+) -> None:
+    user = await _verifier().identify(f"Bearer {_token(**claims)}")
+
+    assert user.verified_email == email
 
 
 async def test_an_anonymous_token_is_not_a_sign_in() -> None:
     with pytest.raises(NotAuthenticatedError):
-        await _verifier().user_id(f"Bearer {_token(role='anonymous')}")
+        await _verifier().identify(f"Bearer {_token(role='anonymous')}")
 
 
 async def test_a_token_whose_header_cant_be_read_is_rejected() -> None:
@@ -123,7 +144,7 @@ async def test_a_token_whose_header_cant_be_read_is_rejected() -> None:
     verifier = NeonAuthVerifier(BASE_URL, signing_key=unreadable)
 
     with pytest.raises(NotAuthenticatedError):
-        await verifier.user_id("Bearer not-a-jwt")
+        await verifier.identify("Bearer not-a-jwt")
 
 
 @pytest.mark.parametrize(
@@ -142,7 +163,7 @@ async def test_unusable_keys_mean_sign_in_cant_be_checked(failure: Exception) ->
     verifier = NeonAuthVerifier(BASE_URL, signing_key=broken)
 
     with pytest.raises(IdentityUnavailableError):
-        await verifier.user_id(f"Bearer {_token()}")
+        await verifier.identify(f"Bearer {_token()}")
 
 
 async def test_the_verifier_reads_neon_auths_jwks(
@@ -156,7 +177,9 @@ async def test_the_verifier_reads_neon_auths_jwks(
 
     monkeypatch.setattr(jwt.PyJWKClient, "fetch_data", fetch_data)
 
-    assert await NeonAuthVerifier(BASE_URL).user_id(f"Bearer {_token()}") == "user-123"
+    user = await NeonAuthVerifier(BASE_URL).identify(f"Bearer {_token()}")
+
+    assert user.id == "user-123"
     assert fetched == [f"{BASE_URL}/.well-known/jwks.json"]
 
 
@@ -174,7 +197,7 @@ async def test_the_fake_verifier_treats_every_request_as_the_local_user() -> Non
     verifier = build_user_verifier(base_url=None, fake=True, model="test")
 
     assert isinstance(verifier, FakeUserVerifier)
-    assert await verifier.user_id(None) == LOCAL_USER_ID
+    assert await verifier.identify(None) == SignedInUser(LOCAL_USER_ID)
 
 
 def test_a_neon_auth_url_gives_the_real_verifier() -> None:

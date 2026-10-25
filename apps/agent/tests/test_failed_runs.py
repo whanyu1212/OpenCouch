@@ -28,6 +28,7 @@ from opencouch_agent import turn as turn_module
 from opencouch_agent.agent import CompanionDeps, build_companion_agent
 from opencouch_agent.api.adapter import ServerOwnedAGUIAdapter
 from opencouch_agent.api.identity import FakeUserVerifier
+from opencouch_agent.beta.invites import BetaInvites
 from opencouch_agent.config import Settings
 from opencouch_agent.main import create_app
 from opencouch_agent.run_recorder import RunRecorder
@@ -158,6 +159,7 @@ async def test_a_cut_off_reply_keeps_the_tool_calls_that_finished() -> None:
         jev=ScriptedJev(),
         store=store,
         verifier=FakeUserVerifier(),
+        invites=BetaInvites(everyone=True),
     )
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as http:
