@@ -60,6 +60,8 @@ select = [
     "RET",      # return statements
     "ASYNC",    # async pitfalls
     "C90",      # mccabe complexity
+    "PLR0912",  # too many branches
+    "PLR0915",  # too many statements
     "RUF",      # ruff-specific
 ]
 ignore = [
@@ -80,7 +82,7 @@ max-complexity = 10
 strict = true
 plugins = ["pydantic.mypy"]
 
-# CLAUDE.md: safety/ needs full branch coverage. CI runs `pytest --cov`.
+# apps/agent/AGENTS.md: safety/ needs full branch coverage. CI runs `pytest --cov`.
 [tool.coverage.run]
 branch = true
 source = ["opencouch_agent.safety"]

@@ -16,7 +16,8 @@ are the standards for the Python code here.
 - **Organize by feature** (`safety/`, `coach/`, `program/`), with each
   package owning its models, logic and tools. Not by layer.
 - **Keep units small:** aim for files under ~300 lines and functions under ~40.
-  Ruff enforces a complexity limit of 10.
+  Ruff enforces a complexity limit of 10 and caps branches and statements
+  per function.
 - **Pass dependencies explicitly** through agent `deps` or function arguments.
   No module-level globals or singletons beyond cached settings.
 - **Keep prompts separate from logic**, as named constants or files, so prompt

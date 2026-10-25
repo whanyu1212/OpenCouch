@@ -22,7 +22,7 @@ repos:
     hooks:
       - id: mypy
         name: mypy (agent)
-        entry: bash -c 'cd apps/agent && uv run mypy src tests'
+        entry: bash -c 'cd apps/agent && uv run mypy src tests evals scripts'
         language: system
         files: ^apps/agent/.*\.py$
         pass_filenames: false
