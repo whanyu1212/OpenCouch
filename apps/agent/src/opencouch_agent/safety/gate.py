@@ -12,7 +12,7 @@ from typing import Final, Literal
 
 from pydantic_ai.messages import ModelMessage
 
-from opencouch_agent.safety.jev import JevClient
+from opencouch_agent.safety.jev import FailureReason, JevClient
 from opencouch_agent.safety.policy import CrisisRoute, RiskLevel, crisis_routes
 from opencouch_agent.safety.risk import RiskState, update_risk
 from opencouch_agent.safety.screening import (
@@ -40,11 +40,13 @@ class GateDecision:
         path: Who replies.
         imminent: Whether this message suggests the danger is immediate, so
             the crisis reply puts the emergency number first.
+        screening_failure: Why screening didn't run this turn, if it didn't.
     """
 
     risk: RiskState
     path: ReplyPath
     imminent: bool = False
+    screening_failure: FailureReason | None = None
 
 
 async def run_gate(
@@ -75,7 +77,9 @@ async def run_gate(
         # The level stays as it was, since there's no evidence to change it.
         # Not imminent: there's no reading saying so, and the emergency number
         # is still shown, just not first.
-        return GateDecision(risk=risk, path="crisis")
+        return GateDecision(
+            risk=risk, path="crisis", screening_failure=screening.reason
+        )
     updated = update_risk(risk, screening.signals, at=at)
     path: ReplyPath = "crisis" if updated.level is RiskLevel.CRISIS else "companion"
     imminent = bool(_IMMINENT_ROUTES.intersection(crisis_routes(screening.signals)))

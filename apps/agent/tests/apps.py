@@ -7,6 +7,7 @@ from pydantic_ai.models.test import TestModel
 from opencouch_agent.agent import build_companion_agent
 from opencouch_agent.config import Settings
 from opencouch_agent.main import create_app
+from opencouch_agent.safety.audit import CrisisAuditLog
 from opencouch_agent.safety.crisis import build_crisis_agent
 from opencouch_agent.sessions import SessionStore
 from tests.fake_jev import ScriptedJev
@@ -21,6 +22,7 @@ def build_app(
     crisis: Model | None = None,
     jev: ScriptedJev | None = None,
     settings: Settings | None = None,
+    audit: CrisisAuditLog | None = None,
 ) -> FastAPI:
     """The app with a test model for each agent and a calm Jev by default."""
     return create_app(
@@ -31,4 +33,5 @@ def build_app(
         ),
         jev=jev or ScriptedJev(),
         store=store,
+        audit=audit,
     )
