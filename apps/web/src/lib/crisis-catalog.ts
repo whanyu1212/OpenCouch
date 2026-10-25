@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { agentUrl } from "./agent-url";
+import { isRecord } from "./is-record";
 
 // Past this, the card falls back to the emergency number alone.
 const CATALOG_TIMEOUT_MS = 10_000;
@@ -28,52 +29,28 @@ export type CrisisCatalog =
 
 // The response is untrusted input, so it is checked field by field.
 function parseChannel(value: unknown): CrisisChannel | null {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("kind" in value) ||
-    !("label" in value) ||
-    typeof value.label !== "string" ||
-    !("display" in value) ||
-    typeof value.display !== "string"
-  ) {
-    return null;
-  }
-  const { label, display } = value;
-  if (value.kind === "call" || value.kind === "sms") return { kind: value.kind, label, display };
+  if (!isRecord(value)) return null;
+  const { kind, label, display, url } = value;
+  if (typeof label !== "string" || typeof display !== "string") return null;
+  if (kind === "call" || kind === "sms") return { kind, label, display };
   // Only a WhatsApp link is ever opened from the card.
-  if (
-    value.kind === "whatsapp" &&
-    "url" in value &&
-    typeof value.url === "string" &&
-    value.url.startsWith("https://wa.me/")
-  ) {
-    return { kind: "whatsapp", label, display, url: value.url };
+  if (kind === "whatsapp" && typeof url === "string" && url.startsWith("https://wa.me/")) {
+    return { kind, label, display, url };
   }
   return null;
 }
 
 function parseResource(value: unknown): CrisisResource | null {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("key" in value) ||
-    typeof value.key !== "string" ||
-    !("name" in value) ||
-    typeof value.name !== "string" ||
-    !("channels" in value) ||
-    !Array.isArray(value.channels)
-  ) {
-    return null;
-  }
-  const channels = value.channels.map(parseChannel);
-  if (channels.some((channel) => channel === null)) return null;
-  const hours = "hours" in value && typeof value.hours === "string" ? value.hours : null;
+  if (!isRecord(value)) return null;
+  const { key, name, hours, channels } = value;
+  if (typeof key !== "string" || typeof name !== "string" || !Array.isArray(channels)) return null;
+  const parsed = channels.map(parseChannel);
+  if (parsed.some((channel) => channel === null)) return null;
   return {
-    key: value.key,
-    name: value.name,
-    hours,
-    channels: channels.filter((channel) => channel !== null),
+    key,
+    name,
+    hours: typeof hours === "string" ? hours : null,
+    channels: parsed.filter((channel) => channel !== null),
   };
 }
 

@@ -40,15 +40,18 @@ export function MessageList({
     (message) => (message.role === "user" || message.role === "assistant") && textOf(message),
   );
   const last = visible.at(-1);
+  const lastId = last?.id;
+  const lastRole = last?.role;
   const hasFooter = footer !== null;
+  const replyAboveCard = hasFooter && lastRole === "assistant" ? lastId : undefined;
 
   useEffect(() => {
     const element = end.current;
     if (!element) return;
     // With the crisis card below it, the reply is shown from its start:
     // scrolling to the end would leave a short phone showing only the card.
-    if (hasFooter && last?.role === "assistant" && startShown.current !== last.id) {
-      startShown.current = last.id;
+    if (replyAboveCard !== undefined && startShown.current !== replyAboveCard) {
+      startShown.current = replyAboveCard;
       shownLatest.current = true;
       lastReply.current?.scrollIntoView({ block: "start" });
       return;
@@ -65,10 +68,12 @@ export function MessageList({
     // Always follow the user's own message; follow the reply only when near.
     // Instant, not smooth: a smooth scroll lags behind a fast reply, falls out
     // of following range, and stops following.
-    if (last?.role === "user" || nearBottom) {
+    if (lastRole === "user" || nearBottom) {
       element.scrollIntoView({ block: "end" });
     }
-  }, [last?.id, last?.content, last?.role, thinking, bottomInset, hasFooter]);
+    // `hasFooter` stays: the card can appear while the user's message is still
+    // the latest, and that should follow too.
+  }, [lastId, last?.content, lastRole, thinking, bottomInset, hasFooter, replyAboveCard]);
 
   return (
     <>
@@ -85,7 +90,7 @@ export function MessageList({
           ) : (
             <li
               key={message.id}
-              ref={message.id === last?.id ? lastReply : undefined}
+              ref={message.id === lastId ? lastReply : undefined}
               className="scroll-mt-20"
             >
               <CoachReply text={textOf(message)} interrupted={interrupted.has(message.id)} />
@@ -93,7 +98,7 @@ export function MessageList({
           ),
         )}
       </ol>
-      {thinking && last?.role === "user" && (
+      {thinking && lastRole === "user" && (
         <p role="status" className="mt-6 flex items-center gap-2.5 text-sm text-ink-soft">
           <span
             aria-hidden="true"
