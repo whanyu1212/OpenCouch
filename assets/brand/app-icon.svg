@@ -16,7 +16,7 @@
   <stop offset="0" stop-color="#ffc477" stop-opacity="0.24"/><stop offset="1" stop-color="#ffc477" stop-opacity="0"/></linearGradient></defs>
 <path d="M269 170H311L440 330H180Z" fill="url(#icon-cone)"/>
     <g transform="translate(160 213.20000000000002) scale(0.72)">
-      
+
 <defs>
   <linearGradient id="icon-cush" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0" stop-color="#82b7ae"/><stop offset="1" stop-color="#609c94"/></linearGradient>
@@ -72,7 +72,7 @@
   <rect x="-10" y="-10" width="470" height="210" fill="url(#icon-lit)"/>
   <rect x="-10" y="-10" width="470" height="210" fill="url(#icon-shade)"/>
 </g></g>
-    
+
 <path d="M92 350V168Q92 96 190 96Q272 96 290 148" stroke="#3a3330" stroke-width="3.6" fill="none" stroke-linecap="round"/>
 <path d="M270 148h40l8 22h-56z" fill="#f6e3c0"/>
 <ellipse cx="290" cy="171" rx="23" ry="3" fill="#fff3d6"/>
