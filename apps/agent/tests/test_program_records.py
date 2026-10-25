@@ -8,6 +8,7 @@ import uuid
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, datetime, timedelta
 
+import psycopg
 import pytest
 from psycopg_pool import AsyncConnectionPool
 
@@ -197,3 +198,18 @@ async def test_delete_user_removes_only_their_records(
 def test_records_reject_impossible_values(build: Callable[[], object]) -> None:
     with pytest.raises(ValueError):
         build()
+
+
+async def test_postgres_refuses_a_next_step_without_a_sort() -> None:
+    if not POSTGRES_URL:
+        pytest.skip("OPENCOUCH_TEST_POSTGRES_URL is not set")
+    async with AsyncConnectionPool(POSTGRES_URL) as pool:
+        await PostgresRecordStore(pool).create_schema()
+        async with pool.connection() as connection:
+            with pytest.raises(psycopg.errors.CheckViolation):
+                await connection.execute(
+                    "INSERT INTO worries"
+                    " (id, user_id, text, captured_at, source, status, next_step)"
+                    " VALUES (%s, %s, 'w', now(), 'chat', 'reviewed', 'a step')",
+                    (str(uuid.uuid4()), f"carol-{uuid.uuid4()}"),
+                )

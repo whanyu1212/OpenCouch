@@ -41,7 +41,9 @@ CREATE TABLE IF NOT EXISTS worries (
     sort        TEXT CHECK (sort IN ('solvable', 'hypothetical')),
     next_step   TEXT,
     CHECK (status = 'reviewed' OR sort IS NULL),
-    CHECK (next_step IS NULL OR sort = 'solvable')
+    -- `sort IS NOT NULL` too: a NULL sort would make the comparison unknown,
+    -- which a CHECK lets through.
+    CHECK (next_step IS NULL OR (sort IS NOT NULL AND sort = 'solvable'))
 );
 
 CREATE INDEX IF NOT EXISTS worries_user_id_captured_at_idx
@@ -75,14 +77,17 @@ class PostgresRecordStore:
     async def position(self, user_id: str) -> ProgramPosition | None:
         """The user's place in the program; see `RecordStore.position`."""
         async with self._pool.connection() as connection:
-            row = await (
-                await connection.execute(
-                    "SELECT enrolled_at, week, step FROM program_positions"
-                    " WHERE user_id = %s",
-                    (user_id,),
-                )
-            ).fetchone()
-        return None if row is None else ProgramPosition(*row)
+            cursor = connection.cursor(row_factory=dict_row)
+            await cursor.execute(
+                "SELECT enrolled_at, week, step FROM program_positions"
+                " WHERE user_id = %s",
+                (user_id,),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        checked = _PositionRow.model_validate(row)
+        return ProgramPosition(**checked.model_dump())
 
     async def save_position(self, user_id: str, position: ProgramPosition) -> None:
         """Replace the user's place; see `RecordStore.save_position`."""
@@ -167,6 +172,14 @@ class PostgresRecordStore:
             await connection.execute(
                 "DELETE FROM program_positions WHERE user_id = %s", (user_id,)
             )
+
+
+class _PositionRow(BaseModel):
+    """A `program_positions` row, checked before it becomes a `ProgramPosition`."""
+
+    enrolled_at: AwareDatetime
+    week: int
+    step: str
 
 
 class _WorryRow(BaseModel):
