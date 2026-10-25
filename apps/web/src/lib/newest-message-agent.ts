@@ -8,6 +8,11 @@ import type { RunAgentInput } from "@ag-ui/core";
  * so sending the rest would only make a long conversation too large to accept.
  */
 export class NewestMessageAgent extends HttpAgent {
+  /** Send these headers, such as a fresh sign-in token, with the next runs. */
+  setAuthHeaders(headers: Record<string, string>): void {
+    this.headers = headers;
+  }
+
   protected requestInit(input: RunAgentInput): RequestInit {
     return super.requestInit({ ...input, messages: input.messages.slice(-1) });
   }

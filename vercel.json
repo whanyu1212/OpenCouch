@@ -18,6 +18,7 @@
     }
   },
   "rewrites": [
+    { "source": "/api/auth/(.*)", "destination": { "service": "web" } },
     { "source": "/api/(.*)", "destination": { "service": "agent" } },
     { "source": "/(.*)", "destination": { "service": "web" } }
   ]

@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import type { ChatError } from "@/lib/use-companion";
 
 const EXPLANATIONS: Record<ChatError["kind"], string> = {
+  signed_out: "You've been signed out. Sign in again to carry on.",
   busy: "The last reply is still being written. Send your message again in a moment.",
   not_sent: "Your message didn't go through. It's back in the box below, ready to send again.",
   unreachable:
@@ -43,6 +44,14 @@ export function ChatErrorNotice({
     >
       <p className="flex-1 basis-56">{EXPLANATIONS[error.kind]}</p>
       <div className="flex gap-2">
+        {error.kind === "signed_out" && (
+          <a
+            href="/sign-in"
+            className="rounded-full bg-accent px-4 py-1.5 font-medium text-accent-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          >
+            Sign in again
+          </a>
+        )}
         {retryText !== null && (
           <button
             type="button"

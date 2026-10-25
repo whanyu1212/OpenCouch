@@ -33,8 +33,8 @@ def test_agent_streams_ag_ui_events(client: TestClient) -> None:
     assert reply_text(response) == "I'm here with you."
 
 
-def test_a_local_run_with_the_fake_jev_serves_turns() -> None:
-    app = create_app(settings=Settings(model="test", fake_jev=True))
+def test_a_local_run_with_the_fakes_serves_turns() -> None:
+    app = create_app(settings=Settings(model="test", fake_jev=True, fake_auth=True))
 
     with TestClient(app) as client:
         response = client.post("/api/agent", json=run_input(user_message("hi")))
