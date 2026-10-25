@@ -4,10 +4,11 @@ import type { Message } from "@ag-ui/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { agentUrl } from "./agent-url";
+import { agentAuthHeaders, SignedOutError } from "./auth/client";
 import { cardKeysIn } from "./crisis-catalog";
 import { loadHistory } from "./history";
 import { NewestMessageAgent } from "./newest-message-agent";
-import { savedThreadId, startThread } from "./thread-id";
+import { onThreadChangedElsewhere, savedThreadId, startThread } from "./thread-id";
 
 /**
  * Why something failed.
@@ -17,8 +18,10 @@ import { savedThreadId, startThread } from "./thread-id";
  * `timeout` and `reply_failed` mean the server took it and the reply broke
  * off, so the message stays and the same text can be sent again.
  * `history_unavailable` means the saved conversation couldn't be loaded.
+ * `signed_out` means the sign-in ended, so nothing more can be sent or loaded.
  */
 export type ChatError =
+  | { kind: "signed_out" }
   | { kind: "busy" }
   | { kind: "not_sent" }
   | { kind: "unreachable" }
@@ -35,6 +38,14 @@ function httpStatus(error: unknown): number | undefined {
     return error.status;
   }
   return undefined;
+}
+
+// Why a message the server never took wasn't sent.
+function sendError(error: unknown): ChatError {
+  const status = httpStatus(error);
+  if (error instanceof SignedOutError || status === 401) return { kind: "signed_out" };
+  if (status === undefined) return { kind: "unreachable" };
+  return { kind: status === 409 ? "busy" : "not_sent" };
 }
 
 export function useCompanion() {
@@ -86,11 +97,17 @@ export function useCompanion() {
     };
   }, [agent]);
 
+  // Someone signed out, or in as someone else, in another tab. Reloading
+  // checks the session again, so this tab never sends one person's messages
+  // into another's conversation.
+  useEffect(() => onThreadChangedElsewhere(() => window.location.reload()), []);
+
   // Load what was already said in this conversation; a new one has nothing.
   useEffect(() => {
     if (!agent) return;
     const controller = new AbortController();
-    loadHistory(agent.url, agent.threadId, controller.signal)
+    agentAuthHeaders(controller.signal)
+      .then((headers) => loadHistory(agent.url, agent.threadId, headers, controller.signal))
       .then((history) => {
         // A newer conversation started while this one was loading.
         if (controller.signal.aborted) return;
@@ -98,8 +115,9 @@ export function useCompanion() {
         setInterrupted(history.interrupted);
         setCrisisResources(history.crisisResources);
       })
-      .catch(() => {
-        if (!controller.signal.aborted) setError({ kind: "history_unavailable" });
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return;
+        setError({ kind: err instanceof SignedOutError ? "signed_out" : "history_unavailable" });
       })
       .finally(() => {
         if (!controller.signal.aborted) setLoading(false);
@@ -123,6 +141,8 @@ export function useCompanion() {
       setError(null);
       setRunning(true);
       try {
+        // Before the message is added, so a sign-out leaves nothing to take back out.
+        agent.setAuthHeaders(await agentAuthHeaders());
         agent.addMessage({ id, role: "user", content: text });
         await agent.runAgent();
         if (runError.current) {
@@ -138,12 +158,7 @@ export function useCompanion() {
           // Nothing reached the server, or it refused the turn before
           // streaming; it stores the message only once a turn starts.
           agent.setMessages(agent.messages.filter((message) => message.id !== id));
-          const status = httpStatus(err);
-          if (status === undefined) {
-            setError({ kind: "unreachable" });
-          } else {
-            setError({ kind: status === 409 ? "busy" : "not_sent" });
-          }
+          setError(sendError(err));
         }
       } finally {
         setRunning(false);

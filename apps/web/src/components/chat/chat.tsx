@@ -9,6 +9,7 @@ import { ChatErrorNotice } from "./chat-error";
 import { Composer } from "./composer";
 import { CrisisCard } from "./crisis-card";
 import { MessageList } from "./message-list";
+import { SignOutButton } from "./sign-out-button";
 
 export function Chat() {
   const {
@@ -51,16 +52,19 @@ export function Chat() {
       <header className="glass-bar sticky top-0 z-10 border-b border-line px-5 pt-[max(1rem,env(safe-area-inset-top))] pb-3">
         <div className="mx-auto flex max-w-2xl items-center justify-between gap-4">
           <p className="text-xl font-semibold tracking-tight">opencouch</p>
-          {!empty && (
-            <button
-              type="button"
-              onClick={startNewConversation}
-              disabled={running}
-              className="rounded-full border border-line px-3.5 py-1.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
-            >
-              New conversation
-            </button>
-          )}
+          <div className="flex items-center gap-1">
+            {!empty && (
+              <button
+                type="button"
+                onClick={startNewConversation}
+                disabled={running}
+                className="rounded-full border border-line px-3.5 py-1.5 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-40"
+              >
+                New conversation
+              </button>
+            )}
+            <SignOutButton disabled={running} />
+          </div>
         </div>
       </header>
 

@@ -32,6 +32,16 @@ class Settings(BaseSettings):
     )
     # Local runs without a key only, and only with the test model.
     fake_jev: bool = False
+    # Where sign-ins are checked (HY-207). NEON_AUTH_BASE_URL is what Neon
+    # sets when Neon Auth is enabled; the web app reads the same variable.
+    neon_auth_base_url: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "OPENCOUCH_NEON_AUTH_BASE_URL", "NEON_AUTH_BASE_URL"
+        ),
+    )
+    # Local runs without Neon Auth only, and only with the test model.
+    fake_auth: bool = False
     host: str = "0.0.0.0"
     port: int = 8080
 

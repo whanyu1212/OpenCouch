@@ -38,8 +38,9 @@ These instructions are for every coding agent. Each app has its own
 uv run ruff check . && uv run ruff format --check .
 uv run mypy src tests evals scripts
 uv run pytest
-# Run without API keys: the test model and a fake Jev that screens nothing
-OPENCOUCH_MODEL=test OPENCOUCH_FAKE_JEV=true uv run opencouch-agent
+# Run without API keys or Neon Auth: the test model, a fake Jev that screens
+# nothing, and every request treated as one local user
+OPENCOUCH_MODEL=test OPENCOUCH_FAKE_JEV=true OPENCOUCH_FAKE_AUTH=true uv run opencouch-agent
 
 # Web (run from the repo root)
 pnpm lint:web && pnpm build:web

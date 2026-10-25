@@ -6,7 +6,7 @@ from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import timedelta
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from psycopg_pool import AsyncConnectionPool
 from pydantic_ai import Agent
@@ -19,6 +19,11 @@ from opencouch_agent.api.history import (
     ConversationHistory,
     shown_history,
     wait_for_turn,
+)
+from opencouch_agent.api.identity import (
+    UserVerifier,
+    build_user_verifier,
+    signed_in_user,
 )
 from opencouch_agent.config import Settings, get_settings
 from opencouch_agent.safety import JevClient
@@ -50,6 +55,7 @@ def create_app(
     crisis_agent: Agent[CompanionDeps, str] | None = None,
     jev: JevClient | None = None,
     audit: CrisisAuditLog | None = None,
+    verifier: UserVerifier | None = None,
 ) -> FastAPI:
     """Create the FastAPI app.
 
@@ -66,12 +72,15 @@ def create_app(
             it is built from the settings, which fails without a key.
         audit: The crisis audit log. Tests pass one directly; by default it
             shares the default store's Postgres database, otherwise in-memory.
+        verifier: Checks who is calling. Tests pass a fake; by default it
+            checks Neon Auth tokens, which fails without a Neon Auth URL.
 
     Returns:
         The configured app.
 
     Raises:
-        ValueError: If `jev` isn't given and the settings can't build one.
+        ValueError: If `jev` or `verifier` isn't given and the settings can't
+            build one.
         pydantic.ValidationError: If the crisis resource catalog is invalid.
     """
     settings = settings or get_settings()
@@ -85,6 +94,9 @@ def create_app(
         ),
     )
     jev_client = jev or _jev_from_settings(settings)
+    # Checked before the route runs, so an unknown caller never claims a
+    # thread or reaches Jev.
+    signed_in = [Depends(signed_in_user(verifier or _verifier_from_settings(settings)))]
     session_store: SessionStore = store or InMemorySessionStore()
     pool: AsyncConnectionPool | None = None
     turn_timeout = timedelta(seconds=settings.turn_timeout_seconds)
@@ -133,17 +145,16 @@ def create_app(
     async def crisis_resources() -> CrisisCatalog:
         return crisis_catalog
 
-    # Only what was said; tool calls, state and risk stay on the server.
-    # Unauthenticated until HY-221 ties each thread to its owner, so only for
-    # the password-protected demo (HY-352).
-    @app.get("/api/threads/{thread_id}/messages")
+    # Only what was said; tool calls, state and risk stay on the server. Any
+    # signed-in user can read any thread until HY-221 ties each to its owner.
+    @app.get("/api/threads/{thread_id}/messages", dependencies=signed_in)
     async def thread_messages(thread_id: str) -> ConversationHistory:
         await wait_for_turn(session_store, thread_id, HISTORY_WAIT)
         session = await session_store.load(thread_id)
         state = CompanionState.model_validate(session.state)
         return shown_history(session.history, crisis_resources=state.crisis_resources)
 
-    @app.post("/api/agent")
+    @app.post("/api/agent", dependencies=signed_in)
     async def run_agent(request: Request) -> Response:
         return await run_turn(
             request,
@@ -161,6 +172,14 @@ def _default_audit_log(pool: AsyncConnectionPool | None) -> CrisisAuditLog:
     if pool is None:
         return InMemoryCrisisAuditLog()
     return PostgresCrisisAuditLog(pool)
+
+
+def _verifier_from_settings(settings: Settings) -> UserVerifier:
+    return build_user_verifier(
+        base_url=settings.neon_auth_base_url,
+        fake=settings.fake_auth,
+        model=settings.model,
+    )
 
 
 def _jev_from_settings(settings: Settings) -> JevClient:

@@ -67,3 +67,7 @@ jobs:
 
       - name: Build
         run: pnpm --filter web build
+        env:
+          # Placeholders: the build reads Neon Auth's settings but never calls it.
+          NEON_AUTH_BASE_URL: https://auth.example.invalid/neondb/auth
+          NEON_AUTH_COOKIE_SECRET: ci-build-only-placeholder-secret-0123456789

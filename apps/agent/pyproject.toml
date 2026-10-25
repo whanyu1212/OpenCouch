@@ -14,6 +14,8 @@ dependencies = [
     # Pinned to a minor: pydantic-ai releases every few days.
     "pydantic-ai-slim[ag-ui,openai]>=2.61.0,<2.62",
     "pydantic-settings>=2.15.0",
+    # 2.15 refetches the key set for an unknown key ID only after a cooldown.
+    "pyjwt[crypto]>=2.15",
     "typesafe-sdk>=0.7.2,<0.8",
     "uvicorn[standard]>=0.54.0",
 ]
