@@ -15,6 +15,7 @@ from opencouch_agent.safety.policy import RiskLevel
 from opencouch_agent.safety.risk import RiskState
 
 STORED_LEVEL_KEPT: Final = "screening failed: kept the stored level"
+ABANDONED: Final = "gave up rechecking a missed turn: it was never screened"
 
 
 @dataclass(frozen=True)
@@ -26,8 +27,9 @@ class AuditEntry:
         at: When the turn arrived.
         level_before: The conversation's level before the turn.
         level_after: Its level after the turn.
-        reason: What decided `level_after`: the risk rule that changed it, or
-            `STORED_LEVEL_KEPT` when screening failed.
+        reason: What decided `level_after`: the risk rule that changed it,
+            `STORED_LEVEL_KEPT` when screening failed, or `ABANDONED` when a
+            missed turn was given up on.
         screening_failure: Why screening didn't run, if it didn't.
     """
 
@@ -63,29 +65,46 @@ class InMemoryCrisisAuditLog:
         self._entries.append(entry)
 
 
-def audit_entry(
+def audit_entries(
     thread_id: str, before: RiskState, decision: GateDecision, *, at: datetime
-) -> AuditEntry | None:
-    """The entry for a screened turn, or None if the turn needs none.
+) -> tuple[AuditEntry, ...]:
+    """The entries for a screened turn: each change of level, then any failures.
 
-    A turn is audited when screening failed or the level changed, down as
-    well as up: a step-down from CRISIS is a safety decision too.
+    Changes down are audited as well as up: a step-down from CRISIS is a
+    safety decision too. A turn can change the level twice when it also
+    rechecks a turn that screening missed, and records each missed turn it
+    gives up on.
     """
-    if decision.screening_failure is not None:
-        return AuditEntry(
+    entries = [
+        AuditEntry(
             thread_id=thread_id,
             at=at,
-            level_before=before.level,
-            level_after=decision.risk.level,
-            reason=STORED_LEVEL_KEPT,
-            screening_failure=decision.screening_failure,
+            level_before=change.from_level,
+            level_after=change.to_level,
+            reason=change.reason,
         )
-    if decision.risk.level is before.level:
-        return None
-    return AuditEntry(
-        thread_id=thread_id,
-        at=at,
-        level_before=before.level,
-        level_after=decision.risk.level,
-        reason=decision.risk.changes[-1].reason,
+        for change in decision.risk.changes[len(before.changes) :]
+    ]
+    level = decision.risk.level
+    entries.extend(
+        AuditEntry(
+            thread_id=thread_id,
+            at=at,
+            level_before=level,
+            level_after=level,
+            reason=ABANDONED,
+        )
+        for _ in range(decision.abandoned)
     )
+    if decision.screening_failure is not None:
+        entries.append(
+            AuditEntry(
+                thread_id=thread_id,
+                at=at,
+                level_before=level,
+                level_after=level,
+                reason=STORED_LEVEL_KEPT,
+                screening_failure=decision.screening_failure,
+            )
+        )
+    return tuple(entries)

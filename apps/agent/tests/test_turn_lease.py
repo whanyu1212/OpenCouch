@@ -45,7 +45,7 @@ def _guarded(
         CancellationToken(),
         RunRecorder(store, "thread-1", "token", CompanionDeps()),
     )
-    turn = _UserTurn("thread-1", "token", [], "hi")
+    turn = _UserTurn("thread-1", "token", [])
     return _guard_turn(run, store=store, turn=turn, turn_timeout=turn_timeout)
 
 

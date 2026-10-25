@@ -86,6 +86,24 @@ class RiskChange:
 
 
 @dataclass(frozen=True)
+class UnscreenedTurn:
+    """A user turn that screening missed, to screen again on a later turn.
+
+    Where the turn's messages sit in the stored history, never their text.
+    Trimming history (HY-206) must shift these positions.
+
+    Attributes:
+        start: The index of the turn's first message in the stored history.
+        count: How many messages the turn has.
+        failed_rechecks: How many times a recheck has failed so far.
+    """
+
+    start: int
+    count: int
+    failed_rechecks: int = 0
+
+
+@dataclass(frozen=True)
 class RiskState:
     """A conversation's risk after its latest user turn.
 
@@ -99,6 +117,7 @@ class RiskState:
             the level.
         last_turn_at: When the latest user turn arrived.
         changes: Every change of level, oldest first.
+        unscreened: Turns screening missed and hasn't rechecked, oldest first.
     """
 
     level: RiskLevel = RiskLevel.NONE
@@ -109,6 +128,7 @@ class RiskState:
     last_risk_at: datetime | None = None
     last_turn_at: datetime | None = None
     changes: tuple[RiskChange, ...] = ()
+    unscreened: tuple[UnscreenedTurn, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -193,6 +213,7 @@ def update_risk(
         last_risk_at=at if restarts_clock else state.last_risk_at,
         last_turn_at=at,
         changes=changes,
+        unscreened=state.unscreened,
     )
 
 

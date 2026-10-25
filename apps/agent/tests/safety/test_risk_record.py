@@ -1,10 +1,11 @@
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
 from pydantic import JsonValue, ValidationError
 
 from opencouch_agent.safety.policy import RiskLevel
-from opencouch_agent.safety.risk import RiskChange, RiskState
+from opencouch_agent.safety.risk import RiskChange, RiskState, UnscreenedTurn
 from opencouch_agent.safety.risk_record import (
     RISK_RECORD_VERSION,
     dump_risk_record,
@@ -65,3 +66,18 @@ def test_a_malformed_record_fails_instead_of_reading_as_no_risk() -> None:
 def test_a_record_with_a_time_without_a_timezone_fails_to_load(field: str) -> None:
     with pytest.raises(ValidationError):
         load_risk_record(_with_state(**{field: "2026-10-23T09:00:00"}))
+
+
+def test_unscreened_turns_load_back() -> None:
+    state = replace(IN_CRISIS, unscreened=(UnscreenedTurn(start=4, count=1),))
+
+    assert load_risk_record(dump_risk_record(state)) == state
+
+
+def test_a_record_from_before_rechecks_loads_with_nothing_unscreened() -> None:
+    record = dump_risk_record(IN_CRISIS)
+    state = record["state"]
+    assert isinstance(state, dict)
+    del state["unscreened"]
+
+    assert load_risk_record(record) == IN_CRISIS

@@ -2,7 +2,8 @@
 
 The record holds levels, scores, times and the generated reason for each
 change, never conversation text. Bump `RISK_RECORD_VERSION` when `RiskState`
-changes shape, so old records fail to load instead of loading wrong.
+changes shape, so old records fail to load instead of loading wrong. A new
+field whose default is right for every old record needs no bump.
 """
 
 from typing import Final
