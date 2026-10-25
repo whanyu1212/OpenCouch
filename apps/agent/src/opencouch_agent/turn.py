@@ -3,7 +3,7 @@
 import asyncio
 import logging
 import uuid
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from functools import partial
@@ -19,16 +19,18 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from opencouch_agent.agent import CompanionDeps, CompanionState
+from opencouch_agent.agent.companion import UNSCREENED_INSTRUCTIONS
 from opencouch_agent.api.adapter import ServerOwnedAGUIAdapter, UnsupportedRequestError
 from opencouch_agent.run_recorder import RunRecorder
-from opencouch_agent.safety import JevClient, conversation_turns, run_gate
-from opencouch_agent.safety.audit import AuditEntry, CrisisAuditLog, audit_entry
+from opencouch_agent.safety import JevClient, run_gate
+from opencouch_agent.safety.audit import AuditEntry, CrisisAuditLog, audit_entries
 from opencouch_agent.safety.crisis import (
     CrisisResponder,
     crisis_events,
     crisis_reply,
     crisis_services,
 )
+from opencouch_agent.safety.screening import turn_text
 from opencouch_agent.sessions import Session, SessionStore
 
 logger = logging.getLogger(__name__)
@@ -71,7 +73,6 @@ class _UserTurn:
     thread_id: str
     lease_token: str
     messages: list[ModelMessage]
-    text: str
 
 
 @dataclass(frozen=True)
@@ -119,11 +120,11 @@ async def run_turn(
     """
     adapter = await _parse_request(request, agents.companion)
     user_messages = adapter.new_user_messages()
+    _check_user_text(user_messages)
     turn = _UserTurn(
         thread_id=adapter.run_input.thread_id,
         lease_token=uuid.uuid4().hex,
         messages=user_messages,
-        text=_user_text(user_messages),
     )
 
     lease = turn_timeout + LEASE_MARGIN
@@ -163,9 +164,9 @@ async def _parse_request(
     return adapter
 
 
-def _user_text(messages: list[ModelMessage]) -> str:
-    """The text of the user's new message, which the gate screens."""
-    text = "\n".join(turn.text for turn in conversation_turns(messages))
+def _check_user_text(messages: list[ModelMessage]) -> None:
+    """Refuse a new message whose text the gate can't screen."""
+    text = turn_text(messages)
     if not text.strip():
         # Safety: empty text would screen as calm, so a message with nothing
         # to screen (an image alone, say) is refused rather than let through.
@@ -177,7 +178,6 @@ def _user_text(messages: list[ModelMessage]) -> str:
             status_code=422,
             detail=f"Expected a message of at most {MAX_MESSAGE_CHARS} characters.",
         )
-    return text
 
 
 async def _start_run(
@@ -195,7 +195,7 @@ async def _start_run(
     # without leaving a half-recorded turn behind.
     deps = CompanionDeps(state=CompanionState.model_validate(session.state))
     at = datetime.now(UTC)
-    decision = await run_gate(jev, session.risk, session.history, turn.text, at=at)
+    decision = await run_gate(jev, session.risk, session.history, turn.messages, at=at)
     # Safety: persist the user's message and the new risk before any agent
     # runs, so a failed run can't lose an escalation. A later turn then sees
     # two user messages in a row, which models handle.
@@ -212,9 +212,9 @@ async def _start_run(
             decision.risk.level,
             turn.thread_id,
         )
-    entry = audit_entry(turn.thread_id, session.risk, decision, at=at)
-    if entry is not None:
-        await _append_audit(audit, entry)
+    await _append_audit(
+        audit, audit_entries(turn.thread_id, session.risk, decision, at=at)
+    )
 
     # The resource card belongs to crisis turns, so every other turn clears it.
     deps.state.crisis_resources = []
@@ -223,7 +223,15 @@ async def _start_run(
         return _start_crisis_reply(
             adapter, turn, agents.crisis, session, recorder, imminent=decision.imminent
         )
-    return _start_companion(adapter, agents.companion, session.history, recorder)
+    return _start_companion(
+        adapter,
+        agents.companion,
+        session.history,
+        recorder,
+        # A missed turn still waiting for its recheck is unscreened risk too.
+        unscreened=decision.screening_failure is not None
+        or bool(decision.risk.unscreened),
+    )
 
 
 def _start_companion(
@@ -231,13 +239,20 @@ def _start_companion(
     agent: Agent[CompanionDeps, str],
     history: list[ModelMessage],
     recorder: RunRecorder,
+    *,
+    unscreened: bool,
 ) -> tuple[ServerOwnedAGUIAdapter, _ActiveRun]:
-    """Start the companion, streaming its reply."""
+    """Start the companion, streaming its reply.
+
+    `unscreened` means the gate couldn't screen this message or an earlier
+    one, so the companion is told to watch for risk itself.
+    """
     state = recorder.deps.state.model_dump(mode="json")
     routed = replace(adapter, agent=agent, server_state=state)
     cancellation = CancellationToken()
     events = routed.run_stream(
         message_history=history,
+        instructions=UNSCREENED_INSTRUCTIONS if unscreened else None,
         deps=recorder.deps,
         cancellation_token=cancellation,
         on_complete=recorder.save_completed,
@@ -379,16 +394,19 @@ async def _close_events(events: AsyncIterator[BaseEvent]) -> None:
         logger.exception("Closing the agent event stream failed")
 
 
-async def _append_audit(audit: CrisisAuditLog, entry: AuditEntry) -> None:
+async def _append_audit(audit: CrisisAuditLog, entries: Sequence[AuditEntry]) -> None:
     # Safety: the audit log is a record, not part of the reply. A failed or
     # stalled write is logged loudly but never holds up or changes what the
-    # user gets.
+    # user gets. One limit covers the turn's entries, so several can't add up.
+    if not entries:
+        return
     try:
         async with asyncio.timeout(AUDIT_WRITE_SECONDS):
-            await audit.append(entry)
+            for entry in entries:
+                await audit.append(entry)
     except Exception:
         logger.exception(
-            "Writing the crisis audit log failed for thread %s", entry.thread_id
+            "Writing the crisis audit log failed for thread %s", entries[0].thread_id
         )
 
 

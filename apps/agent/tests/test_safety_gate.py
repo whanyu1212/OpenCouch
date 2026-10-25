@@ -98,16 +98,6 @@ async def test_a_calm_message_after_a_crisis_stays_with_the_crisis_responder() -
     assert (await store.load("thread-1")).risk.level is RiskLevel.CRISIS
 
 
-async def test_a_failed_check_is_answered_by_the_crisis_responder() -> None:
-    store = InMemorySessionStore()
-    client = _client(store, ScriptedJev(failing=frozenset({"hello"})))
-
-    reply = _reply(client, "hello")
-
-    assert reply == CRISIS_REPLY
-    assert (await store.load("thread-1")).risk.level is RiskLevel.NONE
-
-
 async def test_an_escalation_is_saved_and_the_fallback_sent_if_the_reply_fails() -> (
     None
 ):
@@ -190,13 +180,18 @@ async def test_an_imminent_crisis_puts_emergency_services_first_on_the_card() ->
 
 async def test_the_card_is_cleared_once_the_companion_replies_again() -> None:
     store = InMemorySessionStore()
-    # A failed check takes the crisis path without raising the level, so the
-    # next calm message goes back to the companion.
-    client = _client(store, ScriptedJev(failing=frozenset({"hello"})))
-    _reply(client, "hello", "m1")
+    # At ELEVATED a failed check takes the crisis path without raising the
+    # level, so the next calm message goes back to the companion.
+    jev = ScriptedJev(
+        {ELEVATED_MESSAGE: ELEVATED_READING}, failing=frozenset({"hello"})
+    )
+    client = _client(store, jev)
+    _reply(client, ELEVATED_MESSAGE, "m1")
+    crisis_turn = client.post("/api/agent", json=run_input(user_message("hello", "m2")))
 
-    _reply(client, "just checking in", "m2")
+    _reply(client, "just checking in", "m3")
 
+    assert state_snapshots(crisis_turn.text)[0]["crisis_resources"] != []
     history = client.get("/api/threads/thread-1/messages").json()
     assert history["crisis_resources"] == []
 

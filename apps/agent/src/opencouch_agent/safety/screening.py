@@ -137,6 +137,11 @@ def conversation_turns(messages: Sequence[ModelMessage]) -> list[Turn]:
     return turns
 
 
+def turn_text(messages: Sequence[ModelMessage]) -> str:
+    """The text Jev screens for one user turn's messages."""
+    return "\n".join(turn.text for turn in conversation_turns(messages))
+
+
 def _prompt_text(part: UserPromptPart) -> str:
     # Multimodal prompts keep only their text, so a message with an image
     # attached is still screened.

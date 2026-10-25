@@ -200,7 +200,7 @@ async def test_a_run_that_ignores_cancellation_still_saves_what_was_shown(
     guarded = _guard_turn(
         run,
         store=store,
-        turn=_UserTurn("thread-1", "token", [], "hi"),
+        turn=_UserTurn("thread-1", "token", []),
         turn_timeout=timedelta(seconds=90),
     )
     started = time.monotonic()
@@ -227,7 +227,7 @@ async def test_the_time_limit_holds_even_when_the_run_ignores_cancellation(
     guarded = _guard_turn(
         run,
         store=store,
-        turn=_UserTurn("thread-1", "token", [], "hi"),
+        turn=_UserTurn("thread-1", "token", []),
         turn_timeout=timedelta(seconds=0.2),
     )
     started = time.monotonic()
@@ -337,7 +337,7 @@ async def _guarded_turn(
     adapter = ServerOwnedAGUIAdapter(
         agent=agent, run_input=AGUIAdapter.build_run_input(body)
     )
-    turn = _UserTurn("thread-1", "token", adapter.new_user_messages(), "hi")
+    turn = _UserTurn("thread-1", "token", adapter.new_user_messages())
     crisis = CrisisResponder.from_catalog(
         build_crisis_agent(TestModel()), load_shipped_catalog()
     )

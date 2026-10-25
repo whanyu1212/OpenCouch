@@ -51,8 +51,10 @@ pnpm lint:web && pnpm build:web
   of every turn: safety screening and risk, the crisis path, reassurance
   detection, session lifecycle, program state transitions and record writes.
   The model decides what to say and which of a few safe tools to call.
-- Safety screening runs on every turn, in code, before the agent. If it fails,
-  fail toward a crisis-aware reply. Never skip it.
+- Safety screening runs on every turn, in code, before the agent. Never skip
+  it. If it fails, the level never drops: from ELEVATED up the crisis
+  responder replies, below it the coach is told screening didn't run, and the
+  missed message is screened again on the next turn.
 - Tools *request* state changes; code validates and applies them.
 - The server owns conversation history and state. Client-sent AG-UI state is
   untrusted user input: never let it lower a crisis level or skip a safety step.
