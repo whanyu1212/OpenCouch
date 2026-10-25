@@ -4,6 +4,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import AsyncExitStack, asynccontextmanager
 from datetime import timedelta
+from typing import Annotated
 
 import uvicorn
 from fastapi import Depends, FastAPI
@@ -13,13 +14,9 @@ from pydantic_ai import Agent
 from starlette.requests import Request
 from starlette.responses import Response
 
-from opencouch_agent.agent import CompanionDeps, CompanionState, build_companion_agent
+from opencouch_agent.agent import CompanionDeps, build_companion_agent
 from opencouch_agent.api.body_limit import BodySizeLimit
-from opencouch_agent.api.history import (
-    ConversationHistory,
-    shown_history,
-    wait_for_turn,
-)
+from opencouch_agent.api.history import ConversationHistory, thread_history
 from opencouch_agent.api.identity import (
     UserVerifier,
     build_user_verifier,
@@ -96,7 +93,7 @@ def create_app(
     jev_client = jev or _jev_from_settings(settings)
     # Checked before the route runs, so an unknown caller never claims a
     # thread or reaches Jev.
-    signed_in = [Depends(signed_in_user(verifier or _verifier_from_settings(settings)))]
+    signed_in = signed_in_user(verifier or _verifier_from_settings(settings))
     session_store: SessionStore = store or InMemorySessionStore()
     pool: AsyncConnectionPool | None = None
     turn_timeout = timedelta(seconds=settings.turn_timeout_seconds)
@@ -145,19 +142,22 @@ def create_app(
     async def crisis_resources() -> CrisisCatalog:
         return crisis_catalog
 
-    # Only what was said; tool calls, state and risk stay on the server. Any
-    # signed-in user can read any thread until HY-221 ties each to its owner.
-    @app.get("/api/threads/{thread_id}/messages", dependencies=signed_in)
-    async def thread_messages(thread_id: str) -> ConversationHistory:
-        await wait_for_turn(session_store, thread_id, HISTORY_WAIT)
-        session = await session_store.load(thread_id)
-        state = CompanionState.model_validate(session.state)
-        return shown_history(session.history, crisis_resources=state.crisis_resources)
+    # Only what was said; tool calls, state and risk stay on the server.
+    @app.get("/api/threads/{thread_id}/messages")
+    async def thread_messages(
+        thread_id: str, user_id: Annotated[str, Depends(signed_in)]
+    ) -> ConversationHistory:
+        return await thread_history(
+            session_store, thread_id, user_id, wait=HISTORY_WAIT
+        )
 
-    @app.post("/api/agent", dependencies=signed_in)
-    async def run_agent(request: Request) -> Response:
+    @app.post("/api/agent")
+    async def run_agent(
+        request: Request, user_id: Annotated[str, Depends(signed_in)]
+    ) -> Response:
         return await run_turn(
             request,
+            user_id=user_id,
             agents=agents,
             jev=jev_client,
             store=session_store,

@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentUrl } from "./agent-url";
 import { agentAuthHeaders, SignedOutError } from "./auth/client";
 import { cardKeysIn } from "./crisis-catalog";
-import { loadHistory } from "./history";
+import { ConversationNotFoundError, loadHistory } from "./history";
 import { NewestMessageAgent } from "./newest-message-agent";
 import { onThreadChangedElsewhere, savedThreadId, startThread } from "./thread-id";
 
@@ -117,6 +117,11 @@ export function useCompanion() {
       })
       .catch((err: unknown) => {
         if (controller.signal.aborted) return;
+        if (err instanceof ConversationNotFoundError) {
+          // Nothing of theirs to show, so they start a conversation of their own.
+          setThreadId(startThread());
+          return;
+        }
         setError({ kind: err instanceof SignedOutError ? "signed_out" : "history_unavailable" });
       })
       .finally(() => {
@@ -131,6 +136,15 @@ export function useCompanion() {
       setInterrupted((current) => new Set(current).add(last.id));
     }
   }, [agent]);
+
+  // A fresh conversation on screen and in storage; any error stays showing.
+  const openNewThread = useCallback(() => {
+    setMessages([]);
+    setInterrupted(new Set());
+    setCrisisResources([]);
+    setLoading(true);
+    setThreadId(startThread());
+  }, []);
 
   const send = useCallback(
     async (text: string): Promise<SendResult> => {
@@ -159,23 +173,22 @@ export function useCompanion() {
           // streaming; it stores the message only once a turn starts.
           agent.setMessages(agent.messages.filter((message) => message.id !== id));
           setError(sendError(err));
+          // The conversation isn't theirs (say, saved before threads had
+          // owners), so they go on in a new one; the message is handed back.
+          if (httpStatus(err) === 404) openNewThread();
         }
       } finally {
         setRunning(false);
       }
       return agent.messages.some((message) => message.id === id) ? "kept" : "removed";
     },
-    [agent, markLastReplyInterrupted],
+    [agent, markLastReplyInterrupted, openNewThread],
   );
 
   const startNewConversation = useCallback(() => {
-    setMessages([]);
-    setInterrupted(new Set());
-    setCrisisResources([]);
     setError(null);
-    setLoading(true);
-    setThreadId(startThread());
-  }, []);
+    openNewThread();
+  }, [openNewThread]);
 
   const dismissError = useCallback(() => setError(null), []);
 

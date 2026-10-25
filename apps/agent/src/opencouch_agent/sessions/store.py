@@ -31,6 +31,24 @@ class Session:
 class SessionStore(Protocol):
     """Persistence for conversation sessions."""
 
+    async def claim_thread(self, thread_id: str, owner_id: str) -> bool:
+        """Make a new thread `owner_id`'s, or check that an existing one is.
+
+        A thread's owner never changes, so a turn that passes this keeps
+        ownership for its other calls.
+
+        Returns:
+            True if the thread is `owner_id`'s; False if it is someone else's.
+        """
+        ...
+
+    async def can_read(self, thread_id: str, user_id: str) -> bool:
+        """Whether `user_id` may read a thread: it is theirs, or doesn't exist yet.
+
+        A thread that exists without an owner, saved before HY-221, is nobody's.
+        """
+        ...
+
     async def load(self, thread_id: str) -> Session:
         """Load a session, returning an empty one if the thread is new."""
         ...
@@ -111,8 +129,21 @@ class InMemorySessionStore:
 
     def __init__(self) -> None:
         self._sessions: dict[str, Session] = {}
+        self._owners: dict[str, str] = {}
         # thread_id -> (lease_token, monotonic expiry time)
         self._turn_leases: dict[str, tuple[str, float]] = {}
+
+    async def claim_thread(self, thread_id: str, owner_id: str) -> bool:
+        """Own or check a thread; see `SessionStore.claim_thread`."""
+        if self._exists_without_owner(thread_id):
+            return False
+        return self._owners.setdefault(thread_id, owner_id) == owner_id
+
+    async def can_read(self, thread_id: str, user_id: str) -> bool:
+        """Whether `user_id` may read a thread; see `SessionStore.can_read`."""
+        if self._exists_without_owner(thread_id):
+            return False
+        return self._owners.get(thread_id, user_id) == user_id
 
     async def load(self, thread_id: str) -> Session:
         """Load a session, returning an empty one if the thread is new."""
@@ -177,6 +208,11 @@ class InMemorySessionStore:
         """Whether an unexpired turn holds the thread."""
         current = self._turn_leases.get(thread_id)
         return current is not None and current[1] > time.monotonic()
+
+    def _exists_without_owner(self, thread_id: str) -> bool:
+        # Like Postgres, where a thread saved before HY-221 is nobody's.
+        known = thread_id in self._sessions or thread_id in self._turn_leases
+        return known and thread_id not in self._owners
 
     def _holds_lease(self, thread_id: str, lease_token: str) -> bool:
         current = self._turn_leases.get(thread_id)

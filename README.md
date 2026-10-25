@@ -74,8 +74,8 @@ browser calls the agent on the same site (`apps/web/.env.production`).
   deployment, the agent's routes included, so there is no public URL. Testers
   get the project's shareable link (Hobby allows one per account), which can be
   revoked from the deployment's Share menu. Testers also sign in with Neon
-  Auth. Until HY-221 ties each thread to its owner, any signed-in tester could
-  read a thread whose ID they know.
+  Auth, and each conversation belongs to the tester who started it: anyone
+  else gets a 404.
 - **Environment variables:** `OPENAI_API_KEY`, `AI_GATEWAY_API_KEY`,
   `DATABASE_URL` from the Neon database added through the Vercel Marketplace,
   `NEON_AUTH_BASE_URL` for both services, and `NEON_AUTH_COOKIE_SECRET` (32+
