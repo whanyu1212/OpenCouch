@@ -4,9 +4,10 @@
     uv run python -m evals.crisis.score <run> --baseline evals/crisis/baselines/x.json
 
 Prints the share of each label reaching WATCH, ELEVATED and CRISIS, the
-headline numbers, and policy-free separation (AUC, recall at fixed false-alarm
-rates). `--baseline` also writes the summary, aggregate numbers only and no
-case text, to a file that can be committed.
+headline numbers, recall and false alarms for each detection our own cases
+expect (crisis types, `asks_for_person`), and policy-free separation (AUC,
+recall at fixed false-alarm rates). `--baseline` also writes the summary,
+aggregate numbers only and no case text, to a file that can be committed.
 """
 
 import argparse
@@ -23,10 +24,12 @@ from evals.crisis.detection import (
     NEGATIVE_LABEL,
     POSITIVE_LABELS,
     VIOLENT_THOUGHTS_LABEL,
+    DetectionRates,
     Scored,
     ScoredCase,
     Separation,
     by_label,
+    detection_rates,
     rate,
     score_rows,
     separation,
@@ -96,6 +99,7 @@ class RunSummary:
     counts: Counts
     by_label: list[LabelRates]
     headline: Headline
+    detections: list[DetectionRates]
     separation: Separation | None
     batch_times: BatchTimes
 
@@ -165,6 +169,7 @@ def summarize(run_dir: Path) -> RunSummary:
     """Score a run with the current policy and summarize it."""
     meta, rows, errors = load_run(run_dir)
     scored: Scored = score_rows(rows)
+    expects = {case.id: case.expects for case in expected_cases(meta, run_dir)}
     return RunSummary(
         run=run_dir.name,
         cases=meta.cases,
@@ -174,6 +179,7 @@ def summarize(run_dir: Path) -> RunSummary:
         counts=Counts(len(scored.cases), len(scored.invalid), errors),
         by_label=label_rates(scored.cases),
         headline=headline(scored.cases),
+        detections=detection_rates(scored.cases, expects),
         separation=separation(scored.cases),
         batch_times=batch_times(rows),
     )
@@ -195,6 +201,13 @@ def print_summary(summary: RunSummary) -> None:
     print()
     for name, value in asdict(summary.headline).items():
         print(f"{name:<36}{show(value)}")
+    if summary.detections:
+        print(f"\n{'detection':<30}{'cases':>6}{'recall':>9}{'false alarms':>14}")
+        for detection in summary.detections:
+            recall, false_alarms = show(detection.recall), show(detection.false_alarms)
+            print(
+                f"{detection.name:<30}{detection.cases:>6}{recall:>9}{false_alarms:>14}"
+            )
     if summary.separation:
         print(f"\nAUC {summary.separation.auc:.3f}")
         for at in summary.separation.recall_at_false_alarms:

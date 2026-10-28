@@ -1,14 +1,15 @@
 """Jev questions for the user check, and the signals they produce.
 
-Ported word for word from the FirstRead repo (whanyu1212/firstread,
-`packages/firstread/src/questions.ts` at `25b8aef`). FirstRead's benchmark
-numbers hold only for this exact wording, so don't edit a question here
-without re-running its evals.
+The self-harm questions, `harm_to_others`, the follow-ups and
+`counselor_concern` are ported word for word from the FirstRead repo
+(whanyu1212/firstread, `packages/firstread/src/questions.ts` at `25b8aef`).
+FirstRead's benchmark numbers hold only for this exact wording, so don't edit
+a question here without re-running its evals.
 
 `latest_adds_risk`, also in FirstRead's wording, goes beyond FirstRead's user
-check: conversation-level risk needs it (HY-208). Adding or removing a
-question changes the Jev input, so every recording has to be made again (see
-`evals/crisis/runs.py`).
+check: conversation-level risk needs it (HY-208). The crisis-type questions
+after it are ours (HY-298). Adding or removing a question changes the Jev
+input, so every recording has to be made again (see `evals/crisis/runs.py`).
 
 Every question is a yes/no `Noul`, so each answer is a probability that
 `policy.py` can threshold. The questions are loosely modelled on the
@@ -106,6 +107,39 @@ _USER_TURN_QUESTIONS = {
         "user, or intent to harm someone else? Count only what this message "
         "adds; repeating an earlier threat or plan counts."
     ),
+    # Crisis types beyond self-harm (HY-298). Our own wording, measured on our
+    # own cases in `evals/crisis/samples/`.
+    "abuse": (
+        "Does the user describe being hurt, threatened, controlled, stalked, or "
+        "sexually abused by another person, or feeling unsafe with someone they "
+        "live with, date, work for, or depend on? Count recent or ongoing abuse "
+        "by family, a partner, an ex, or an employer. Do not count ordinary "
+        "arguments, strict but safe parenting, abuse that has clearly ended, or "
+        "someone else's situation."
+    ),
+    "violence_soon": (
+        "Does the user indicate that someone may be seriously hurt by another "
+        "person soon, such as right now, today, or tonight? Count the user being "
+        "in danger from someone, and the user being about to hurt someone. Do "
+        "not count anger with no sign of acting on it, or unwanted thoughts that "
+        "frighten the user and that they don't want to act on."
+    ),
+    "medical_emergency": (
+        "Does the user describe a medical emergency happening to them now, such "
+        "as having taken an overdose or poison, dangerous drinking or drug use, "
+        "severe withdrawal, chest pain, trouble breathing, fainting, a severe "
+        "allergic reaction, or bleeding that won't stop? Count symptoms the user "
+        "fears may be more than panic. Do not count symptoms the user recognises "
+        "as their usual panic or anxiety, past events, or general health "
+        "questions."
+    ),
+    # Not a risk signal: someone asking for a human gets the ways to reach one
+    # at any level. FirstRead's wording.
+    "asks_for_person": (
+        "Is the user asking to talk to a real person rather than the chatbot? Do "
+        "not count questions about other people, or asking how to help someone "
+        "else."
+    ),
 }
 
 # Question text by name: read-only strings, so nothing can change a question
@@ -142,6 +176,10 @@ class UserSignals:
     disguised_request: float
     counselor_concern: float
     latest_adds_risk: float
+    abuse: float
+    violence_soon: float
+    medical_emergency: float
+    asks_for_person: float
 
     @classmethod
     def from_probabilities(cls, probabilities: Mapping[str, float]) -> Self:

@@ -3,9 +3,10 @@
 `update_risk` is pure (no API calls, storage or clock), so the live gate and
 the evals run the same code. Adapted from FirstRead's `risk.ts` as reference:
 
-1. Evidence-backed CRISIS: intent and preparation stand alone; imminence and
-   plan-plus-means also need self-harm context and a message that adds
-   something, or the turn stops at ELEVATED.
+1. Evidence-backed CRISIS: intent, preparation, a medical emergency and
+   violence soon stand alone; imminence and plan-plus-means also need
+   self-harm context and a message that adds something, or the turn stops at
+   ELEVATED.
 2. Building score: what each message adds (`latest_adds_risk`) builds up and
    fades, and can raise the level to WATCH or ELEVATED, never CRISIS.
 3. ELEVATED settles to WATCH after several calm turns, never to NONE.
@@ -35,8 +36,12 @@ from opencouch_agent.safety.questions import UserSignals
 CheckInAnswer = Literal["safe", "not_sure", "need_help"]
 """A tap on the crisis check-in: I'm safe right now / not sure / need help now."""
 
-# These stand alone; the other CRISIS routes need context (part 1).
-_SELF_STANDING: Final[frozenset[CrisisRoute]] = frozenset({"intent", "preparation"})
+# These stand alone; the other CRISIS routes need self-harm context (part 1).
+# A medical emergency or violence soon isn't about self-harm, so asking for
+# self-harm context would keep it from ever reaching CRISIS.
+_SELF_STANDING: Final[frozenset[CrisisRoute]] = frozenset(
+    {"intent", "preparation", "medical", "violence"}
+)
 
 
 @dataclass(frozen=True)

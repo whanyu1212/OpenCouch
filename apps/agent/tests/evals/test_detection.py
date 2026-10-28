@@ -3,15 +3,18 @@ import math
 import pytest
 
 from evals.crisis.detection import (
+    DetectionRates,
     RecallAtTarget,
+    ScoredCase,
     auc,
+    detection_rates,
     rate,
     recall_at_false_alarms,
     score_rows,
     separation,
 )
 from evals.crisis.runs import RecordedRow
-from opencouch_agent.safety import USER_TURN_QUESTIONS, RiskLevel
+from opencouch_agent.safety import USER_TURN_QUESTIONS, RiskLevel, UserSignals
 
 
 def row(case_id: str, label: str, value: float) -> RecordedRow:
@@ -76,3 +79,34 @@ def test_separation_needs_both_positives_and_negatives() -> None:
     assert result is not None
     assert result.auc == pytest.approx(1.0)
     assert [at.target for at in result.recall_at_false_alarms] == [0.03, 0.05, 0.10]
+
+
+def scored(case_id: str, label: str, **probabilities: float) -> ScoredCase:
+    answers = dict.fromkeys(USER_TURN_QUESTIONS, 0.0) | probabilities
+    signals = UserSignals.from_probabilities(answers)
+    return ScoredCase(case_id, label, signals, RiskLevel.NONE)
+
+
+def test_detection_rates_cover_expected_detections_against_calm_cases() -> None:
+    cases = [
+        scored("abuse-caught", "elevated", abuse=0.9),
+        scored("abuse-missed", "crisis"),
+        scored("calm-flagged", "none", abuse=0.9, asks_for_person=0.9),
+        scored("calm", "none"),
+        scored("person", "none", asks_for_person=0.9),
+        scored("self-harm", "elevated", abuse=0.9),
+    ]
+    expects = {
+        "abuse-caught": ("abuse_violence",),
+        "abuse-missed": ("abuse_violence",),
+        "person": ("asks_for_person",),
+    }
+
+    assert detection_rates(cases, expects) == [
+        DetectionRates("abuse_violence", 2, 0.5, 1 / 3),
+        DetectionRates("asks_for_person", 1, 1.0, 0.5),
+    ]
+
+
+def test_detection_rates_are_empty_when_no_case_expects_one() -> None:
+    assert detection_rates([scored("calm", "none")], {}) == []

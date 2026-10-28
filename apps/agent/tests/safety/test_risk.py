@@ -73,6 +73,18 @@ def test_stated_intent_is_crisis_on_its_own() -> None:
     assert "intent" in reason
 
 
+@pytest.mark.parametrize(
+    "probabilities",
+    [{"medical_emergency": 0.9}, {"abuse": 0.9, "violence_soon": 0.9}],
+    ids=["medical emergency", "violence soon"],
+)
+def test_crisis_beyond_self_harm_needs_no_self_harm_context(
+    probabilities: dict[str, float],
+) -> None:
+    level, _ = read_turn(signals(**probabilities), RiskState())
+    assert level is RiskLevel.CRISIS
+
+
 def test_imminence_without_self_harm_context_is_held_at_elevated() -> None:
     level, reason = read_turn(signals(imminent=0.9, latest_adds_risk=0.9), RiskState())
     assert level is RiskLevel.ELEVATED

@@ -106,15 +106,16 @@ def resolve_path(stored: str) -> Path:
 
 def _hashed_fields(case: Case) -> dict[str, Any]:
     fields = asdict(case)
-    # Leave out an empty history, so single-message cases hash as they did
-    # before cases could carry one and their recordings stay valid.
-    if not case.history:
-        del fields["history"]
+    # Leave out an empty history or expects, so cases without them hash as
+    # they did before cases could carry them and their recordings stay valid.
+    for name in ("history", "expects"):
+        if not fields[name]:
+            del fields[name]
     return fields
 
 
 def cases_digest(cases: Sequence[Case]) -> str:
-    """A short hash of every case's ID, text, label and history."""
+    """A short hash of every case's ID, text, label, history and expects."""
     payload = json.dumps([_hashed_fields(case) for case in cases], sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()[:12]
 

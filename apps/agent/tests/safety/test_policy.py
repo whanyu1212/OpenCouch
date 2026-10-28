@@ -2,13 +2,21 @@ from dataclasses import fields, replace
 
 import pytest
 
+from opencouch_agent.safety.crisis_resources import CrisisType
 from opencouch_agent.safety.policy import (
+    ABUSE_ELEVATED,
+    ABUSE_WITH_VIOLENCE_SOON,
     IMMINENT_CRISIS,
     IMMINENT_ELEVATED,
     INTENT_CRISIS,
     INTENT_ELEVATED,
+    MEDICAL_CRISIS,
+    MEDICAL_ELEVATED,
+    VIOLENCE_SOON_CRISIS,
     RiskLevel,
+    asks_for_person,
     assess_level,
+    crisis_types,
     escalate,
     noisy_or,
 )
@@ -188,3 +196,81 @@ def test_latest_adds_risk_never_sets_a_turns_level() -> None:
     quiet_but_flagged = signals(latest_adds_risk=1.0)
     assert assess_level(quiet_but_flagged) is RiskLevel.NONE
     assert noisy_or(quiet_but_flagged) == 0
+
+
+# Crisis types beyond self-harm (HY-298)
+
+
+@pytest.mark.parametrize(
+    ("probabilities", "level"),
+    [
+        ({"medical_emergency": MEDICAL_CRISIS}, RiskLevel.CRISIS),
+        ({"medical_emergency": MEDICAL_ELEVATED}, RiskLevel.ELEVATED),
+        ({"medical_emergency": MEDICAL_ELEVATED - 0.01}, RiskLevel.NONE),
+        ({"abuse": ABUSE_ELEVATED}, RiskLevel.ELEVATED),
+        ({"abuse": ABUSE_ELEVATED - 0.01}, RiskLevel.NONE),
+        (
+            {"abuse": ABUSE_WITH_VIOLENCE_SOON, "violence_soon": VIOLENCE_SOON_CRISIS},
+            RiskLevel.CRISIS,
+        ),
+        (
+            {"harm_to_others": 0.5, "violence_soon": VIOLENCE_SOON_CRISIS},
+            RiskLevel.CRISIS,
+        ),
+        ({"harm_to_others": 0.5, "violence_soon": 0.8}, RiskLevel.ELEVATED),
+        ({"violence_soon": 0.9}, RiskLevel.NONE),
+    ],
+    ids=[
+        "medical emergency",
+        "possible medical emergency",
+        "panic with chest symptoms",
+        "abuse",
+        "abuse described vaguely",
+        "danger now from someone",
+        "about to hurt someone",
+        "harm to others not soon",
+        "violence soon alone",
+    ],
+)
+def test_crisis_types_beyond_self_harm_set_the_level(
+    probabilities: dict[str, float], level: RiskLevel
+) -> None:
+    assert assess_level(signals(**probabilities)) is level
+
+
+@pytest.mark.parametrize(
+    ("probabilities", "types"),
+    [
+        ({"ideation": 0.5}, {"suicide_self_harm"}),
+        ({"preparation": 0.5}, {"suicide_self_harm"}),
+        ({**BORDERLINE, "own_death_wish": 0.6}, {"suicide_self_harm"}),
+        ({"harm_to_others": 0.5}, {"harm_to_others"}),
+        ({"abuse": ABUSE_ELEVATED}, {"abuse_violence"}),
+        ({"abuse": 0.5, "violence_soon": 0.9}, {"abuse_violence"}),
+        ({"medical_emergency": 0.9}, {"medical_emergency"}),
+        ({"abuse": 0.95, "ideation": 0.5}, {"abuse_violence", "suicide_self_harm"}),
+        ({"ideation": 0.2, "abuse": 0.5}, set()),
+    ],
+    ids=[
+        "ideation",
+        "preparation",
+        "borderline confirmed",
+        "harm to others",
+        "abuse",
+        "danger now from someone",
+        "medical emergency",
+        "abuse and ideation",
+        "watch",
+    ],
+)
+def test_crisis_types_name_every_kind_of_crisis_shown(
+    probabilities: dict[str, float], types: set[CrisisType]
+) -> None:
+    assert crisis_types(signals(**probabilities)) == types
+
+
+def test_asking_for_a_person_never_changes_the_level() -> None:
+    asking = signals(asks_for_person=0.9)
+    assert asks_for_person(asking)
+    assert assess_level(asking) is RiskLevel.NONE
+    assert not asks_for_person(QUIET)

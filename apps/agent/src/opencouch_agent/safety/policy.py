@@ -7,16 +7,23 @@ at `25b8aef`), where the thresholds were tuned on BHH, `cases.jsonl` and
 far more than a false alarm. They are now our measured baseline: change one
 only with evidence from the crisis evals in `evals/crisis/`.
 
+The crisis types beyond self-harm (HY-298) have cutoffs of our own, tuned on
+our cases in `evals/crisis/samples/`. Each can raise the level by itself, so
+someone in danger who isn't suicidal still reaches the crisis path.
+
 `latest_adds_risk` doesn't set a turn's level; it is for conversation-level
-risk.
+risk. `asks_for_person` doesn't either: see `asks_for_person`.
 """
 
 from enum import StrEnum
 from typing import Final, Literal
 
+from opencouch_agent.safety.crisis_resources import CrisisType
 from opencouch_agent.safety.questions import UserSignals
 
-CrisisRoute = Literal["intent", "imminent", "preparation", "plan_means"]
+CrisisRoute = Literal[
+    "intent", "imminent", "preparation", "plan_means", "medical", "violence"
+]
 """Which CRISIS rule a turn met. `risk.py` trusts some routes more than others."""
 
 
@@ -66,6 +73,24 @@ INTENT_ELEVATED: Final = 0.2
 IMMINENT_ELEVATED: Final = 0.2
 # Asking how to self-injure, ease or hide injuries, or avoid care.
 METHOD_SEEKING_ELEVATED: Final = 0.4
+HARM_TO_OTHERS_ELEVATED: Final = 0.4
+# Tuned on the 2026-10-28 recording (HY-298). Jev gives `abuse` 0.4-0.9 to
+# many BHH `no_crisis` disclosures (controlling parents, emotionally abusive
+# partners): lower cutoffs broke the ship bar on false alarms. Our abuse cases
+# score 0.93 and up.
+ABUSE_ELEVATED: Final = 0.9
+# Danger now is CRISIS on much weaker abuse evidence: what matters is the
+# danger, not how clearly the abuse is described.
+ABUSE_WITH_VIOLENCE_SOON: Final = 0.4
+# Jev reads ongoing abuse as "soon" (up to 0.79 on our cases with no
+# immediate danger); those in danger now score 0.87 and up.
+VIOLENCE_SOON_CRISIS: Final = 0.85
+# No BHH `no_crisis` case reaches 0.3. Panic with chest symptoms does reach
+# 0.54 ("chest is tight and my hands are shaking"), so ELEVATED starts above
+# it; our medical emergencies score 0.96 and up.
+MEDICAL_ELEVATED: Final = 0.6
+MEDICAL_CRISIS: Final = 0.8
+ASKS_FOR_PERSON: Final = 0.5
 
 
 def noisy_or(signals: UserSignals) -> float:
@@ -115,15 +140,66 @@ def crisis_routes(signals: UserSignals) -> list[CrisisRoute]:
         "imminent": signals.imminent >= IMMINENT_CRISIS,
         "preparation": signals.preparation >= PREPARATION_CRISIS,
         "plan_means": signals.plan >= 0.3 and signals.means >= 0.3,
+        "medical": signals.medical_emergency >= MEDICAL_CRISIS,
+        "violence": _abuse_in_danger_now(signals) or _harm_to_others_soon(signals),
     }
     return [route for route, is_met in met.items() if is_met]
+
+
+def crisis_types(signals: UserSignals) -> frozenset[CrisisType]:
+    """The kinds of crisis a turn shows; empty below ELEVATED.
+
+    A turn can show several (abuse and suicidal thoughts). Every rule that
+    makes a turn ELEVATED or CRISIS belongs to one of these types.
+    """
+    shown: dict[CrisisType, bool] = {
+        "suicide_self_harm": _self_harm_shown(signals),
+        "harm_to_others": signals.harm_to_others >= HARM_TO_OTHERS_ELEVATED,
+        "abuse_violence": signals.abuse >= ABUSE_ELEVATED
+        or _abuse_in_danger_now(signals),
+        "medical_emergency": signals.medical_emergency >= MEDICAL_ELEVATED,
+    }
+    return frozenset(crisis_type for crisis_type, is_shown in shown.items() if is_shown)
+
+
+def asks_for_person(signals: UserSignals) -> bool:
+    """Whether the user is asking for a human, at any level.
+
+    Not risk: it never changes the level, only whether the ways to reach a
+    person are shown.
+    """
+    return signals.asks_for_person >= ASKS_FOR_PERSON
 
 
 def _is_crisis(signals: UserSignals) -> bool:
     return bool(crisis_routes(signals))
 
 
+# Violence soon alone can't say who is in danger, so it needs abuse or harm to
+# others alongside.
+def _abuse_in_danger_now(signals: UserSignals) -> bool:
+    return (
+        signals.abuse >= ABUSE_WITH_VIOLENCE_SOON
+        and signals.violence_soon >= VIOLENCE_SOON_CRISIS
+    )
+
+
+def _harm_to_others_soon(signals: UserSignals) -> bool:
+    return (
+        signals.harm_to_others >= HARM_TO_OTHERS_ELEVATED
+        and signals.violence_soon >= VIOLENCE_SOON_CRISIS
+    )
+
+
 def _is_elevated(signals: UserSignals) -> bool:
+    return _self_harm_elevated(signals) or (
+        signals.harm_to_others >= HARM_TO_OTHERS_ELEVATED
+        or signals.abuse >= ABUSE_ELEVATED
+        or signals.medical_emergency >= MEDICAL_ELEVATED
+    )
+
+
+def _self_harm_elevated(signals: UserSignals) -> bool:
     return (
         signals.intent >= INTENT_ELEVATED
         or signals.imminent >= IMMINENT_ELEVATED
@@ -131,7 +207,16 @@ def _is_elevated(signals: UserSignals) -> bool:
         or signals.self_harm >= 0.3
         or signals.method_seeking >= METHOD_SEEKING_ELEVATED
         or signals.ideation >= 0.4
-        or signals.harm_to_others >= 0.4
+    )
+
+
+def _self_harm_shown(signals: UserSignals) -> bool:
+    # Preparation is the one self-harm CRISIS rule the ELEVATED rules don't
+    # already cover.
+    return (
+        _self_harm_elevated(signals)
+        or signals.preparation >= PREPARATION_CRISIS
+        or _borderline_confirmed(signals)
     )
 
 
