@@ -37,8 +37,9 @@ class Case:
         label: What the case is checked against (see the module docstring).
         history: The conversation before `text`, oldest first; empty for a
             first message.
-        expects: What should be detected (see `detection.detections`); any
-            other detection is a false alarm.
+        expects: What should be detected (see `detection.detections`). On
+            a case labelled `none`, any other detection is a false alarm;
+            extra types on a positive case aren't scored.
     """
 
     id: str

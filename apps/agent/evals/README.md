@@ -44,7 +44,8 @@ Code in `evals/crisis/`:
   negatives aimed at each question's failure mode (ordinary arguments, abuse
   that has ended, a recognised panic attack, medication questions). On the
   2026-10-28 recording each type is found in every case that expects it,
-  with no false alarms. With every older question unchanged, the new rules
+  with no false alarms on the negatives. Extra types on positive cases aren't
+  scored: both overdose cases are also typed as self-harm. With every older question unchanged, the new rules
   were checked by scoring that one recording with them on and off: same
   suicide and self-harm recall, false alarms on BHH test `no_crisis` up 0.2
   points at ELEVATED and 0.1 at WATCH (validation: one more case, a
