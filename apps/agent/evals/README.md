@@ -34,8 +34,23 @@ Code in `evals/crisis/`:
   share of every crisis type reaching each level. The dataset is CC-BY-NC, so
   it is downloaded by a script, never committed. Aggregate baselines are in
   `evals/crisis/baselines/`. On the test split the current policy scores
-  AUC 0.993 with 97% recall at 5% false alarms (2026-10-23 recording).
-- **CI checks:** 41 single-message cases and the dev conversations, with
+  AUC 0.993 with 97% recall at 5% false alarms (2026-10-28 recording).
+- **Crisis types** (HY-298): our own single-message cases can name what
+  should be detected (`expects`: a crisis type or `asks_for_person`), and
+  `score` reports recall over the cases that expect each one and false
+  alarms over the cases labelled `none` that don't. BHH has no labels for
+  abuse or medical emergencies, so those are measured on our cases only:
+  11 abuse, 7 medical, 2 harm to others, 2 asking for a person, and 22
+  negatives aimed at each question's failure mode (ordinary arguments, abuse
+  that has ended, a recognised panic attack, medication questions). On the
+  2026-10-28 recording each type is found in every case that expects it,
+  with no false alarms. With every older question unchanged, the new rules
+  were checked by scoring that one recording with them on and off: same
+  suicide and self-harm recall, false alarms on BHH test `no_crisis` up 0.2
+  points at ELEVATED and 0.1 at WATCH (validation: one more case, a
+  domestic-violence disclosure), and identical conversation and step-down
+  results.
+- **CI checks:** 85 single-message cases and the dev conversations, with
   recorded answers, re-scored on every PR. A policy change that changes which
   cases or conversations are missed or over-escalated fails CI until the
   matching baseline file is updated with it.
@@ -47,12 +62,15 @@ Code in `evals/crisis/`:
   is small. Labels about coming down (`recovery_from`, `settle_by`) assume
   FirstRead's exit rule and are flagged until HY-208 settles ours. Today's
   rule (each message on its own, never lower) misses no CRISIS on holdout but
-  over-escalates 13 of 37 dev conversations on the 2026-10-23 recording (9
-  on 2026-10-19: Jev drifted between them); HY-208 is measured against that.
+  over-escalates 13 of 37 dev conversations on the 2026-10-23 and 2026-10-28
+  recordings (9 on 2026-10-19: Jev drifted between them); HY-208 is measured
+  against that. On 2026-10-28 holdout also misses `window-looking-into-how`
+  (an ELEVATED target), with or without HY-298's rules: Jev drift.
 - **Conversation-level risk** (`--rule conversation_risk`, HY-208's
   `update_risk`): on the same recording it misses nothing the per-message
   rule catches, and over-escalates less (dev: 38 exchanges over the ceiling
-  against 40; 10 still flagged after recovery against 18).
+  against 40; 9 still flagged after recovery against 18, on the 2026-10-28
+  recording).
 - **Stepping down from CRISIS** (`evals/crisis/step_down.py`): 23 of our
   own synthetic conversations (`conversations/step_down.jsonl`: recovery,
   masking, relapse, a new thread mid-crisis), labelled with a floor and a
@@ -62,7 +80,8 @@ Code in `evals/crisis/`:
   nothing on FirstRead's conversations that the per-message rule catches;
   among those, fewer late step-downs wins, preferring settings with passing
   neighbours. The defaults in `RiskConfig` came from this on dev. On the
-  2026-10-23 recording no exchange is below its floor on either split; 7
+  2026-10-23 and 2026-10-28 recordings no exchange is below its floor on
+  either split; 7
   exchanges per split step down late, mostly because recovery messages that
   mention the crisis restart the calm clock. Taps happen where the script
   puts them, so a setting that would offer the check-in earlier gets no
