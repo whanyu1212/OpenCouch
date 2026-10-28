@@ -80,10 +80,19 @@ async def test_a_failed_check_at_elevated_goes_to_the_crisis_responder() -> None
             True,
         ),
         ({"preparation": 0.6, "ideation": 0.8, "latest_adds_risk": 0.9}, True),
+        ({"medical_emergency": 0.9}, True),
+        ({"abuse": 0.9, "violence_soon": 0.9}, True),
     ],
-    ids=["intent alone", "imminent", "plan and means", "preparation"],
+    ids=[
+        "intent alone",
+        "imminent",
+        "plan and means",
+        "preparation",
+        "medical emergency",
+        "violence soon",
+    ],
 )
-async def test_a_crisis_is_imminent_only_on_a_timeline_plan_or_preparation(
+async def test_a_crisis_is_imminent_unless_it_rests_on_intent_alone(
     reading: dict[str, float], imminent: bool
 ) -> None:
     jev = ScriptedJev({"message": reading})

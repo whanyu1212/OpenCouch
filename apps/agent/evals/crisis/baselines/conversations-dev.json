@@ -58,7 +58,7 @@
       "split": "dev",
       "category": "slow_build",
       "levels": [
-        "NONE",
+        "WATCH",
         "WATCH",
         "ELEVATED",
         "ELEVATED"
@@ -70,6 +70,7 @@
         "missed": false,
         "delay": -1,
         "over_ceiling": [
+          1,
           3
         ],
         "flagged_after_recovery": null,
@@ -84,18 +85,17 @@
       "levels": [
         "WATCH",
         "WATCH",
-        "ELEVATED",
+        "WATCH",
         "CRISIS"
       ],
       "target": "ELEVATED",
       "detect_by": 4,
       "score": {
-        "reached_at": 3,
+        "reached_at": 4,
         "missed": false,
-        "delay": -1,
+        "delay": 0,
         "over_ceiling": [
-          1,
-          3
+          1
         ],
         "flagged_after_recovery": null,
         "settled": null

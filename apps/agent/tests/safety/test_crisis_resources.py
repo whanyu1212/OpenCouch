@@ -17,7 +17,6 @@ ALL_TYPES: tuple[CrisisType, ...] = get_args(CrisisType)
 GAP_TYPES = {
     "harm_to_others",
     "substance_use",
-    "panic_anxiety",
     "risk_taking",
     "medical_emergency",
     "psychosis",

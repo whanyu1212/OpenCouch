@@ -18,7 +18,6 @@ CrisisType = Literal[
     "suicide_self_harm",
     "harm_to_others",
     "substance_use",
-    "panic_anxiety",
     "risk_taking",
     "abuse_violence",
     "medical_emergency",
@@ -26,8 +25,11 @@ CrisisType = Literal[
     "eating_disorder",
     "general_distress",
 ]
-"""The kinds of crisis OpenCouch prepares for. HY-298 detects them; HY-230
-answers each differently."""
+"""The kinds of crisis OpenCouch prepares for. `policy.crisis_types` detects
+suicide and self-harm, harm to others, abuse and medical emergencies; the rest
+have no service of their own yet, so they get the general entries (HY-298).
+Acute panic isn't here: it's the coach's job, and a medical emergency covers
+symptoms that may be more than panic."""
 
 Region = Literal["SG"]
 

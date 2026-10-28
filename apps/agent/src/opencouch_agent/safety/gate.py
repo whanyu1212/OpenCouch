@@ -42,9 +42,10 @@ MAX_RECHECKS: Final = 3
 rejects can't hold the turns after it back for good."""
 
 # The CRISIS rules that mean the danger may be immediate: a timeline, a plan
-# with the means, or steps already taken. Intent alone isn't.
+# with the means, steps already taken, a medical emergency, or violence soon.
+# Intent alone isn't.
 _IMMINENT_ROUTES: Final[frozenset[CrisisRoute]] = frozenset(
-    {"imminent", "plan_means", "preparation"}
+    {"imminent", "plan_means", "preparation", "medical", "violence"}
 )
 
 

@@ -2,7 +2,8 @@
 
 A case is one user message with a label: a BHH crisis type (see `bhh.py`), an
 expected risk level for our own cases, or, for one exchange of a labelled
-conversation, the conversation's ID (see `conversations.py`).
+conversation, the conversation's ID (see `conversations.py`). Our own cases can
+also name what should be detected: crisis types and `asks_for_person`.
 """
 
 import json
@@ -36,12 +37,16 @@ class Case:
         label: What the case is checked against (see the module docstring).
         history: The conversation before `text`, oldest first; empty for a
             first message.
+        expects: What should be detected (see `detection.detections`). On
+            a case labelled `none`, any other detection is a false alarm;
+            extra types on a positive case aren't scored.
     """
 
     id: str
     text: str
     label: str
     history: tuple[Turn, ...] = ()
+    expects: tuple[str, ...] = ()
 
 
 def load_cases(path: Path) -> list[Case]:
@@ -52,7 +57,8 @@ def load_cases(path: Path) -> list[Case]:
             if line.strip():
                 fields = json.loads(line)
                 history = tuple(Turn(**turn) for turn in fields.pop("history", []))
-                cases.append(Case(**fields, history=history))
+                expects = tuple(fields.pop("expects", []))
+                cases.append(Case(**fields, history=history, expects=expects))
     return cases
 
 

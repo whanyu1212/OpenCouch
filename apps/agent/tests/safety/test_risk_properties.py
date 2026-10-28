@@ -11,7 +11,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from opencouch_agent.safety.floor import initial_risk, risk_floor
-from opencouch_agent.safety.policy import RiskLevel
+from opencouch_agent.safety.policy import RiskLevel, assess_level, crisis_types
 from opencouch_agent.safety.questions import UserSignals
 from opencouch_agent.safety.risk import (
     CheckInAnswer,
@@ -183,3 +183,13 @@ def test_a_new_thread_starts_where_the_last_one_left_off(
     for state in replay(second, state=started):
         if ended.peak is RiskLevel.CRISIS:
             assert state.level.at_least(RiskLevel.ELEVATED)
+
+
+@given(any_signals)
+def test_every_elevated_or_crisis_turn_names_a_crisis_type(
+    signals: UserSignals,
+) -> None:
+    # Resources are chosen by type, so a crisis with no type would get none
+    # of its own.
+    shows_type = bool(crisis_types(signals))
+    assert shows_type == assess_level(signals).at_least(RiskLevel.ELEVATED)
