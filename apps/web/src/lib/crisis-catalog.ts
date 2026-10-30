@@ -116,10 +116,3 @@ export function useCrisisCatalog(needed: boolean): CrisisCatalog {
 
   return catalog;
 }
-
-/** The resource card's catalog keys in server-sent state, or none. */
-export function cardKeysIn(state: unknown): string[] {
-  if (typeof state !== "object" || state === null || !("crisis_resources" in state)) return [];
-  const keys = state.crisis_resources;
-  return Array.isArray(keys) && keys.every((key) => typeof key === "string") ? keys : [];
-}

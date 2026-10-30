@@ -54,7 +54,7 @@ function Service({ resource }: { resource: CrisisResource }) {
  * The vetted crisis services the server chose for this turn, in its order.
  * Numbers are plain text so they show on every device; the model never writes them.
  */
-export function CrisisCard({ keys, catalog }: { keys: string[]; catalog: CrisisCatalog }) {
+export function CrisisCard({ keys, catalog }: { keys: readonly string[]; catalog: CrisisCatalog }) {
   const resources =
     catalog.status === "ready" ? keys.flatMap((key) => catalog.resources.get(key) ?? []) : [];
 

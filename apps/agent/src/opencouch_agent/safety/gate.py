@@ -20,8 +20,13 @@ from pydantic_ai.messages import ModelMessage, ModelRequest
 
 from opencouch_agent.safety.jev import FailureReason, JevClient
 from opencouch_agent.safety.policy import CrisisRoute, RiskLevel, crisis_routes
-from opencouch_agent.safety.questions import UserSignals
-from opencouch_agent.safety.risk import RiskState, UnscreenedTurn, update_risk
+from opencouch_agent.safety.questions import USER_TURN_QUESTIONS, UserSignals
+from opencouch_agent.safety.risk import (
+    CheckInAnswer,
+    RiskState,
+    UnscreenedTurn,
+    update_risk,
+)
 from opencouch_agent.safety.screening import (
     ScreeningFailed,
     ScreeningResult,
@@ -79,6 +84,7 @@ async def run_gate(
     latest: Sequence[ModelMessage],
     *,
     at: datetime,
+    check_in: CheckInAnswer | None = None,
 ) -> GateDecision:
     """Recheck any turns screening missed, screen the new one, and decide who replies.
 
@@ -88,6 +94,7 @@ async def run_gate(
         history: The stored conversation before `latest`.
         latest: The user's new messages.
         at: When the turn arrived; must be timezone-aware.
+        check_in: A structured tap already matched to the server's current offer.
 
     Returns:
         The updated risk and the reply path. Never raises on a failed check.
@@ -101,15 +108,33 @@ async def run_gate(
     rechecked = _apply_rechecks(
         risk, pending, rechecks, at=at, floor=risk.level if failed else None
     )
+    # Safety: unresolved or abandoned missed evidence cannot support step-down.
+    if risk.unscreened and check_in == "safe":
+        check_in = None
     if isinstance(screening, ScreeningFailed):
+        if check_in == "need_help":
+            # No classifier evidence: the explicit help request itself supplies
+            # risk and forces CRISIS, so these zero inputs cannot lower the level.
+            rechecked = replace(
+                rechecked,
+                risk=update_risk(
+                    rechecked.risk,
+                    UserSignals(**dict.fromkeys(USER_TURN_QUESTIONS, 0.0)),
+                    at=at,
+                    check_in=check_in,
+                ),
+                imminent=True,
+            )
         missed = UnscreenedTurn(start=len(history), count=len(latest))
         return _unscreened_decision(rechecked, missed, screening.reason)
-    updated = update_risk(rechecked.risk, screening.signals, at=at)
+    updated = update_risk(rechecked.risk, screening.signals, at=at, check_in=check_in)
     path: ReplyPath = "crisis" if updated.level is RiskLevel.CRISIS else "companion"
     return GateDecision(
         risk=updated,
         path=path,
-        imminent=rechecked.imminent or _imminent(screening.signals),
+        imminent=check_in == "need_help"
+        or rechecked.imminent
+        or _imminent(screening.signals),
         abandoned=rechecked.abandoned,
     )
 

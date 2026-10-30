@@ -62,7 +62,9 @@ def test_a_malformed_record_fails_instead_of_reading_as_no_risk() -> None:
         load_risk_record(_with_state(level="unknown"))
 
 
-@pytest.mark.parametrize("field", ["last_risk_at", "last_turn_at"])
+@pytest.mark.parametrize(
+    "field", ["last_risk_at", "last_turn_at", "resources_pinned_until"]
+)
 def test_a_record_with_a_time_without_a_timezone_fails_to_load(field: str) -> None:
     with pytest.raises(ValidationError):
         load_risk_record(_with_state(**{field: "2026-10-23T09:00:00"}))
@@ -80,4 +82,23 @@ def test_a_record_from_before_rechecks_loads_with_nothing_unscreened() -> None:
     assert isinstance(state, dict)
     del state["unscreened"]
 
+    assert load_risk_record(record) == IN_CRISIS
+
+
+def test_check_in_and_help_access_survive_record_round_trip() -> None:
+    state = replace(
+        IN_CRISIS,
+        check_in_offer="offer",
+        resources_pinned_until=IN_CRISIS.last_turn_at,
+        crisis_resources=("sg-sos", "sg-emergency"),
+    )
+    assert load_risk_record(dump_risk_record(state)) == state
+
+
+def test_old_record_has_no_check_in_offer_or_resource_expiry() -> None:
+    record = dump_risk_record(IN_CRISIS)
+    state = record["state"]
+    assert isinstance(state, dict)
+    for name in ("check_in_offer", "resources_pinned_until", "crisis_resources"):
+        del state[name]
     assert load_risk_record(record) == IN_CRISIS

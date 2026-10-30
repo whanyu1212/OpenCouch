@@ -10,7 +10,7 @@ from functools import partial
 from typing import cast
 
 import anyio
-from ag_ui.core import BaseEvent, RunErrorEvent
+from ag_ui.core import BaseEvent, RunErrorEvent, RunStartedEvent, StateSnapshotEvent
 from fastapi import HTTPException
 from pydantic import ValidationError
 from pydantic_ai import Agent, CancellationToken
@@ -32,6 +32,13 @@ from opencouch_agent.safety.crisis import (
     crisis_services,
 )
 from opencouch_agent.safety.crisis_resources import CrisisType
+from opencouch_agent.safety.follow_up import (
+    TurnActions,
+    accepted_check_in,
+    apply_follow_up,
+    prepare_follow_up,
+    returning_to_crisis,
+)
 from opencouch_agent.safety.screening import turn_text
 from opencouch_agent.sessions import Session, SessionStore
 
@@ -162,6 +169,7 @@ async def _parse_request(
             ServerOwnedAGUIAdapter,
             await ServerOwnedAGUIAdapter.from_request(request, agent=agent),
         )
+        adapter.actions = TurnActions.model_validate(adapter.run_input.forwarded_props)
     except ValidationError as error:
         # Leave the input out of the error: it may contain what the user wrote.
         detail = error.errors(include_input=False, include_url=False)
@@ -204,7 +212,26 @@ async def _start_run(
     # without leaving a half-recorded turn behind.
     deps = CompanionDeps(state=CompanionState.model_validate(session.state))
     at = datetime.now(UTC)
-    decision = await run_gate(jev, session.risk, session.history, turn.messages, at=at)
+    check_in = accepted_check_in(
+        adapter.actions.crisis_check_in, session.risk, turn_text(turn.messages), at=at
+    )
+    decision = await run_gate(
+        jev, session.risk, session.history, turn.messages, at=at, check_in=check_in
+    )
+    resources = tuple(deps.state.crisis_resources)
+    if decision.path == "crisis":
+        resources = tuple(
+            service.key
+            for service in crisis_services(
+                agents.crisis,
+                types=decision.risk.crisis_types,
+                imminent=decision.imminent,
+            )
+        )
+    elif session.risk.crisis_resources is not None:
+        resources = session.risk.crisis_resources
+    decision = prepare_follow_up(decision, session.risk, resources, at=at)
+    apply_follow_up(deps.state, decision.risk, at=at)
     # Safety: persist the user's message and the new risk before any agent
     # runs, so a failed run can't lose an escalation. A later turn then sees
     # two user messages in a row, which models handle.
@@ -225,8 +252,6 @@ async def _start_run(
         audit, audit_entries(turn.thread_id, session.risk, decision, at=at)
     )
 
-    # The resource card belongs to crisis turns, so every other turn clears it.
-    deps.state.crisis_resources = []
     recorder = RunRecorder(store, turn.thread_id, turn.lease_token, deps)
     if decision.path == "crisis":
         return _start_crisis_reply(
@@ -237,6 +262,7 @@ async def _start_run(
             recorder,
             types=decision.risk.crisis_types,
             imminent=decision.imminent,
+            returning=returning_to_crisis(session.risk, at=at),
         )
     return _start_companion(
         adapter,
@@ -273,7 +299,21 @@ def _start_companion(
         on_complete=recorder.save_completed,
         on_cancel=recorder.save_cancelled,
     )
-    return routed, _ActiveRun(events, cancellation, recorder)
+    return routed, _ActiveRun(_companion_events(events, state), cancellation, recorder)
+
+
+async def _companion_events(
+    events: AsyncIterator[BaseEvent], state: dict[str, object]
+) -> AsyncGenerator[BaseEvent]:
+    # The SDK doesn't publish state on ordinary turns. Publish the server's
+    # decision before any reply so step-down clears the offer and starts the pin.
+    try:
+        async for event in events:
+            yield event
+            if isinstance(event, RunStartedEvent):
+                yield StateSnapshotEvent(snapshot=state)
+    finally:
+        await _close_events(events)
 
 
 def _start_crisis_reply(
@@ -285,10 +325,10 @@ def _start_crisis_reply(
     *,
     types: frozenset[CrisisType],
     imminent: bool,
+    returning: bool,
 ) -> tuple[ServerOwnedAGUIAdapter, _ActiveRun]:
     """Start the crisis responder, whose reply is checked and sent whole."""
     services = crisis_services(responder, types=types, imminent=imminent)
-    recorder.deps.state.crisis_resources = [service.key for service in services]
     state = recorder.deps.state.model_dump(mode="json")
     routed = replace(adapter, agent=responder.agent, server_state=state)
     cancellation = CancellationToken()
@@ -300,6 +340,7 @@ def _start_crisis_reply(
         deps=recorder.deps,
         types=types,
         imminent=imminent,
+        returning=returning,
         cancellation=cancellation,
     )
     events = crisis_events(

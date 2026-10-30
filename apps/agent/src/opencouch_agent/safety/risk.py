@@ -21,7 +21,7 @@ The per-user floor is in `floor.py`. Not here yet: the ledger and when to
 show resources at ELEVATED.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Final, Literal
 
@@ -139,6 +139,12 @@ class RiskState:
     changes: tuple[RiskChange, ...] = ()
     unscreened: tuple[UnscreenedTurn, ...] = ()
     crisis_types: frozenset[CrisisType] = frozenset()
+    check_in_offer: str | None = None
+    """Single-turn offer ID, persisted before the UI receives it."""
+    resources_pinned_until: datetime | None = None
+    """Wall-clock expiry after step-down, never extended by calm turns."""
+    crisis_resources: tuple[str, ...] | None = None
+    """Last server-selected services; None means a record predating follow-up."""
 
 
 @dataclass(frozen=True)
@@ -214,7 +220,8 @@ def update_risk(
     if level is not state.level:
         change = RiskChange(state.turns + 1, state.level, level, reason)
         changes = (*changes, change)
-    return RiskState(
+    return replace(
+        state,
         level=level,
         peak=max(state.peak, level, key=lambda each: each.rank),
         score=score,

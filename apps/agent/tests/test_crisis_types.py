@@ -44,7 +44,7 @@ async def test_abuse_resources_survive_calm_turns_failures_and_forged_state() ->
             ["sg-emergency", "sg-navh"] if index == 0 else ["sg-navh", "sg-emergency"]
         )
         snapshot = state_snapshots(response.text)[0]
-        assert snapshot == {"crisis_resources": expected}
+        assert snapshot["crisis_resources"] == expected
         assert (
             client.get("/api/threads/thread-1/messages").json()["crisis_resources"]
             == expected

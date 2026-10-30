@@ -5,7 +5,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { agentUrl } from "./agent-url";
 import { agentAuthHeaders, SignedOutError } from "./auth/client";
-import { cardKeysIn } from "./crisis-catalog";
+import {
+  type CrisisCheckInAnswer,
+  crisisCheckInRunParameters,
+  crisisCheckInText,
+} from "./crisis-check-in";
+import { crisisResourcesAt, EMPTY_CRISIS_UI_STATE, parseCrisisUiState } from "./crisis-state";
 import { ConversationNotFoundError, loadHistory, NotInvitedError } from "./history";
 import { isNotInvited } from "./not-invited";
 import { NewestMessageAgent } from "./newest-message-agent";
@@ -30,8 +35,8 @@ export type ChatError =
   | { kind: "timeout"; text: string }
   | { kind: "reply_failed"; text: string };
 
-/** Whether the message stayed in the conversation or was taken back out. */
-export type SendResult = "kept" | "removed";
+/** Whether the message stayed, was taken back out, or lost a same-tick send race. */
+export type SendResult = "kept" | "removed" | "ignored";
 
 /** Whether `@ag-ui/client` refused a send because the agent says they aren't invited. */
 function refusedAsNotInvited(error: unknown): boolean {
@@ -87,8 +92,12 @@ export function useCompanion() {
   const [notInvited, setNotInvited] = useState(false);
   // Replies cut off by an error, a timeout or a disconnect.
   const [interrupted, setInterrupted] = useState<ReadonlySet<string>>(new Set());
-  // Catalog keys for the crisis resource card. Only the server sets them.
-  const [crisisResources, setCrisisResources] = useState<string[]>([]);
+  // Resource visibility and check-in offers are all server-owned.
+  const [crisis, setCrisis] = useState(EMPTY_CRISIS_UI_STATE);
+  const [resourceClock, setResourceClock] = useState(() => Date.now());
+  // State disables the UI on the next render; this closes the smaller window
+  // before that render where a second click could start another request.
+  const sending = useRef(false);
   // Set by the stream as it arrives, read after `runAgent` settles.
   const runStarted = useRef(false);
   const runError = useRef<"timeout" | "reply_failed" | null>(null);
@@ -99,10 +108,11 @@ export function useCompanion() {
       onMessagesChanged: ({ messages }) => setMessages([...messages]),
       onRunStartedEvent: () => {
         runStarted.current = true;
-        // The card belongs to crisis turns, which send it straight after this.
-        setCrisisResources([]);
+        // A tap can be submitted once. Keep resources pinned until the next
+        // snapshot replaces them, including if this run later disconnects.
+        setCrisis((current) => ({ ...current, crisisCheckIn: null }));
       },
-      onStateSnapshotEvent: ({ event }) => setCrisisResources(cardKeysIn(event.snapshot)),
+      onStateSnapshotEvent: ({ event }) => setCrisis(parseCrisisUiState(event.snapshot)),
       // A failure mid-reply arrives as an event; `runAgent` still resolves.
       // Its message is server text, so only its code is used.
       onRunErrorEvent: ({ event }) => {
@@ -115,6 +125,20 @@ export function useCompanion() {
     };
   }, [agent]);
 
+  // Expire a pinned card without waiting for another turn or a page reload.
+  useEffect(() => {
+    const expiry = crisis.crisisResourcesUntil;
+    if (expiry === null) return;
+    let timer: number;
+    const expire = () => {
+      const now = Date.now();
+      setResourceClock(now);
+      if (now < expiry) timer = window.setTimeout(expire, expiry - now);
+    };
+    timer = window.setTimeout(expire, Math.max(0, expiry - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [crisis.crisisResourcesUntil]);
+
   // Someone signed out, or in as someone else, in another tab. Reloading
   // checks the session again, so this tab never sends one person's messages
   // into another's conversation.
@@ -124,7 +148,7 @@ export function useCompanion() {
   const openNewThread = useCallback(() => {
     setMessages([]);
     setInterrupted(new Set());
-    setCrisisResources([]);
+    setCrisis(EMPTY_CRISIS_UI_STATE);
     setLoading(true);
     setThreadId(startThread());
   }, []);
@@ -140,7 +164,7 @@ export function useCompanion() {
         if (controller.signal.aborted) return;
         agent.setMessages(history.messages);
         setInterrupted(history.interrupted);
-        setCrisisResources(history.crisisResources);
+        setCrisis(history.crisis);
         setLoading(false);
       })
       .catch((err: unknown) => {
@@ -169,9 +193,14 @@ export function useCompanion() {
     }
   }, [agent]);
 
-  const send = useCallback(
-    async (text: string): Promise<SendResult> => {
+  const sendMessage = useCallback(
+    async (
+      text: string,
+      checkIn?: { offerId: string; answer: CrisisCheckInAnswer },
+    ): Promise<SendResult> => {
       if (!agent) return "removed";
+      if (sending.current) return "ignored";
+      sending.current = true;
       const id = crypto.randomUUID();
       runStarted.current = false;
       runError.current = null;
@@ -181,7 +210,9 @@ export function useCompanion() {
         // Before the message is added, so a sign-out leaves nothing to take back out.
         agent.setAuthHeaders(await agentAuthHeaders());
         agent.addMessage({ id, role: "user", content: text });
-        await agent.runAgent();
+        await agent.runAgent(
+          checkIn ? crisisCheckInRunParameters(checkIn.offerId, checkIn.answer) : undefined,
+        );
         if (runError.current) {
           markLastReplyInterrupted();
           setError({ kind: runError.current, text });
@@ -205,11 +236,25 @@ export function useCompanion() {
           if (httpStatus(err) === 404) openNewThread();
         }
       } finally {
+        sending.current = false;
         setRunning(false);
       }
       return agent.messages.some((message) => message.id === id) ? "kept" : "removed";
     },
     [agent, markLastReplyInterrupted, openNewThread],
+  );
+
+  const send = useCallback((text: string) => sendMessage(text), [sendMessage]);
+
+  const sendCrisisCheckIn = useCallback(
+    (answer: CrisisCheckInAnswer): Promise<SendResult> => {
+      if (crisis.crisisCheckIn === null) return Promise.resolve("removed");
+      return sendMessage(crisisCheckInText(answer), {
+        offerId: crisis.crisisCheckIn,
+        answer,
+      });
+    },
+    [crisis.crisisCheckIn, sendMessage],
   );
 
   const startNewConversation = useCallback(() => {
@@ -222,12 +267,15 @@ export function useCompanion() {
   return {
     messages,
     interrupted,
-    crisisResources,
+    crisisResources: crisisResourcesAt(crisis, resourceClock),
+    getHelpResources: crisis.getHelpResources,
+    crisisCheckIn: crisis.crisisCheckIn,
     loading,
     running,
     error,
     notInvited,
     send,
+    sendCrisisCheckIn,
     startNewConversation,
     dismissError,
   };
