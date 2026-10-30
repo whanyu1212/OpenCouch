@@ -9,6 +9,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 from opencouch_agent.agent import CompanionDeps
+from opencouch_agent.safety.follow_up import TurnActions
 
 
 class UnsupportedRequestError(ValueError):
@@ -33,6 +34,7 @@ class ServerOwnedAGUIAdapter(AGUIAdapter[CompanionDeps, str]):
     """
 
     server_state: dict[str, Any] = field(default_factory=dict)
+    actions: TurnActions = field(default_factory=TurnActions)
 
     def check_request(self) -> None:
         """Reject requests that rely on client input the server doesn't trust.

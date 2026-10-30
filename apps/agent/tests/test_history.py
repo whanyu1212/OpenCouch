@@ -16,6 +16,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 
+from opencouch_agent.agent import CompanionState
 from opencouch_agent.api.history import shown_history, wait_for_turn
 from opencouch_agent.safety.risk import RiskState
 from opencouch_agent.sessions import InMemorySessionStore
@@ -51,7 +52,10 @@ def test_an_unknown_thread_has_no_history(client: TestClient) -> None:
     response = client.get("/api/threads/never-started/messages")
 
     assert response.status_code == 200
-    assert response.json() == {"messages": [], "crisis_resources": []}
+    assert response.json() == {
+        "messages": [],
+        **CompanionState().model_dump(mode="json"),
+    }
 
 
 def test_history_never_includes_risk_or_other_server_data() -> None:
@@ -64,7 +68,13 @@ def test_history_never_includes_risk_or_other_server_data() -> None:
 
     response = client.get("/api/threads/thread-1/messages")
 
-    assert set(response.json()) == {"messages", "crisis_resources"}
+    assert set(response.json()) == {
+        "messages",
+        "crisis_resources",
+        "crisis_resources_until",
+        "get_help_resources",
+        "crisis_check_in",
+    }
     for message in response.json()["messages"]:
         assert set(message) == {"id", "role", "content", "interrupted"}
 

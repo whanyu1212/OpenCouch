@@ -39,16 +39,10 @@ from pydantic import BaseModel, model_validator
 from evals.crisis.cases import Case
 from evals.crisis.conversations import EXCHANGE_SEPARATOR, LevelName
 from opencouch_agent.safety import RiskLevel, Turn
+from opencouch_agent.safety.follow_up import CHECK_IN_TEXT as CHECK_IN_TEXT
 from opencouch_agent.safety.risk import CheckInAnswer
 
 STEP_DOWN_PATH: Final = Path(__file__).parent / "conversations" / "step_down.jsonl"
-
-# The message a check-in tap sends, so Jev reads the tap like typed text.
-CHECK_IN_TEXT: Final[dict[CheckInAnswer, str]] = {
-    "safe": "I'm safe right now",
-    "not_sure": "I'm not sure",
-    "need_help": "I need help now",
-}
 
 
 class TimedExchange(BaseModel):

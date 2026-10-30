@@ -72,7 +72,9 @@ FALLBACK_QUESTIONS: Final[dict[CrisisType, str]] = {
 }
 
 
-def crisis_fallback(types: frozenset[CrisisType]) -> str:
+def crisis_fallback(
+    types: frozenset[CrisisType], *, include_question: bool = True
+) -> str:
     """A fixed reply of at most four sentences, with emergency help first."""
     medical = "medical_emergency" in types
     self_harm = "suicide_self_harm" in types
@@ -93,6 +95,13 @@ def crisis_fallback(types: frozenset[CrisisType]) -> str:
         parts.append("You can also call SOS on 1767 or WhatsApp 9151 1767.")
     elif not medical and not violence:
         parts.append("You can talk to someone at mindline on 1771.")
-    primary = ordered_crisis_types(types)[0]
-    parts.append(FALLBACK_QUESTIONS.get(primary, "Are you safe right now?"))
+    if include_question:
+        primary = ordered_crisis_types(types)[0]
+        parts.append(FALLBACK_QUESTIONS.get(primary, "Are you safe right now?"))
     return " ".join(parts)
+
+
+RETURN_GUIDANCE: Final = (
+    "The server will begin this reply with 'Are you safe right now?'. "
+    "Continue from that check-in without repeating it or adding another question."
+)

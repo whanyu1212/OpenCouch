@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { cardKeysIn, parseCrisisCatalog } from "./crisis-catalog";
+import { parseCrisisCatalog } from "./crisis-catalog";
 
 const call = { kind: "call", label: "Call", display: "1767" };
 const sms = { kind: "sms", label: "Text", display: "9151 1767" };
@@ -84,22 +84,5 @@ describe("parseCrisisCatalog", () => {
     const entry = { ...resource, channels: [call, channel] };
 
     expect(() => parseCrisisCatalog({ resources: [entry] })).toThrow(ENTRY_ERROR);
-  });
-});
-
-describe("cardKeysIn", () => {
-  it.each([
-    {
-      case: "a list of keys",
-      state: { crisis_resources: ["sos", "imh"] },
-      expected: ["sos", "imh"],
-    },
-    { case: "null state", state: null, expected: [] },
-    { case: "non-object state", state: "sos", expected: [] },
-    { case: "no card", state: {}, expected: [] },
-    { case: "keys not a list", state: { crisis_resources: "sos" }, expected: [] },
-    { case: "a non-string key", state: { crisis_resources: ["sos", 1] }, expected: [] },
-  ])("reads $case", ({ state, expected }) => {
-    expect(cardKeysIn(state)).toEqual(expected);
   });
 });

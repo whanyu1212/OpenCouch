@@ -6,7 +6,7 @@ calls, instructions, shared state and risk stay on the server.
 
 import asyncio
 from collections.abc import Sequence
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Final, Literal
 
 from fastapi import HTTPException
@@ -15,6 +15,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
 from opencouch_agent.agent import CompanionState
 from opencouch_agent.safety import conversation_turns
+from opencouch_agent.safety.follow_up import apply_follow_up
 from opencouch_agent.sessions import SessionStore
 
 THREAD_NOT_FOUND_MESSAGE: Final = "There's no conversation with that ID."
@@ -34,7 +35,7 @@ class ShownMessage(BaseModel):
     """The reply was cut off by an error, a timeout or a disconnect (HY-204)."""
 
 
-class ConversationHistory(BaseModel):
+class ConversationHistory(CompanionState):
     """The messages of one conversation, oldest first, and its resource card."""
 
     messages: list[ShownMessage]
@@ -64,7 +65,9 @@ async def thread_history(
     if not await store.can_read(thread_id, user_id):
         raise HTTPException(status_code=404, detail=THREAD_NOT_FOUND_MESSAGE)
     state = CompanionState.model_validate(session.state)
-    return shown_history(session.history, crisis_resources=state.crisis_resources)
+    apply_follow_up(state, session.risk, at=datetime.now(UTC))
+    shown = shown_history(session.history)
+    return shown.model_copy(update=state.model_dump())
 
 
 async def wait_for_turn(store: SessionStore, thread_id: str, limit: timedelta) -> None:

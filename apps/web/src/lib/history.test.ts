@@ -8,8 +8,13 @@ const reply = { id: "m2", role: "assistant", content: "Let's look at it.", inter
 const SHAPE_ERROR = "History response was not in the expected shape";
 
 describe("parseHistory", () => {
-  it("splits messages, cut-off replies and the card", () => {
-    const history = parseHistory({ messages: [question, reply], crisis_resources: ["sos"] });
+  it("splits messages, cut-off replies and crisis UI state", () => {
+    const history = parseHistory({
+      messages: [question, reply],
+      crisis_resources: ["sos"],
+      get_help_resources: ["sos", "imh"],
+      crisis_check_in: "offer-1",
+    });
 
     expect(history).toEqual({
       messages: [
@@ -17,12 +22,22 @@ describe("parseHistory", () => {
         { id: "m2", role: "assistant", content: "Let's look at it." },
       ],
       interrupted: new Set(["m2"]),
-      crisisResources: ["sos"],
+      crisis: {
+        crisisResources: ["sos"],
+        crisisResourcesUntil: null,
+        getHelpResources: ["sos", "imh"],
+        crisisCheckIn: "offer-1",
+      },
     });
   });
 
-  it("reads no card when none is saved", () => {
-    expect(parseHistory({ messages: [question] }).crisisResources).toEqual([]);
+  it("defaults crisis UI state for an old history response", () => {
+    expect(parseHistory({ messages: [question] }).crisis).toEqual({
+      crisisResources: [],
+      crisisResourcesUntil: null,
+      getHelpResources: [],
+      crisisCheckIn: null,
+    });
   });
 
   it.each([

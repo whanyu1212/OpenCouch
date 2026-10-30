@@ -1,7 +1,7 @@
 import type { Message } from "@ag-ui/core";
 
 import { SignedOutError } from "./auth/client";
-import { cardKeysIn } from "./crisis-catalog";
+import { type CrisisUiState, parseCrisisUiState } from "./crisis-state";
 import { isRecord } from "./is-record";
 import { isNotInvited } from "./not-invited";
 
@@ -28,7 +28,7 @@ export class NotInvitedError extends Error {
 export type LoadedHistory = {
   messages: Message[];
   interrupted: Set<string>;
-  crisisResources: string[];
+  crisis: CrisisUiState;
 };
 
 type ShownMessage = {
@@ -95,6 +95,6 @@ export function parseHistory(body: unknown): LoadedHistory {
   return {
     messages: raw.map(({ id, role, content }) => ({ id, role, content })),
     interrupted: new Set(raw.filter((message) => message.interrupted).map(({ id }) => id)),
-    crisisResources: cardKeysIn(body),
+    crisis: parseCrisisUiState(body),
   };
 }

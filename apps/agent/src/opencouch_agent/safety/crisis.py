@@ -33,6 +33,7 @@ from opencouch_agent.agent import CompanionDeps
 from opencouch_agent.safety.crisis_guidance import (
     GENERAL_INSTRUCTIONS,
     IMMINENT_INSTRUCTIONS,
+    RETURN_GUIDANCE,
     TYPE_INSTRUCTIONS,
     crisis_fallback,
 )
@@ -45,6 +46,7 @@ from opencouch_agent.safety.crisis_resources import (
     ordered_crisis_types,
     select_resources,
 )
+from opencouch_agent.safety.follow_up import CHECK_IN_GUIDANCE, RETURN_CHECK_IN
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +124,7 @@ async def crisis_reply(
     types: frozenset[CrisisType],
     imminent: bool,
     cancellation: CancellationToken,
+    returning: bool = False,
 ) -> str:
     """Write a crisis reply that is safe to send, or the fallback.
 
@@ -133,6 +136,7 @@ async def crisis_reply(
         types: Types observed in the thread's server-owned risk state.
         imminent: Whether the danger may be immediate.
         cancellation: Stops the model call when the turn ends early.
+        returning: Start with a safety check-in after silence, including on failure.
 
     Returns:
         The model's reply if it passes the check, otherwise the fallback.
@@ -141,15 +145,21 @@ async def crisis_reply(
         RunCancelled: If the turn was cancelled; nothing was shown, so
             nothing is sent.
     """
-    fallback = crisis_fallback(types)
+    # Urgent help takes precedence over a routine check-in after silence.
+    check_in_first = returning and not imminent
+    prefix = f"{RETURN_CHECK_IN}\n\n" if check_in_first else ""
+    fallback = prefix + crisis_fallback(types, include_question=not check_in_first)
+    instructions = turn_instructions(services, types=types, imminent=imminent)
+    if deps.state.crisis_check_in is not None:
+        instructions += f"\n\n{CHECK_IN_GUIDANCE}"
+    if check_in_first:
+        instructions += f"\n{RETURN_GUIDANCE}"
     try:
         async with asyncio.timeout(REPLY_TIMEOUT.total_seconds()):
             result = await responder.agent.run(
                 message_history=list(history),
                 deps=deps,
-                instructions=turn_instructions(
-                    services, types=types, imminent=imminent
-                ),
+                instructions=instructions,
                 usage_limits=REPLY_LIMITS,
                 cancellation_token=cancellation,
             )
@@ -168,7 +178,7 @@ async def crisis_reply(
             "Crisis reply failed its check (%s); sending the fallback", problem
         )
         return fallback
-    return result.output
+    return prefix + result.output
 
 
 def turn_instructions(

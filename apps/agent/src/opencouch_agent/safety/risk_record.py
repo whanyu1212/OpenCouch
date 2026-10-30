@@ -33,7 +33,11 @@ class _RiskRecord(BaseModel):
     def _timezone_aware(cls, state: RiskState) -> RiskState:
         # `update_risk` compares these with an aware time; a naive one would
         # fail mid-turn instead of here.
-        for moment in (state.last_risk_at, state.last_turn_at):
+        for moment in (
+            state.last_risk_at,
+            state.last_turn_at,
+            state.resources_pinned_until,
+        ):
             if moment is not None and moment.tzinfo is None:
                 raise ValueError("risk record times must be timezone-aware")
         return state
