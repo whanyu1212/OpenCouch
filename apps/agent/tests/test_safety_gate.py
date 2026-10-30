@@ -11,7 +11,11 @@ from pydantic_ai.models.test import TestModel
 
 from opencouch_agent.api.history import shown_history
 from opencouch_agent.safety import RiskLevel
-from opencouch_agent.safety.crisis import CRISIS_FALLBACK, IMMINENT_INSTRUCTIONS
+from opencouch_agent.safety.crisis_guidance import (
+    IMMINENT_INSTRUCTIONS,
+    crisis_fallback,
+)
+from opencouch_agent.safety.crisis_resources import CrisisType
 from opencouch_agent.sessions import InMemorySessionStore
 from tests.ag_ui_requests import (
     assistant_message,
@@ -23,6 +27,9 @@ from tests.ag_ui_requests import (
 )
 from tests.apps import CRISIS_REPLY, build_app
 from tests.fake_jev import ScriptedJev
+
+SELF_HARM: frozenset[CrisisType] = frozenset({"suicide_self_harm"})
+CRISIS_FALLBACK = crisis_fallback(SELF_HARM)
 
 COMPANION_REPLY = "I'm here with you."
 CRISIS_MESSAGE = "i'm going to take all my pills tonight"

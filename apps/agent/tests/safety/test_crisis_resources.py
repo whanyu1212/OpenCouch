@@ -55,7 +55,12 @@ display = "995"
 
 
 def keys(crisis_type: CrisisType | None, *, imminent: bool = False) -> list[str]:
-    selected = select_resources(CATALOG, "SG", crisis_type, imminent=imminent)
+    selected = select_resources(
+        CATALOG,
+        "SG",
+        frozenset({crisis_type}) if crisis_type else frozenset(),
+        imminent=imminent,
+    )
     return [resource.key for resource in selected]
 
 
@@ -126,8 +131,8 @@ def test_imminent_danger_puts_emergency_first_and_otherwise_last() -> None:
     assert keys("suicide_self_harm", imminent=False) == ["sg-sos", "sg-emergency"]
 
 
-def test_an_unknown_type_is_treated_as_suicide_or_self_harm() -> None:
-    assert keys(None) == keys("suicide_self_harm")
+def test_an_unknown_type_gets_general_support() -> None:
+    assert keys(None) == ["sg-sos", "sg-mindline", "sg-emergency"]
 
 
 def test_abuse_gets_the_anti_violence_helpline() -> None:

@@ -30,11 +30,19 @@ from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model
 
 from opencouch_agent.agent import CompanionDeps
+from opencouch_agent.safety.crisis_guidance import (
+    GENERAL_INSTRUCTIONS,
+    IMMINENT_INSTRUCTIONS,
+    TYPE_INSTRUCTIONS,
+    crisis_fallback,
+)
 from opencouch_agent.safety.crisis_reply_check import allowed_numbers, reply_problem
 from opencouch_agent.safety.crisis_resources import (
     CrisisCatalog,
     CrisisResource,
+    CrisisType,
     Region,
+    ordered_crisis_types,
     select_resources,
 )
 
@@ -46,15 +54,7 @@ def _read(name: str) -> str:
 
 
 CRISIS_INSTRUCTIONS: Final = _read("crisis_prompt.md")
-CRISIS_FALLBACK: Final = _read("crisis_fallback.md").strip()
 SERVICES_HEADING: Final = "## The services you may point to"
-IMMINENT_INSTRUCTIONS: Final = """\
-## Right now
-
-This message suggests they may be in immediate danger. Keep the reply to two
-short sentences: tell them to call 995 now, then ask one direct question about
-their safety.
-"""
 
 # A cold first reply took 7-8 seconds against the real model; this leaves room
 # for that, and still sends the fallback well inside the turn's own limit.
@@ -107,10 +107,10 @@ def build_crisis_agent(model: Model | str) -> Agent[CompanionDeps, str]:
 
 
 def crisis_services(
-    responder: CrisisResponder, *, imminent: bool
+    responder: CrisisResponder, *, types: frozenset[CrisisType], imminent: bool
 ) -> list[CrisisResource]:
     """The vetted services for this crisis turn, in the order to show them."""
-    return select_resources(responder.catalog, _REGION, None, imminent=imminent)
+    return select_resources(responder.catalog, _REGION, types, imminent=imminent)
 
 
 async def crisis_reply(
@@ -119,6 +119,7 @@ async def crisis_reply(
     services: Sequence[CrisisResource],
     *,
     deps: CompanionDeps,
+    types: frozenset[CrisisType],
     imminent: bool,
     cancellation: CancellationToken,
 ) -> str:
@@ -129,6 +130,7 @@ async def crisis_reply(
         history: The conversation, ending with the user's new message.
         services: The services the reply may point to; see `crisis_services`.
         deps: The run's dependencies.
+        types: Types observed in the thread's server-owned risk state.
         imminent: Whether the danger may be immediate.
         cancellation: Stops the model call when the turn ends early.
 
@@ -139,12 +141,15 @@ async def crisis_reply(
         RunCancelled: If the turn was cancelled; nothing was shown, so
             nothing is sent.
     """
+    fallback = crisis_fallback(types)
     try:
         async with asyncio.timeout(REPLY_TIMEOUT.total_seconds()):
             result = await responder.agent.run(
                 message_history=list(history),
                 deps=deps,
-                instructions=turn_instructions(services, imminent=imminent),
+                instructions=turn_instructions(
+                    services, types=types, imminent=imminent
+                ),
                 usage_limits=REPLY_LIMITS,
                 cancellation_token=cancellation,
             )
@@ -152,23 +157,29 @@ async def crisis_reply(
         raise
     except TimeoutError:
         logger.warning("Crisis reply timed out; sending the fallback")
-        return CRISIS_FALLBACK
+        return fallback
     # Fail closed: any failure to write a reply still sends safe, vetted text.
     except Exception:
         logger.exception("Crisis reply failed; sending the fallback")
-        return CRISIS_FALLBACK
+        return fallback
     problem = reply_problem(result.output, responder.allowed_numbers)
     if problem is not None:
         logger.warning(
             "Crisis reply failed its check (%s); sending the fallback", problem
         )
-        return CRISIS_FALLBACK
+        return fallback
     return result.output
 
 
-def turn_instructions(services: Sequence[CrisisResource], *, imminent: bool) -> str:
+def turn_instructions(
+    services: Sequence[CrisisResource], *, types: frozenset[CrisisType], imminent: bool
+) -> str:
     """This turn's instructions: the services to point to, and any urgency."""
-    lines = [SERVICES_HEADING, ""]
+    guidance = dict.fromkeys(
+        TYPE_INSTRUCTIONS.get(kind, GENERAL_INSTRUCTIONS)
+        for kind in ordered_crisis_types(types)
+    )
+    lines = [*guidance, "", SERVICES_HEADING, ""]
     for service in services:
         hours = f" ({service.hours})" if service.hours else ""
         ways = "; ".join(

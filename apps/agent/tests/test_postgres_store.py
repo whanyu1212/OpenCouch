@@ -35,6 +35,7 @@ IN_CRISIS = RiskState(
     last_risk_at=datetime(2026, 10, 23, 9, 0, tzinfo=UTC),
     last_turn_at=datetime(2026, 10, 23, 9, 0, tzinfo=UTC),
     changes=(RiskChange(1, RiskLevel.NONE, RiskLevel.CRISIS, "CRISIS: intent"),),
+    crisis_types=frozenset({"suicide_self_harm", "medical_emergency"}),
 )
 
 pytestmark = pytest.mark.skipif(

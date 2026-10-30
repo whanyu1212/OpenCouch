@@ -25,11 +25,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Final, Literal
 
+from opencouch_agent.safety.crisis_resources import CrisisType
 from opencouch_agent.safety.policy import (
     CrisisRoute,
     RiskLevel,
     assess_level,
     crisis_routes,
+    crisis_types,
 )
 from opencouch_agent.safety.questions import UserSignals
 
@@ -123,6 +125,8 @@ class RiskState:
         last_turn_at: When the latest user turn arrived.
         changes: Every change of level, oldest first.
         unscreened: Turns screening missed and hasn't rechecked, oldest first.
+        crisis_types: Types observed in this thread, retained through calm turns
+            and screening failures. Empty for older records or unknown risk.
     """
 
     level: RiskLevel = RiskLevel.NONE
@@ -134,6 +138,7 @@ class RiskState:
     last_turn_at: datetime | None = None
     changes: tuple[RiskChange, ...] = ()
     unscreened: tuple[UnscreenedTurn, ...] = ()
+    crisis_types: frozenset[CrisisType] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -219,6 +224,7 @@ def update_risk(
         last_turn_at=at,
         changes=changes,
         unscreened=state.unscreened,
+        crisis_types=state.crisis_types | crisis_types(signals),
     )
 
 
