@@ -21,16 +21,21 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from opencouch_agent.agent import CompanionDeps
 from opencouch_agent.safety import crisis as crisis_module
 from opencouch_agent.safety.crisis import (
-    CRISIS_FALLBACK,
-    IMMINENT_INSTRUCTIONS,
     CrisisResponder,
     build_crisis_agent,
     crisis_events,
     crisis_reply,
     crisis_services,
 )
+from opencouch_agent.safety.crisis_guidance import (
+    IMMINENT_INSTRUCTIONS,
+    crisis_fallback,
+)
 from opencouch_agent.safety.crisis_reply_check import allowed_numbers, reply_problem
-from opencouch_agent.safety.crisis_resources import load_shipped_catalog
+from opencouch_agent.safety.crisis_resources import CrisisType, load_shipped_catalog
+
+SELF_HARM: frozenset[CrisisType] = frozenset({"suicide_self_harm"})
+CRISIS_FALLBACK = crisis_fallback(SELF_HARM)
 
 CATALOG = load_shipped_catalog()
 STATE = {"crisis_resources": ["sg-sos", "sg-emergency"]}
@@ -57,8 +62,9 @@ async def _reply(model: FunctionModel, *, imminent: bool = False) -> str:
     return await crisis_reply(
         responder,
         HISTORY,
-        crisis_services(responder, imminent=imminent),
+        crisis_services(responder, types=SELF_HARM, imminent=imminent),
         deps=CompanionDeps(),
+        types=SELF_HARM,
         imminent=imminent,
         cancellation=CancellationToken(),
     )
@@ -127,8 +133,9 @@ async def test_a_cancelled_turn_sends_nothing() -> None:
         await crisis_reply(
             responder,
             HISTORY,
-            crisis_services(responder, imminent=False),
+            crisis_services(responder, types=SELF_HARM, imminent=False),
             deps=CompanionDeps(),
+            types=SELF_HARM,
             imminent=False,
             cancellation=cancellation,
         )
@@ -153,7 +160,9 @@ async def test_imminent_danger_puts_the_emergency_number_first() -> None:
 
     instructions = seen[0].instructions or ""
     assert IMMINENT_INSTRUCTIONS.strip() in instructions
-    assert instructions.index("Emergency services") < instructions.index("SOS")
+    assert instructions.index("- Emergency services") < instructions.index(
+        "- Samaritans"
+    )
 
 
 def test_the_fallback_passes_the_check() -> None:

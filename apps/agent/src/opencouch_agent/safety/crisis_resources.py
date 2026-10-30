@@ -33,11 +33,19 @@ symptoms that may be more than panic."""
 
 Region = Literal["SG"]
 
-# Today's CRISIS rules are all about suicide and self-harm, so until HY-298
-# detects the type, that's what a crisis is taken to be.
-DEFAULT_CRISIS_TYPE: Final[CrisisType] = "suicide_self_harm"
 # Types with no entry of their own get the general ones.
 FALLBACK_CRISIS_TYPE: Final[CrisisType] = "general_distress"
+CRISIS_TYPE_ORDER: Final[tuple[CrisisType, ...]] = (
+    "medical_emergency",
+    "harm_to_others",
+    "abuse_violence",
+    "suicide_self_harm",
+    "substance_use",
+    "risk_taking",
+    "psychosis",
+    "eating_disorder",
+    "general_distress",
+)
 # Neutral by design: never anything from the user's conversation.
 WHATSAPP_OPENER: Final = "Hi, I'd like to talk to someone."
 
@@ -143,10 +151,17 @@ def load_shipped_catalog() -> CrisisCatalog:
     return load_catalog(text)
 
 
+def ordered_crisis_types(types: frozenset[CrisisType]) -> tuple[CrisisType, ...]:
+    """Types in response priority order; unknown risk gets general support."""
+    return tuple(kind for kind in CRISIS_TYPE_ORDER if kind in types) or (
+        FALLBACK_CRISIS_TYPE,
+    )
+
+
 def select_resources(
     catalog: CrisisCatalog,
     region: Region,
-    crisis_type: CrisisType | None,
+    crisis_types: frozenset[CrisisType],
     *,
     imminent: bool,
 ) -> list[CrisisResource]:
@@ -155,7 +170,7 @@ def select_resources(
     Args:
         catalog: The vetted catalog.
         region: Where the user is.
-        crisis_type: The kind of crisis, or None when it isn't known.
+        crisis_types: The kinds of crisis; empty when they aren't known.
         imminent: Whether the danger is immediate (a plan, the means and a
             timeline, or an attempt underway).
 
@@ -165,9 +180,14 @@ def select_resources(
         imminent, last otherwise.
     """
     in_region = [r for r in catalog.resources if r.region == region]
-    wanted = crisis_type or DEFAULT_CRISIS_TYPE
-    matched = [r for r in in_region if wanted in r.crisis_types] or [
-        r for r in in_region if FALLBACK_CRISIS_TYPE in r.crisis_types
-    ]
+    matched: dict[str, CrisisResource] = {}
+    for kind in ordered_crisis_types(crisis_types):
+        entries = [r for r in in_region if kind in r.crisis_types] or [
+            r for r in in_region if FALLBACK_CRISIS_TYPE in r.crisis_types
+        ]
+        for resource in entries:
+            matched.setdefault(resource.key, resource)
     emergency = [r for r in in_region if r.emergency]
-    return [*emergency, *matched] if imminent else [*matched, *emergency]
+    return (
+        [*emergency, *matched.values()] if imminent else [*matched.values(), *emergency]
+    )

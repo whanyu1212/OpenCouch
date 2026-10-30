@@ -31,6 +31,7 @@ from opencouch_agent.safety.crisis import (
     crisis_reply,
     crisis_services,
 )
+from opencouch_agent.safety.crisis_resources import CrisisType
 from opencouch_agent.safety.screening import turn_text
 from opencouch_agent.sessions import Session, SessionStore
 
@@ -229,7 +230,13 @@ async def _start_run(
     recorder = RunRecorder(store, turn.thread_id, turn.lease_token, deps)
     if decision.path == "crisis":
         return _start_crisis_reply(
-            adapter, turn, agents.crisis, session, recorder, imminent=decision.imminent
+            adapter,
+            turn,
+            agents.crisis,
+            session,
+            recorder,
+            types=decision.risk.crisis_types,
+            imminent=decision.imminent,
         )
     return _start_companion(
         adapter,
@@ -276,10 +283,11 @@ def _start_crisis_reply(
     session: Session,
     recorder: RunRecorder,
     *,
+    types: frozenset[CrisisType],
     imminent: bool,
 ) -> tuple[ServerOwnedAGUIAdapter, _ActiveRun]:
     """Start the crisis responder, whose reply is checked and sent whole."""
-    services = crisis_services(responder, imminent=imminent)
+    services = crisis_services(responder, types=types, imminent=imminent)
     recorder.deps.state.crisis_resources = [service.key for service in services]
     state = recorder.deps.state.model_dump(mode="json")
     routed = replace(adapter, agent=responder.agent, server_state=state)
@@ -290,6 +298,7 @@ def _start_crisis_reply(
         [*session.history, *turn.messages],
         services,
         deps=recorder.deps,
+        types=types,
         imminent=imminent,
         cancellation=cancellation,
     )
