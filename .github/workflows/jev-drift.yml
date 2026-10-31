@@ -1,0 +1,59 @@
+name: Jev drift
+
+on:
+  schedule:
+    # Monday 03:17 UTC; outside the busy start of the hour.
+    - cron: '17 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: jev-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/agent
+    steps:
+      # Schedules live on main; the rewritten agent and its baseline live here.
+      - uses: actions/checkout@v5
+        with:
+          ref: develop
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Download validation data
+        run: uv run python -m evals.crisis.bhh --split validation
+      - name: Measure drift
+        env:
+          AI_GATEWAY_API_KEY: ${{ secrets.AI_GATEWAY_API_KEY }}
+        run: |
+          test -n "$AI_GATEWAY_API_KEY" || { echo '::error::AI_GATEWAY_API_KEY is not configured'; exit 2; }
+          uv run python -m evals.crisis.drift --report evals/results/jev-drift.json
+      - name: Publish report
+        if: always()
+        run: |
+          if test -f evals/results/jev-drift.json; then
+            echo '## Jev drift' >> "$GITHUB_STEP_SUMMARY"
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat evals/results/jev-drift.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Measurement unavailable: inspect setup/download logs.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      # Publish only metrics, provenance and case IDs. Raw BHH text stays local.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jev-drift-${{ github.run_id }}
+          path: apps/agent/evals/results/jev-drift.json
+          if-no-files-found: warn
+          retention-days: 30

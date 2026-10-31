@@ -24,6 +24,7 @@ import os
 import time
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from importlib.metadata import version
 from pathlib import Path
 from typing import Final, Literal
 
@@ -49,6 +50,7 @@ from evals.crisis.runs import (
     write_meta,
 )
 from opencouch_agent.safety import JevClient, TypeSafeJevClient, user_turn_questions
+from opencouch_agent.safety.jev import GATEWAY_MODEL
 from opencouch_agent.safety.screening import user_check_state
 
 RESULTS_DIR: Final = Path(__file__).parents[1] / "results" / "crisis"
@@ -110,6 +112,40 @@ async def record_cases(
             target.write(row.model_dump_json() + "\n")
             target.flush()
     return recorded, failed
+
+
+async def record_jev(
+    cases: Sequence[Case], run_dir: Path, concurrency: int
+) -> tuple[int, int]:
+    """Record with the gateway and retain model provenance across resume attempts."""
+    meta = load_meta(run_dir)
+    if meta.requested_model not in (None, GATEWAY_MODEL):
+        raise RunCheckError("Cannot resume a recording with a different model.")
+    sdk_version = version("typesafe-sdk")
+    if meta.sdk_version not in (None, sdk_version):
+        raise RunCheckError("Cannot resume a recording with a different SDK version.")
+    client = TypeSafeJevClient(
+        api_key=os.environ["AI_GATEWAY_API_KEY"],
+        retry=BATCH_RETRY,
+        attempt_timeout_seconds=BATCH_ATTEMPT_TIMEOUT_SECONDS,
+    )
+    try:
+        return await record_cases(client, cases, run_dir, concurrency)
+    finally:
+        await client.aclose()
+        if client.served_models:
+            write_meta(
+                run_dir,
+                meta.model_copy(
+                    update={
+                        "requested_model": GATEWAY_MODEL,
+                        "served_models": sorted(
+                            set(meta.served_models) | client.served_models
+                        ),
+                        "sdk_version": sdk_version,
+                    }
+                ),
+            )
 
 
 def new_run_dir(name: str) -> Path:
@@ -222,15 +258,7 @@ async def main() -> None:
         )
     except RunCheckError as error:
         raise SystemExit(str(error)) from error
-    client = TypeSafeJevClient(
-        api_key=os.environ["AI_GATEWAY_API_KEY"],
-        retry=BATCH_RETRY,
-        attempt_timeout_seconds=BATCH_ATTEMPT_TIMEOUT_SECONDS,
-    )
-    try:
-        recorded, failed = await record_cases(client, cases, run_dir, args.concurrency)
-    finally:
-        await client.aclose()
+    recorded, failed = await record_jev(cases, run_dir, args.concurrency)
     print(f"recorded {recorded}, failed {failed} -> {run_dir}")
 
 

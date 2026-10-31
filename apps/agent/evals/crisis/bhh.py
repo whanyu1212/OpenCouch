@@ -13,6 +13,7 @@ Each example is stored as a list of sentences, joined here into one message.
     uv run python -m evals.crisis.bhh
 """
 
+import argparse
 import json
 import time
 from dataclasses import asdict
@@ -91,13 +92,16 @@ def fetch_split(client: httpx.Client, split: str) -> list[Case]:
 
 
 def main() -> None:
-    """Download both BHH splits and record which dataset revision they came from."""
+    """Download selected BHH splits and record their dataset revision."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--split", choices=SPLITS, help="download just this split")
+    args = parser.parse_args()
     DATA_DIR.mkdir(exist_ok=True)
     with httpx.Client(timeout=60) as client:
         response = client.get(DATASET_INFO_URL)
         response.raise_for_status()
         revision = response.json()["sha"]
-        for split in SPLITS:
+        for split in [args.split] if args.split else SPLITS:
             cases = fetch_split(client, split)
             with bhh_path(split).open("w") as out:
                 out.writelines(json.dumps(asdict(case)) + "\n" for case in cases)

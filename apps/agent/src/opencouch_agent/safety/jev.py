@@ -78,6 +78,8 @@ class TypeSafeJevClient:
         transport: httpx2.AsyncBaseTransport | None = None,
     ) -> None:
         _keep_request_bodies_out_of_logs(logging.getLogger("typesafe_sdk"))
+        # Model IDs only, never request text; batch evals persist these for drift.
+        self.served_models: set[str] = set()
         self._client = AsyncTypeSafeClient(
             api_key=api_key,
             base_url=base_url,
@@ -95,6 +97,7 @@ class TypeSafeJevClient:
             TypeSafeError: If the request fails after the live retry.
         """
         response = await self._client.system_one(state=state, questions=questions)
+        self.served_models.add(response.model)
         return {name: response.nouls[name].noul for name in questions}
 
     async def aclose(self) -> None:
