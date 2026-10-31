@@ -4,6 +4,8 @@ How we measure whether the OpenCouch agent is doing a good job, and how we
 tell whether a change made it better or worse. This is the design; the code
 lands through the Linear issues listed at the end.
 
+Scheduled Jev drift monitoring and its current calibration decision: [DRIFT.md](crisis/DRIFT.md).
+
 ## What "performance" means
 
 "Performance" is four different things. Each has its own source of truth and

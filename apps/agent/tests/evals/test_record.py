@@ -3,6 +3,7 @@ from collections.abc import Mapping
 from dataclasses import asdict
 from pathlib import Path
 
+import httpx2
 import pytest
 from typesafe_sdk import Noul
 
@@ -13,13 +14,15 @@ from evals.crisis.runs import (
     CasesChangedError,
     ErrorRow,
     InputVersionMismatchError,
+    RunCheckError,
     load_meta,
     read_errors,
     read_recorded,
     write_meta,
 )
-from opencouch_agent.safety import USER_TURN_QUESTIONS
+from opencouch_agent.safety import USER_TURN_QUESTIONS, TypeSafeJevClient
 from opencouch_agent.safety.screening import user_check_state
+from tests.safety.test_jev import answered
 
 
 class FakeJev:
@@ -75,6 +78,61 @@ async def test_resuming_retries_only_what_is_missing(tmp_path: Path) -> None:
     assert jev.states == [user_check_state([], "second")]
     assert read_errors(tmp_path) == []
     assert sorted(row.id for row in read_recorded(tmp_path)) == ["a", "b"]
+
+
+async def test_resume_refuses_to_mix_sdk_versions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cases_file = write_cases(tmp_path / "cases.jsonl", CASES)
+    meta = build_meta("resume", cases_file, CASES, is_bhh=False)
+    write_meta(tmp_path, meta.model_copy(update={"sdk_version": "old-sdk"}))
+    monkeypatch.delenv("AI_GATEWAY_API_KEY", raising=False)
+    with pytest.raises(RunCheckError, match="different SDK version"):
+        await record.record_jev(CASES, tmp_path, concurrency=1)
+    assert load_meta(tmp_path).sdk_version == "old-sdk"
+
+
+async def test_resume_merges_served_models_from_retried_requests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cases_file = write_cases(tmp_path / "cases.jsonl", CASES)
+    meta = build_meta("resume", cases_file, CASES, is_bhh=False)
+    write_meta(tmp_path, meta.model_copy(update={"served_models": ["jev-old"]}))
+    await record_cases(FakeJev(failing={"second"}), CASES, tmp_path, concurrency=1)
+    body = answered(dict.fromkeys(USER_TURN_QUESTIONS, 0.1)).json()
+    body["model"] = "jev-new"
+    client = TypeSafeJevClient(
+        api_key="test-key",
+        transport=httpx2.MockTransport(lambda _: httpx2.Response(200, json=body)),
+    )
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "test-key")
+    monkeypatch.setattr(record, "TypeSafeJevClient", lambda **_: client)
+
+    assert await record.record_jev(CASES, tmp_path, concurrency=1) == (1, 0)
+
+    resumed = load_meta(tmp_path)
+    assert resumed.served_models == ["jev-new", "jev-old"]
+    assert resumed.requested_model == "typesafe-ai/jev"
+    assert resumed.sdk_version
+    assert read_errors(tmp_path) == []
+
+
+async def test_noop_resume_does_not_invent_provenance_for_old_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cases_file = write_cases(tmp_path / "cases.jsonl", CASES)
+    meta = build_meta("complete", cases_file, CASES, is_bhh=False)
+    write_meta(tmp_path, meta)
+    await record_cases(FakeJev(), CASES, tmp_path, concurrency=1)
+    client = TypeSafeJevClient(
+        api_key="test-key",
+        transport=httpx2.MockTransport(lambda _: pytest.fail("Unexpected request")),
+    )
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", "test-key")
+    monkeypatch.setattr(record, "TypeSafeJevClient", lambda **_: client)
+
+    assert await record.record_jev(CASES, tmp_path, concurrency=1) == (0, 0)
+    assert load_meta(tmp_path) == meta
 
 
 def test_a_new_run_stores_an_absolute_cases_path_and_no_dataset(

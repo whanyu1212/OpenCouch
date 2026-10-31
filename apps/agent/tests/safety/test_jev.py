@@ -59,6 +59,7 @@ async def test_ask_sends_every_question_in_one_request_through_the_gateway() -> 
     await client.aclose()
 
     assert probabilities == {"ideation": 0.12, "intent": 0.03}
+    assert client.served_models == {GATEWAY_MODEL}
     [request] = requests
     assert str(request.url) == "https://ai-gateway.vercel.sh/typesafe/v1/systemone"
     assert request.headers["authorization"] == "Bearer test-key"
@@ -191,4 +192,14 @@ async def test_a_key_builds_the_real_client() -> None:
     client = build_jev_client(api_key="key", fake=False, model="test")
 
     assert isinstance(client, TypeSafeJevClient)
+    await client.aclose()
+
+
+async def test_records_served_model_instead_of_assuming_the_requested_alias() -> None:
+    response = answered({"ideation": 0.1, "intent": 0.0})
+    body = response.json()
+    body["model"] = "jev-1.14.0"
+    client = jev_client(lambda _: httpx2.Response(200, json=body))
+    await client.ask("state", QUESTIONS)
+    assert client.served_models == {"jev-1.14.0"}
     await client.aclose()

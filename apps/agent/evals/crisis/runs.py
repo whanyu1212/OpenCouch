@@ -20,7 +20,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Final, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from evals.crisis.cases import Case, load_cases
 from opencouch_agent.safety import USER_TURN_QUESTIONS, Turn
@@ -51,6 +51,9 @@ class RunMeta(BaseModel):
     jev_input_version: str
     started_at: str
     dataset: DatasetInfo | None = None
+    requested_model: str | None = None
+    served_models: list[str] = Field(default_factory=list)
+    sdk_version: str | None = None
 
 
 class RecordedRow(BaseModel):
