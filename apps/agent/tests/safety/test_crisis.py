@@ -18,7 +18,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from opencouch_agent.agent import CompanionDeps
+from opencouch_agent.coach import CoachDeps
 from opencouch_agent.safety import crisis as crisis_module
 from opencouch_agent.safety.crisis import (
     CrisisResponder,
@@ -63,7 +63,7 @@ async def _reply(model: FunctionModel, *, imminent: bool = False) -> str:
         responder,
         HISTORY,
         crisis_services(responder, types=SELF_HARM, imminent=imminent),
-        deps=CompanionDeps(),
+        deps=CoachDeps(),
         types=SELF_HARM,
         imminent=imminent,
         cancellation=CancellationToken(),
@@ -134,7 +134,7 @@ async def test_a_cancelled_turn_sends_nothing() -> None:
             responder,
             HISTORY,
             crisis_services(responder, types=SELF_HARM, imminent=False),
-            deps=CompanionDeps(),
+            deps=CoachDeps(),
             types=SELF_HARM,
             imminent=False,
             cancellation=cancellation,

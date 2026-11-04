@@ -28,9 +28,10 @@ These instructions are for every coding agent. Each app has its own
   vetted crisis resource catalog and the crisis audit log), `sessions/`
   (thread persistence), `beta/` (invites and requests for early access) and
   `program/` (per-user records that span threads: program position, worries,
-  check-ins and the formulation). Planned: `coach/` (the agent, replacing
-  `agent/`, and the reassurance redirect), and the program's state machine and
-  content in `program/`. Python standards are in `apps/agent/AGENTS.md`.
+  check-ins and the formulation) and `coach/` (the coach agent and its
+  per-turn instructions built from program state). Planned: the reassurance
+  redirect in `coach/`, and the program's state machine and content in
+  `program/`. Python standards are in `apps/agent/AGENTS.md`.
 - `apps/web`: Next.js frontend on `@ag-ui/client`. See `apps/web/AGENTS.md`
   before writing Next.js code.
 

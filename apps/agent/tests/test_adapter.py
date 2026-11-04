@@ -15,8 +15,8 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-from opencouch_agent.agent import CompanionDeps, CompanionState, build_companion_agent
 from opencouch_agent.api.adapter import ServerOwnedAGUIAdapter
+from opencouch_agent.coach import CoachDeps, CompanionState, build_coach_agent
 from tests.ag_ui_requests import run_input, user_message
 
 
@@ -28,10 +28,10 @@ class _ProbeState(CompanionState):
 
 def _adapter(
     body: dict[str, object],
-    agent: Agent[CompanionDeps, str] | None = None,
+    agent: Agent[CoachDeps, str] | None = None,
 ) -> ServerOwnedAGUIAdapter:
     return ServerOwnedAGUIAdapter(
-        agent=agent or build_companion_agent(TestModel()),
+        agent=agent or build_coach_agent(TestModel()),
         run_input=AGUIAdapter.build_run_input(json.dumps(body).encode()),
     )
 
@@ -39,7 +39,7 @@ def _adapter(
 async def test_run_gets_server_state_not_client_state() -> None:
     adapter = _adapter(run_input(user_message("hi"), state={"crisis_level": "none"}))
     adapter.server_state = {"crisis_level": "high"}
-    deps = CompanionDeps(state=_ProbeState())
+    deps = CoachDeps(state=_ProbeState())
 
     async for _ in adapter.run_stream(deps=deps):
         pass
@@ -54,7 +54,7 @@ async def test_replaced_adapter_uses_updated_server_state() -> None:
     # were a `cached_property` like on the base `AGUIAdapter`.
     assert adapter.state == {}
     routed = replace(adapter, server_state={"crisis_level": "high"})
-    deps = CompanionDeps(state=_ProbeState())
+    deps = CoachDeps(state=_ProbeState())
 
     async for _ in routed.run_stream(deps=deps):
         pass
@@ -101,9 +101,9 @@ async def test_id_only_tool_call_delta_does_not_emit_null_args() -> None:
         else:
             yield "Parked."
 
-    agent: Agent[CompanionDeps, str] = Agent(
+    agent: Agent[CoachDeps, str] = Agent(
         FunctionModel(stream_function=stream),
-        deps_type=CompanionDeps,
+        deps_type=CoachDeps,
     )
 
     @agent.tool_plain
@@ -111,7 +111,7 @@ async def test_id_only_tool_call_delta_does_not_emit_null_args() -> None:
         return worry
 
     adapter = _adapter(run_input(user_message("park it")), agent=agent)
-    events = [ev async for ev in adapter.run_stream(deps=CompanionDeps())]
+    events = [ev async for ev in adapter.run_stream(deps=CoachDeps())]
     fragments = [
         event.delta for event in events if isinstance(event, ToolCallArgsEvent)
     ]
@@ -123,14 +123,14 @@ async def test_id_only_tool_call_delta_does_not_emit_null_args() -> None:
 
 
 async def test_no_arg_tool_call_streams_without_null_args() -> None:
-    agent: Agent[CompanionDeps, str] = Agent(TestModel(), deps_type=CompanionDeps)
+    agent: Agent[CoachDeps, str] = Agent(TestModel(), deps_type=CoachDeps)
 
     @agent.tool_plain
     async def end_exercise() -> str:
         return "ended"
 
     adapter = _adapter(run_input(user_message("done")), agent=agent)
-    events = [ev async for ev in adapter.run_stream(deps=CompanionDeps())]
+    events = [ev async for ev in adapter.run_stream(deps=CoachDeps())]
     fragments = [
         event.delta for event in events if isinstance(event, ToolCallArgsEvent)
     ]

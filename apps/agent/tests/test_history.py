@@ -16,8 +16,8 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.test import TestModel
 
-from opencouch_agent.agent import CompanionState
 from opencouch_agent.api.history import shown_history, wait_for_turn
+from opencouch_agent.coach import CompanionState
 from opencouch_agent.safety.risk import RiskState
 from opencouch_agent.sessions import InMemorySessionStore
 from tests.ag_ui_requests import run_input, user_message

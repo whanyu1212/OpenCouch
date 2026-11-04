@@ -1,7 +1,7 @@
 [project]
 name = "opencouch-agent"
 version = "0.1.0"
-description = "OpenCouch companion agent service"
+description = "OpenCouch coach agent service"
 authors = [
     { name = "whanyu1212", email = "whanyu1212@hotmail.com" }
 ]
