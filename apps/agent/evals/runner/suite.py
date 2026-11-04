@@ -14,7 +14,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_evals import Case as EvalCase
 from pydantic_evals import Dataset
 from pydantic_evals.evaluators import Evaluator, ReportEvaluator
-from pydantic_evals.reporting import EvaluationReport, ReportCase
+from pydantic_evals.reporting import EvaluationReport
 
 from evals.runner.cases import ConversationCase, Split, load_suite, suite_digest
 from evals.runner.evaluators import (
@@ -237,29 +237,32 @@ async def evaluate_saved_run(
 
     present_cases = [case for case in cases if case.id in by_case]
     dataset = build_dataset(meta.suite, present_cases, evaluators=evaluators)
+    # Schedule only recorded repetitions, before report-level statistics run.
+    dataset.cases = [
+        EvalCase(
+            name=(f"{case.id} [{row.rep}/{meta.reps}]" if meta.reps > 1 else case.id),
+            inputs=case,
+            metadata={"split": case.split, "tags": list(case.tags)},
+        )
+        for case in present_cases
+        for row in by_case[case.id]
+    ]
     cursors: dict[str, int] = defaultdict(int)
 
     async def replay_task(case: ConversationCase) -> SavedRunRow:
         rows = by_case[case.id]
         idx = cursors[case.id]
         cursors[case.id] = idx + 1
-        return rows[idx % len(rows)]
+        return rows[idx]
 
-    # Support heterogeneous saved rep counts (e.g. if one rep had an infra error)
-    # by running up to `meta.reps` and keeping only the recorded (case_id, rep) pairs.
-    recorded_pairs = {(row.case_id, row.rep) for row in saved_rows}
     report = await dataset.evaluate(
         replay_task,
         name=f"{meta.suite}-{meta.requested_model}-rescore",
-        repeat=meta.reps,
         progress=progress,
     )
-    filtered_cases: list[ReportCase[ConversationCase, SavedRunRow, dict[str, Any]]] = [
-        rc
-        for rc in report.cases
-        if (rc.output.case_id, rc.output.rep) in recorded_pairs
-    ]
-    report.cases = filtered_cases
+    if meta.reps > 1:
+        for report_case in report.cases:
+            report_case.source_case_name = report_case.output.case_id
     return SuiteRunOutcome(
         report=report,
         results=saved_rows,

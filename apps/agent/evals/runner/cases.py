@@ -111,11 +111,13 @@ class ConversationCase(BaseModel):
     @model_validator(mode="after")
     def _check_minutes_order(self) -> Self:
         previous = 0.0
-        for turn in self.turns:
+        for index, turn in enumerate(self.turns):
             if turn.minutes is not None:
                 if turn.minutes < previous:
                     raise ValueError(f"Case {self.id!r}: turn minutes go backwards")
                 previous = turn.minutes
+            elif index > 0:
+                previous += 1.0
         return self
 
 

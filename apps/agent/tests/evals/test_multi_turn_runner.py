@@ -34,6 +34,7 @@ from evals.runner import (
     wilson_interval,
 )
 from evals.runner.__main__ import main as runner_main
+from evals.runner.runs import ErrorRow, write_run_files
 from opencouch_agent.coach import CoachDeps, build_coach_agent
 
 COACH_SUITE_PATH = Path(__file__).parents[2] / "evals" / "cases" / "coach.yaml"
@@ -99,8 +100,10 @@ async def test_oracle_baseline_passes_and_null_baseline_fails(
     )
 
 
+@pytest.mark.parametrize("reps", [1, 2])
 async def test_saved_run_rescores_offline_without_calling_the_model_again(
     tmp_path: Path,
+    reps: int,
 ) -> None:
     calls = 0
 
@@ -117,7 +120,7 @@ async def test_saved_run_rescores_offline_without_calling_the_model_again(
         split="holdout",
         coach_model=FunctionModel(stream_function=counting_stream),
         crisis_model=_oracle_crisis_model(),
-        reps=2,
+        reps=reps,
         output_dir=run_dir,
     )
     calls_during_run = calls
@@ -132,9 +135,74 @@ async def test_saved_run_rescores_offline_without_calling_the_model_again(
     assert calls == calls_during_run
     assert rescored.all_passed == live.all_passed
     assert len(rescored.results) == len(live.results)
+    assert [(c.name, c.source_case_name) for c in rescored.report.cases] == [
+        (c.name, c.source_case_name) for c in live.report.cases
+    ]
     assert [c.output.case_id for c in rescored.report.cases] == [
         c.output.case_id for c in live.report.cases
     ]
+
+
+async def test_rescore_evaluates_each_saved_repetition_once(tmp_path: Path) -> None:
+    run_dir = tmp_path / "partial-run"
+    live = await run_suite(COACH_SUITE_PATH, split="dev", reps=3, output_dir=run_dir)
+    case_ids = [case.id for case in load_suite(COACH_SUITE_PATH, split="dev")]
+    retained_reps = [{1, 3}, {2}, set(), {1, 2, 3}]
+    results = [
+        row
+        for row in live.results
+        if row.rep in retained_reps[case_ids.index(row.case_id)]
+    ]
+    results[0].turns[0].reply = ""
+    pairs = {(row.case_id, row.rep) for row in results}
+    errors = [
+        ErrorRow(
+            case_id=row.case_id,
+            rep=row.rep,
+            failure_class="timeout",
+            error="request timed out",
+        )
+        for row in live.results
+        if (row.case_id, row.rep) not in pairs
+    ]
+    write_run_files(run_dir, load_run_meta(run_dir), results, errors, "")
+
+    rescored = await evaluate_saved_run(run_dir)
+
+    assert len(rescored.report.cases) == len(pairs) == 6
+    assert {
+        (case.output.case_id, case.output.rep) for case in rescored.report.cases
+    } == pairs
+    assert rescored.errors == errors
+    assert not rescored.all_passed
+    low, high = wilson_interval(5, 6)
+    assert (
+        f"Pass rate (5/6, 95% CI [{low:.2f}, {high:.2f}])" in rescored.report.render()
+    )
+
+
+async def test_rescore_with_only_infrastructure_errors_has_no_results(
+    tmp_path: Path,
+) -> None:
+    run_dir = tmp_path / "error-run"
+    live = await run_suite(COACH_SUITE_PATH, split="dev", reps=1, output_dir=run_dir)
+    errors = [
+        ErrorRow(
+            case_id=row.case_id,
+            rep=row.rep,
+            failure_class="timeout",
+            error="request timed out",
+        )
+        for row in live.results
+    ]
+    write_run_files(run_dir, load_run_meta(run_dir), [], errors, "")
+
+    rescored = await evaluate_saved_run(run_dir)
+
+    assert rescored.report.cases == []
+    assert rescored.results == []
+    assert rescored.errors == errors
+    assert not rescored.all_passed
 
 
 async def test_rescore_refuses_a_suite_that_changed_since_recording(
@@ -387,6 +455,36 @@ def test_suite_validation_rejects_bad_check_in_text_backwards_minutes_and_duplic
     )
     with pytest.raises(ValueError, match="duplicate case IDs"):
         load_suite(dup_file)
+
+
+@pytest.mark.parametrize(
+    "minutes", [[0, None, 0.5], [None, None, 0.5], [5, None, None, 6]]
+)
+def test_minutes_validation_includes_implicit_turn_steps(
+    minutes: list[float | None],
+) -> None:
+    with pytest.raises(ValueError, match="minutes go backwards"):
+        ConversationCase(
+            id="backwards-implicit",
+            split="dev",
+            tags=["crisis"],
+            turns=[TurnScript(user="hello", minutes=value) for value in minutes],
+        )
+
+
+@pytest.mark.parametrize(
+    "minutes", [[None, 0], [0, None, 1], [5, None, 6], [None, None, 2.5]]
+)
+def test_minutes_validation_accepts_equal_or_increasing_effective_times(
+    minutes: list[float | None],
+) -> None:
+    case = ConversationCase(
+        id="ordered",
+        split="dev",
+        tags=["crisis"],
+        turns=[TurnScript(user="hello", minutes=value) for value in minutes],
+    )
+    assert [turn.minutes for turn in case.turns] == minutes
 
 
 def test_wilson_interval_handles_zero_and_bounds() -> None:
