@@ -235,6 +235,18 @@ cases a human labelled independently:
   drifts, and a regression in a simulated conversation is hard to trace.
 - Every model call asserts that the model that answered is the one requested.
 
+```bash
+# Run a suite on the test model (CI default):
+uv run python -m evals.runner --suite evals/cases/coach.yaml --model test
+
+# Run on the real model (opt-in, 3 reps by default):
+uv run --env-file .env python -m evals.runner --suite evals/cases/coach.yaml \
+    --model openai:gpt-6.1-sol --split dev --reps 3
+
+# Re-score a saved run offline without calling the model again:
+uv run python -m evals.runner --rescore evals/results/<run-dir>
+```
+
 ### Case format
 
 One YAML file per suite (`crisis`, `coach`, `program`, `reassurance`, ...):

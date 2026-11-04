@@ -102,6 +102,7 @@ async def run_turn(
     records: RecordStore,
     audit: CrisisAuditLog,
     turn_timeout: timedelta,
+    at: datetime | None = None,
 ) -> Response:
     """Handle one AG-UI turn with server-owned history, state and risk.
 
@@ -120,6 +121,8 @@ async def run_turn(
             recorded.
         turn_timeout: Hard limit on the agent's reply, including streaming
             it. Screening runs before it, under its own deadline.
+        at: When the turn arrived, or `datetime.now(UTC)` if omitted. Evals
+            pass scripted timestamps to test time-dependent safety rules.
 
     Returns:
         A streaming response of AG-UI events.
@@ -159,6 +162,7 @@ async def run_turn(
             store=store,
             records=records,
             audit=audit,
+            at=at,
         )
     except BaseException:
         await _release_turn(store, turn.thread_id, turn.lease_token)
@@ -216,13 +220,14 @@ async def _start_run(
     store: SessionStore,
     records: RecordStore,
     audit: CrisisAuditLog,
+    at: datetime | None = None,
 ) -> tuple[ServerOwnedAGUIAdapter, _ActiveRun]:
     """Load the session, run the gate, record the turn and start the chosen agent."""
     session = await store.load(turn.thread_id)
     # Validate stored state before writing anything, so a bad session fails
     # without leaving a half-recorded turn behind.
     deps = CoachDeps(state=CompanionState.model_validate(session.state))
-    at = datetime.now(UTC)
+    at = at or datetime.now(UTC)
     check_in = accepted_check_in(
         adapter.actions.crisis_check_in, session.risk, turn_text(turn.messages), at=at
     )

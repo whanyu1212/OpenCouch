@@ -32,10 +32,13 @@ dev = [
     "httpx>=0.28.1",
     "hypothesis>=6.170.8",
     "mypy>=2.4.0",
+    "pydantic-evals>=2.61.0,<2.62",
+    "pyyaml>=6.0.3",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7",
     "ruff>=0.16.10",
+    "types-pyyaml>=6.0.12",
 ]
 
 [tool.pytest.ini_options]
