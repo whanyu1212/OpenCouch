@@ -32,6 +32,7 @@ dev = [
     "httpx>=0.28.1",
     "hypothesis>=6.170.8",
     "mypy>=2.4.0",
+    "pydantic-ai-slim[anthropic]>=2.61.0,<2.62",
     "pydantic-evals>=2.61.0,<2.62",
     "pyyaml>=6.0.3",
     "pytest>=9.1.1",
