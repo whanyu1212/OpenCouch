@@ -15,6 +15,7 @@ These instructions are for every coding agent. Each app has its own
 - **The task:** the Linear issue named in the branch (e.g. `hy-347`). Read it
   before starting, and keep to its scope.
 - **The architecture plan:** issue #356.
+- **Why the product exists and what it's betting on:** `docs/vision.md`.
 - **What a PR must say:** `.github/pull_request_template.md`, including
   **Safety impact**.
 - **What CI runs:** `.github/workflows/ci.yml`.
