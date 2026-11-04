@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from evals.runner.cases import RecordsSeed
+
 Route = Literal["anthropic", "gateway", "openai"]
 
 
@@ -85,6 +87,7 @@ class JudgeInput(BaseModel):
     quality_focus: str | None = None
     incognito: bool = False
     vetted_resources: list[str] = Field(default_factory=list)
+    records: RecordsSeed = Field(default_factory=RecordsSeed)
 
 
 class JudgeAttempt(BaseModel):

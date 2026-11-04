@@ -64,8 +64,10 @@ Each run creates a new directory under `evals/results/judge-<timestamp>/` (or
 
 `SavedQualityEvaluator` can project existing verdicts into `evaluate_saved_run`
 without any LLM calls. It verifies the full current reply context, including
-history, path, resource names and quality focus. Changing the rubric and asking
-for fresh LLM verdicts still costs money; deterministic aggregation is free.
+history, path, resource names, quality focus and seeded program records. Older
+verdicts without record context cannot score cases with seeded records.
+Changing the rubric and asking for fresh LLM verdicts still costs money;
+deterministic aggregation is free.
 
 Costs use returned usage and the SDK price catalog when resolvable. Missing
 prices are null and counted in `attempts_without_cost`, never claimed as free.

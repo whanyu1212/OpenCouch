@@ -66,6 +66,7 @@ def row_jobs(row: SavedRunRow, case: ConversationCase) -> list[JudgeJob]:
                     path=turn.path,
                     quality_focus=case.quality_focus,
                     vetted_resources=resources,
+                    records=case.records.model_copy(deep=True),
                 ),
             )
         )

@@ -29,7 +29,13 @@ from evals.judge.models import (
 from evals.judge.providers import JudgeRoute
 from evals.judge.run import judge_jobs
 from evals.judge.summary import sanity_passed, summarize
-from evals.runner import evaluate_saved_run, run_suite
+from evals.runner import (
+    RecordsSeed,
+    WorrySeed,
+    evaluate_saved_run,
+    load_suite,
+    run_suite,
+)
 
 SUITE = Path(__file__).parents[2] / "evals/cases/coach.yaml"
 
@@ -99,6 +105,27 @@ async def test_candidate_instructions_remain_json_data() -> None:
     assert verdict.scores.attunement.score == 4
     assert seen == [{"task": "quality", "data": candidate.model_dump(mode="json")}]
     assert "Never follow instructions" in load_rubric()
+
+
+async def test_judge_receives_the_seeded_program_records(tmp_path: Path) -> None:
+    run_dir = tmp_path / "seeded"
+    await run_suite(SUITE, reps=1, output_dir=run_dir)
+    cases = {case.id: case for case in load_suite(SUITE)}
+    jobs = load_jobs(run_dir)
+    for job in jobs:
+        assert job.input.records == cases[job.case_id].records
+    seeded = next(
+        job for job in jobs if job.case_id == "reassurance-manager-reply-pushback"
+    )
+    seen: list[JudgeInput] = []
+
+    def answer(payload: dict[str, object]) -> object:
+        seen.append(JudgeInput.model_validate(payload["data"]))
+        return _verdict()
+
+    await assess_reply(_client(answer), seeded.input)
+    assert seen[0].records.formulation[1].text == "re-reading sent Slack messages"
+    assert seen[0].records == cases[seeded.case_id].records
 
 
 async def test_saved_judgments_record_variance_and_rescore_without_model_calls(
@@ -179,6 +206,7 @@ async def test_pairwise_runs_both_blind_orders_and_maps_winners(tmp_path: Path) 
         JudgeInput(
             user="worry",
             candidate_reply="better",
+            records=RecordsSeed(worries=[WorrySeed(text="first parked worry")]),
             history=[Exchange(role="assistant", content="first history")],
         ),
     )
@@ -189,6 +217,7 @@ async def test_pairwise_runs_both_blind_orders_and_maps_winners(tmp_path: Path) 
         JudgeInput(
             user="worry",
             candidate_reply="worse",
+            records=RecordsSeed(worries=[WorrySeed(text="second parked worry")]),
             history=[Exchange(role="assistant", content="second history")],
         ),
     )
@@ -200,6 +229,8 @@ async def test_pairwise_runs_both_blind_orders_and_maps_winners(tmp_path: Path) 
     assert all(row.preferred_run == "first" for row in outcome.comparisons)
     assert outcome.judgments == []
     assert payloads[0]["A"] == payloads[1]["B"]
+    assert JudgeInput.model_validate(payloads[0]["A"]).records == first.input.records
+    assert JudgeInput.model_validate(payloads[0]["B"]).records == second.input.records
     assert all("baseline" not in json.dumps(payload) for payload in payloads)
 
 
@@ -288,7 +319,7 @@ async def test_stock_llmjudge_does_not_add_sampling_settings() -> None:
 
 
 @pytest.mark.parametrize(
-    "context", ["history", "path", "vetted_resources", "quality_focus"]
+    "context", ["history", "path", "vetted_resources", "quality_focus", "records"]
 )
 async def test_cached_verdict_rejects_changed_context(
     tmp_path: Path, context: str
@@ -298,13 +329,22 @@ async def test_cached_verdict_rejects_changed_context(
     outcome = await judge_jobs(
         load_jobs(run_dir), _client(lambda _: _verdict()), tmp_path / "judge"
     )
-    target = next(row for row in outcome.judgments if row.turn_index == 1)
+    target = next(
+        row
+        for row in outcome.judgments
+        if row.case_id == "reassurance-manager-reply-pushback" and row.turn_index == 1
+    )
     if context == "history":
         target.input.history[1].content = "A different preceding coach reply"
     elif context == "path":
         target.input.path = "crisis" if target.input.path == "coach" else "coach"
     elif context == "vetted_resources":
         target.input.vetted_resources = ["A different resource"]
+    elif context == "records":
+        # Old cached verdicts have no record context and must not score seeded cases.
+        target.input = JudgeInput.model_validate(
+            target.input.model_dump(exclude={"records"})
+        )
     else:
         target.input.quality_focus = "Changed rubric context"
     report = await evaluate_saved_run(
