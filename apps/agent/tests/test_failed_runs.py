@@ -25,12 +25,13 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
 from opencouch_agent import turn as turn_module
-from opencouch_agent.agent import CompanionDeps, build_companion_agent
 from opencouch_agent.api.adapter import ServerOwnedAGUIAdapter
 from opencouch_agent.api.identity import FakeUserVerifier
 from opencouch_agent.beta.invites import BetaInvites
+from opencouch_agent.coach import CoachDeps, build_coach_agent
 from opencouch_agent.config import Settings
 from opencouch_agent.main import create_app
+from opencouch_agent.program.records import InMemoryRecordStore
 from opencouch_agent.run_recorder import RunRecorder
 from opencouch_agent.safety.audit import InMemoryCrisisAuditLog
 from opencouch_agent.safety.crisis import CrisisResponder, build_crisis_agent
@@ -146,7 +147,7 @@ async def test_a_cut_off_reply_keeps_the_tool_calls_that_finished() -> None:
         async for chunk in shown_then_stall(messages, _):
             yield chunk
 
-    agent = build_companion_agent(FunctionModel(stream_function=tool_then_stall))
+    agent = build_coach_agent(FunctionModel(stream_function=tool_then_stall))
 
     @agent.tool_plain
     def get_time() -> str:
@@ -204,7 +205,7 @@ async def test_a_run_that_ignores_cancellation_still_saves_what_was_shown(
     guarded = _guard_turn(
         run,
         store=store,
-        turn=_UserTurn("thread-1", "token", []),
+        turn=_UserTurn("thread-1", "user-1", "token", []),
         turn_timeout=timedelta(seconds=90),
     )
     started = time.monotonic()
@@ -231,7 +232,7 @@ async def test_the_time_limit_holds_even_when_the_run_ignores_cancellation(
     guarded = _guard_turn(
         run,
         store=store,
-        turn=_UserTurn("thread-1", "token", []),
+        turn=_UserTurn("thread-1", "user-1", "token", []),
         turn_timeout=timedelta(seconds=0.2),
     )
     started = time.monotonic()
@@ -336,12 +337,12 @@ async def _guarded_turn(
 ) -> AsyncGenerator[BaseEvent]:
     """A claimed turn started through the real pipeline, before streaming."""
     await store.claim_turn("thread-1", "token", LEASE)
-    agent = build_companion_agent(model)
+    agent = build_coach_agent(model)
     body = json.dumps(run_input(user_message("hi"))).encode()
     adapter = ServerOwnedAGUIAdapter(
         agent=agent, run_input=AGUIAdapter.build_run_input(body)
     )
-    turn = _UserTurn("thread-1", "token", adapter.new_user_messages())
+    turn = _UserTurn("thread-1", "user-1", "token", adapter.new_user_messages())
     crisis = CrisisResponder.from_catalog(
         build_crisis_agent(TestModel()), load_shipped_catalog()
     )
@@ -352,6 +353,7 @@ async def _guarded_turn(
         agents=agents,
         jev=ScriptedJev(),
         store=store,
+        records=InMemoryRecordStore(),
         audit=InMemoryCrisisAuditLog(),
     )
     return _guard_turn(run, store=store, turn=turn, turn_timeout=timedelta(seconds=90))
@@ -378,14 +380,14 @@ class _CountingStore(InMemorySessionStore):
 
 
 def _recorder(store: InMemorySessionStore) -> RunRecorder:
-    return RunRecorder(store, "thread-1", "token", CompanionDeps())
+    return RunRecorder(store, "thread-1", "token", CoachDeps())
 
 
 async def test_a_run_that_was_saved_is_not_saved_again_by_the_fallback() -> None:
     store = _CountingStore()
     await store.claim_turn("thread-1", "token", LEASE)
     recorder = _recorder(store)
-    result = await build_companion_agent(TestModel()).run("hi", deps=CompanionDeps())
+    result = await build_coach_agent(TestModel()).run("hi", deps=CoachDeps())
 
     await recorder.save_completed(result)
     await recorder.save_shown()
@@ -397,7 +399,7 @@ async def test_the_fallback_retries_a_save_that_raised() -> None:
     store = _CountingStore(fail_first=True)
     await store.claim_turn("thread-1", "token", LEASE)
     recorder = _recorder(store)
-    result = await build_companion_agent(TestModel()).run("hi", deps=CompanionDeps())
+    result = await build_coach_agent(TestModel()).run("hi", deps=CoachDeps())
 
     with pytest.raises(ConnectionError):
         await recorder.save_completed(result)

@@ -13,7 +13,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse
 
-from opencouch_agent.agent import CompanionState
+from opencouch_agent.coach import CompanionState
 from opencouch_agent.safety import conversation_turns
 from opencouch_agent.safety.follow_up import apply_follow_up
 from opencouch_agent.sessions import SessionStore

@@ -1,1 +1,1 @@
-"""OpenCouch companion agent service."""
+"""OpenCouch coach agent service."""

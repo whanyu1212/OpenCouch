@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from opencouch_agent.agent.companion import UNSCREENED_INSTRUCTIONS
+from opencouch_agent.coach import UNSCREENED_INSTRUCTIONS
 from opencouch_agent.safety import FailureReason, RiskLevel
 from opencouch_agent.safety.audit import InMemoryCrisisAuditLog
 from opencouch_agent.safety.risk import UnscreenedTurn

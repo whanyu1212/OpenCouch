@@ -18,10 +18,10 @@ from pydantic_ai.messages import ModelMessage
 from starlette.requests import Request
 from starlette.responses import Response
 
-from opencouch_agent.agent import CompanionDeps, CompanionState
-from opencouch_agent.agent.companion import UNSCREENED_INSTRUCTIONS
 from opencouch_agent.api.adapter import ServerOwnedAGUIAdapter, UnsupportedRequestError
 from opencouch_agent.api.history import THREAD_NOT_FOUND_MESSAGE
+from opencouch_agent.coach import CoachDeps, CompanionState
+from opencouch_agent.program.records import RecordStore
 from opencouch_agent.run_recorder import RunRecorder
 from opencouch_agent.safety import JevClient, run_gate
 from opencouch_agent.safety.audit import AuditEntry, CrisisAuditLog, audit_entries
@@ -69,17 +69,18 @@ class TurnAgents:
     """The agents a turn can be routed to.
 
     Attributes:
-        companion: Replies while the conversation is below CRISIS.
+        coach: Replies while the conversation is below CRISIS.
         crisis: Replies at CRISIS, or when screening fails. Has no tools.
     """
 
-    companion: Agent[CompanionDeps, str]
+    coach: Agent[CoachDeps, str]
     crisis: CrisisResponder
 
 
 @dataclass(frozen=True)
 class _UserTurn:
     thread_id: str
+    user_id: str
     lease_token: str
     messages: list[ModelMessage]
 
@@ -98,6 +99,7 @@ async def run_turn(
     agents: TurnAgents,
     jev: JevClient,
     store: SessionStore,
+    records: RecordStore,
     audit: CrisisAuditLog,
     turn_timeout: timedelta,
 ) -> Response:
@@ -110,9 +112,10 @@ async def run_turn(
     Args:
         request: The incoming AG-UI `RunAgentInput` request.
         user_id: The verified user sending the turn.
-        agents: The companion and the crisis responder.
+        agents: The coach and the crisis responder.
         jev: The Jev client for the safety gate.
         store: Where conversation history, state and risk are persisted.
+        records: Where per-user program records are persisted.
         audit: Where turns that change the risk level or fail screening are
             recorded.
         turn_timeout: Hard limit on the agent's reply, including streaming
@@ -130,11 +133,12 @@ async def run_turn(
             thread is someone else's. 409 if another turn is already running
             on the thread.
     """
-    adapter = await _parse_request(request, agents.companion)
+    adapter = await _parse_request(request, agents.coach)
     user_messages = adapter.new_user_messages()
     _check_user_text(user_messages)
     turn = _UserTurn(
         thread_id=adapter.run_input.thread_id,
+        user_id=user_id,
         lease_token=uuid.uuid4().hex,
         messages=user_messages,
     )
@@ -148,7 +152,13 @@ async def run_turn(
         raise HTTPException(status_code=409, detail=TURN_IN_PROGRESS_MESSAGE)
     try:
         routed, run = await _start_run(
-            adapter, turn, agents=agents, jev=jev, store=store, audit=audit
+            adapter,
+            turn,
+            agents=agents,
+            jev=jev,
+            store=store,
+            records=records,
+            audit=audit,
         )
     except BaseException:
         await _release_turn(store, turn.thread_id, turn.lease_token)
@@ -160,7 +170,7 @@ async def run_turn(
 
 
 async def _parse_request(
-    request: Request, agent: Agent[CompanionDeps, str]
+    request: Request, agent: Agent[CoachDeps, str]
 ) -> ServerOwnedAGUIAdapter:
     """Parse and check the request, turning client errors into 4xx responses."""
     try:
@@ -204,13 +214,14 @@ async def _start_run(
     agents: TurnAgents,
     jev: JevClient,
     store: SessionStore,
+    records: RecordStore,
     audit: CrisisAuditLog,
 ) -> tuple[ServerOwnedAGUIAdapter, _ActiveRun]:
     """Load the session, run the gate, record the turn and start the chosen agent."""
     session = await store.load(turn.thread_id)
     # Validate stored state before writing anything, so a bad session fails
     # without leaving a half-recorded turn behind.
-    deps = CompanionDeps(state=CompanionState.model_validate(session.state))
+    deps = CoachDeps(state=CompanionState.model_validate(session.state))
     at = datetime.now(UTC)
     check_in = accepted_check_in(
         adapter.actions.crisis_check_in, session.risk, turn_text(turn.messages), at=at
@@ -264,45 +275,50 @@ async def _start_run(
             imminent=decision.imminent,
             returning=returning_to_crisis(session.risk, at=at),
         )
-    return _start_companion(
+    position, worries, formulation = await asyncio.gather(
+        records.position(turn.user_id),
+        records.worries(turn.user_id, status="parked"),
+        records.formulation(turn.user_id),
+    )
+    # Server-owned context only: loaded from the gate decision and the verified
+    # user's records store, never from client-sent state.
+    deps.risk_level = decision.risk.level
+    # A missed turn still waiting for its recheck is unscreened risk too.
+    deps.unscreened = decision.screening_failure is not None or bool(
+        decision.risk.unscreened
+    )
+    deps.position = position
+    deps.worries = tuple(worries)
+    deps.formulation = tuple(formulation)
+    return _start_coach(
         adapter,
-        agents.companion,
+        agents.coach,
         session.history,
         recorder,
-        # A missed turn still waiting for its recheck is unscreened risk too.
-        unscreened=decision.screening_failure is not None
-        or bool(decision.risk.unscreened),
     )
 
 
-def _start_companion(
+def _start_coach(
     adapter: ServerOwnedAGUIAdapter,
-    agent: Agent[CompanionDeps, str],
+    agent: Agent[CoachDeps, str],
     history: list[ModelMessage],
     recorder: RunRecorder,
-    *,
-    unscreened: bool,
 ) -> tuple[ServerOwnedAGUIAdapter, _ActiveRun]:
-    """Start the companion, streaming its reply.
-
-    `unscreened` means the gate couldn't screen this message or an earlier
-    one, so the companion is told to watch for risk itself.
-    """
+    """Start the coach, streaming its reply."""
     state = recorder.deps.state.model_dump(mode="json")
     routed = replace(adapter, agent=agent, server_state=state)
     cancellation = CancellationToken()
     events = routed.run_stream(
         message_history=history,
-        instructions=UNSCREENED_INSTRUCTIONS if unscreened else None,
         deps=recorder.deps,
         cancellation_token=cancellation,
         on_complete=recorder.save_completed,
         on_cancel=recorder.save_cancelled,
     )
-    return routed, _ActiveRun(_companion_events(events, state), cancellation, recorder)
+    return routed, _ActiveRun(_coach_events(events, state), cancellation, recorder)
 
 
-async def _companion_events(
+async def _coach_events(
     events: AsyncIterator[BaseEvent], state: dict[str, object]
 ) -> AsyncGenerator[BaseEvent]:
     # The SDK doesn't publish state on ordinary turns. Publish the server's

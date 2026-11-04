@@ -1,4 +1,4 @@
-"""FastAPI app exposing the companion agent over AG-UI."""
+"""FastAPI app exposing the coach agent over AG-UI."""
 
 import logging
 from collections.abc import AsyncIterator, Callable
@@ -14,7 +14,6 @@ from pydantic_ai import Agent
 from starlette.requests import Request
 from starlette.responses import Response
 
-from opencouch_agent.agent import CompanionDeps, build_companion_agent
 from opencouch_agent.api.access import record_access_request
 from opencouch_agent.api.body_limit import BodySizeLimit
 from opencouch_agent.api.history import ConversationHistory, thread_history
@@ -31,8 +30,10 @@ from opencouch_agent.beta.access_requests import (
 )
 from opencouch_agent.beta.invites import BetaInvites, build_beta_invites
 from opencouch_agent.beta.postgres import PostgresAccessRequests
+from opencouch_agent.coach import CoachDeps, build_coach_agent
 from opencouch_agent.config import Settings, get_settings
 from opencouch_agent.program.postgres import PostgresRecordStore
+from opencouch_agent.program.records import InMemoryRecordStore, RecordStore
 from opencouch_agent.safety import JevClient
 from opencouch_agent.safety.audit import CrisisAuditLog, InMemoryCrisisAuditLog
 from opencouch_agent.safety.crisis import CrisisResponder, build_crisis_agent
@@ -57,21 +58,22 @@ HISTORY_WAIT = timedelta(seconds=CANCEL_GRACE_SECONDS + 1)
 
 def create_app(
     settings: Settings | None = None,
-    agent: Agent[CompanionDeps, str] | None = None,
+    agent: Agent[CoachDeps, str] | None = None,
     store: SessionStore | None = None,
-    crisis_agent: Agent[CompanionDeps, str] | None = None,
+    crisis_agent: Agent[CoachDeps, str] | None = None,
     jev: JevClient | None = None,
     audit: CrisisAuditLog | None = None,
     verifier: UserVerifier | None = None,
     invites: BetaInvites | None = None,
     access_requests: AccessRequests | None = None,
+    records: RecordStore | None = None,
 ) -> FastAPI:
     """Create the FastAPI app.
 
     Args:
         settings: Service settings. Defaults to settings loaded from the
             environment.
-        agent: The companion agent to serve. Tests pass one backed by a test
+        agent: The coach agent to serve. Tests pass one backed by a test
             model; by default it is built from `settings.model`.
         store: The session store. Tests pass one directly; by default it is
             Postgres when `settings.database_url` is set, otherwise in-memory.
@@ -87,6 +89,8 @@ def create_app(
             they come from `OPENCOUCH_BETA_INVITES`, and nobody without it.
         access_requests: Where requests for early access go. Tests pass one;
             by default it shares the default store's Postgres database.
+        records: The per-user program records store. Tests pass one directly;
+            by default it shares the default store's Postgres database.
 
     Returns:
         The configured app.
@@ -101,7 +105,7 @@ def create_app(
     # of failing in the middle of a crisis.
     crisis_catalog = load_shipped_catalog()
     agents = TurnAgents(
-        companion=agent or build_companion_agent(settings.model),
+        coach=agent or build_coach_agent(settings.model),
         crisis=CrisisResponder.from_catalog(
             crisis_agent or build_crisis_agent(settings.model), crisis_catalog
         ),
@@ -128,6 +132,7 @@ def create_app(
         logger.warning("No database URL is set; using in-memory sessions.")
     audit_log = audit or _default_audit_log(pool)
     requests = access_requests or _default_access_requests(pool)
+    record_store = records or _default_records(pool)
 
     # Close only a client this app built; a caller's is theirs.
     owned_jev = jev_client if jev is None else None
@@ -178,6 +183,7 @@ def create_app(
             agents=agents,
             jev=jev_client,
             store=session_store,
+            records=record_store,
             audit=audit_log,
             turn_timeout=turn_timeout,
         )
@@ -189,6 +195,12 @@ def _default_audit_log(pool: AsyncConnectionPool | None) -> CrisisAuditLog:
     if pool is None:
         return InMemoryCrisisAuditLog()
     return PostgresCrisisAuditLog(pool)
+
+
+def _default_records(pool: AsyncConnectionPool | None) -> RecordStore:
+    if pool is None:
+        return InMemoryRecordStore()
+    return PostgresRecordStore(pool)
 
 
 def _verifier_from_settings(settings: Settings) -> UserVerifier:

@@ -7,7 +7,7 @@ from typing import Final
 
 from pydantic import BaseModel, Field
 
-from opencouch_agent.agent.state import CompanionState
+from opencouch_agent.coach.state import CompanionState
 from opencouch_agent.safety.gate import GateDecision
 from opencouch_agent.safety.policy import RiskLevel
 from opencouch_agent.safety.risk import CheckInAnswer, RiskState, check_in_due

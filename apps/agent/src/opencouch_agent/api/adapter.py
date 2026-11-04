@@ -8,7 +8,7 @@ from pydantic_ai.tools import DeferredToolResults
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.ui.ag_ui import AGUIAdapter
 
-from opencouch_agent.agent import CompanionDeps
+from opencouch_agent.coach import CoachDeps
 from opencouch_agent.safety.follow_up import TurnActions
 
 
@@ -17,7 +17,7 @@ class UnsupportedRequestError(ValueError):
 
 
 @dataclass
-class ServerOwnedAGUIAdapter(AGUIAdapter[CompanionDeps, str]):
+class ServerOwnedAGUIAdapter(AGUIAdapter[CoachDeps, str]):
     """AG-UI adapter where the server, not the client, owns the conversation.
 
     The stock adapter trusts several client inputs: it appends every
@@ -72,7 +72,7 @@ class ServerOwnedAGUIAdapter(AGUIAdapter[CompanionDeps, str]):
         return self.server_state
 
     @property
-    def toolset(self) -> AbstractToolset[CompanionDeps] | None:
+    def toolset(self) -> AbstractToolset[CoachDeps] | None:
         """No frontend tools; see `check_request`."""
         return None
 

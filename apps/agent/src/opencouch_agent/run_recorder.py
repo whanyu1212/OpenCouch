@@ -16,7 +16,7 @@ from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.run import AgentRunResult
 
-from opencouch_agent.agent import CompanionDeps
+from opencouch_agent.coach import CoachDeps
 from opencouch_agent.sessions import SessionStore
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,7 @@ class RunRecorder:
     store: SessionStore
     thread_id: str
     lease_token: str
-    deps: CompanionDeps
+    deps: CoachDeps
     _shown: list[str] = field(default_factory=list)
     _saved: bool = False
 

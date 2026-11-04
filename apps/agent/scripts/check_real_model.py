@@ -38,10 +38,9 @@ from pydantic_ai import Agent, NativeOutput, UsageLimitExceeded, UsageLimits
 from pydantic_ai.messages import ModelMessage, ThinkingPart
 from pydantic_ai.models.openai import OpenAIResponsesModelSettings
 
-from opencouch_agent.agent import CompanionDeps
-from opencouch_agent.agent.companion import INSTRUCTIONS
 from opencouch_agent.api.identity import FakeUserVerifier
 from opencouch_agent.beta.invites import BetaInvites
+from opencouch_agent.coach import BASE_INSTRUCTIONS, CoachDeps
 from opencouch_agent.config import Settings
 from opencouch_agent.main import create_app
 from opencouch_agent.sessions import InMemorySessionStore
@@ -67,13 +66,13 @@ difficult. Acknowledge what they said and gently ask how they are doing now.
 """
 
 
-def build_check_agent() -> Agent[CompanionDeps, str]:
-    """Build the companion agent with one trivial tool, on the real model."""
+def build_check_agent() -> Agent[CoachDeps, str]:
+    """Build the coach agent with one trivial tool, on the real model."""
     agent = Agent(
         MODEL,
-        deps_type=CompanionDeps,
-        instructions=[INSTRUCTIONS, TOOL_INSTRUCTIONS],
-        name="companion",
+        deps_type=CoachDeps,
+        instructions=[BASE_INSTRUCTIONS, TOOL_INSTRUCTIONS],
+        name="coach",
     )
 
     @agent.tool_plain
@@ -191,7 +190,7 @@ async def check_usage_limit() -> dict[str, Any]:
     try:
         result = await build_check_agent().run(
             "What time is it?",
-            deps=CompanionDeps(),
+            deps=CoachDeps(),
             usage_limits=UsageLimits(request_limit=1),
         )
     except UsageLimitExceeded as error:
@@ -201,7 +200,7 @@ async def check_usage_limit() -> dict[str, Any]:
 
 async def check_reasoning_summary() -> dict[str, Any]:
     """Request reasoning summaries and see whether any come back."""
-    agent = Agent(MODEL, instructions=INSTRUCTIONS)
+    agent = Agent(MODEL, instructions=BASE_INSTRUCTIONS)
     settings = OpenAIResponsesModelSettings(openai_reasoning_summary="auto")
     result = await agent.run(TURNS[4], model_settings=settings)
     summaries = [

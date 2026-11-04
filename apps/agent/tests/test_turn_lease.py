@@ -9,7 +9,7 @@ from pydantic_ai import CancellationToken
 from pydantic_ai.messages import ModelMessage, TextPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from opencouch_agent.agent import CompanionDeps
+from opencouch_agent.coach import CoachDeps
 from opencouch_agent.config import Settings
 from opencouch_agent.run_recorder import RunRecorder
 from opencouch_agent.sessions import InMemorySessionStore
@@ -43,9 +43,9 @@ def _guarded(
     run = _ActiveRun(
         events,
         CancellationToken(),
-        RunRecorder(store, "thread-1", "token", CompanionDeps()),
+        RunRecorder(store, "thread-1", "token", CoachDeps()),
     )
-    turn = _UserTurn("thread-1", "token", [])
+    turn = _UserTurn("thread-1", "user-1", "token", [])
     return _guard_turn(run, store=store, turn=turn, turn_timeout=turn_timeout)
 
 

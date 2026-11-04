@@ -29,7 +29,7 @@ from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model
 
-from opencouch_agent.agent import CompanionDeps
+from opencouch_agent.coach import CoachDeps
 from opencouch_agent.safety.crisis_guidance import (
     GENERAL_INSTRUCTIONS,
     IMMINENT_INSTRUCTIONS,
@@ -78,31 +78,29 @@ class CrisisResponder:
         allowed_numbers: Every catalog number, the only ones a reply may name.
     """
 
-    agent: Agent[CompanionDeps, str]
+    agent: Agent[CoachDeps, str]
     catalog: CrisisCatalog
     allowed_numbers: frozenset[str]
 
     @classmethod
-    def from_catalog(
-        cls, agent: Agent[CompanionDeps, str], catalog: CrisisCatalog
-    ) -> Self:
+    def from_catalog(cls, agent: Agent[CoachDeps, str], catalog: CrisisCatalog) -> Self:
         """A responder that may name any number in `catalog`."""
         return cls(agent, catalog, allowed_numbers(catalog))
 
 
-def build_crisis_agent(model: Model | str) -> Agent[CompanionDeps, str]:
+def build_crisis_agent(model: Model | str) -> Agent[CoachDeps, str]:
     """Build the crisis agent, with no tools.
 
     Args:
         model: A Pydantic AI model instance or model string.
 
     Returns:
-        The crisis agent. It shares the companion's deps type so it can read
+        The crisis agent. It shares the coach's deps type so it can read
         the same conversation history.
     """
     return Agent(
         model,
-        deps_type=CompanionDeps,
+        deps_type=CoachDeps,
         instructions=CRISIS_INSTRUCTIONS,
         name="crisis_responder",
     )
@@ -120,7 +118,7 @@ async def crisis_reply(
     history: Sequence[ModelMessage],
     services: Sequence[CrisisResource],
     *,
-    deps: CompanionDeps,
+    deps: CoachDeps,
     types: frozenset[CrisisType],
     imminent: bool,
     cancellation: CancellationToken,
