@@ -136,7 +136,7 @@ async def test_saved_judgments_record_variance_and_rescore_without_model_calls(
     await run_suite(SUITE, split="dev", reps=1, output_dir=run_dir)
     original = (run_dir / "results.jsonl").read_bytes()
     jobs = load_jobs(run_dir)
-    assert len(jobs) == 13
+    assert len(jobs) == 18
     assert len(jobs[2].input.history) == 4
     calls = 0
 
@@ -147,8 +147,8 @@ async def test_saved_judgments_record_variance_and_rescore_without_model_calls(
 
     output = tmp_path / "judgments"
     outcome = await judge_jobs(jobs, _client(answer), output, reps=2, concurrency=1)
-    assert calls == 26
-    assert len(outcome.judgments) == 26
+    assert calls == 36
+    assert len(outcome.judgments) == 36
     assert outcome.errors == []
     assert (run_dir / "results.jsonl").read_bytes() == original
     metadata = json.loads((output / "meta.json").read_text())
@@ -166,7 +166,7 @@ async def test_saved_judgments_record_variance_and_rescore_without_model_calls(
     rescored = await evaluate_saved_run(
         run_dir, evaluators=[SavedQualityEvaluator(rows, judge_reps=2)]
     )
-    assert calls == 26
+    assert calls == 36
     assert all(
         case.scores["judge:anthropic:test:attunement"].value == 4
         for case in rescored.report.cases

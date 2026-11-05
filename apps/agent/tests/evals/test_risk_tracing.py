@@ -54,7 +54,18 @@ class RecoveryJev:
 )
 async def test_recorded_risk_replays_after_serialization(first: str) -> None:
     case = next(
-        case for case in load_suite(SUITE) if case.id == "crisis-recovery-and-safe-tap"
+        case
+        for case in load_suite(SUITE)
+        if case.id == "crisis-clear-recovery-and-safe-tap"
+    )
+    # Retain the short timeline that tests a renewed-risk block on the final tap.
+    case = case.model_copy(
+        update={
+            "turns": [
+                *case.turns[:3],
+                case.turns[-1].model_copy(update={"minutes": 15}),
+            ]
+        }
     )
     model = TestModel(
         custom_output_text="Please ask your sister to stay with you.", call_tools=[]
@@ -75,6 +86,7 @@ async def test_recorded_risk_replays_after_serialization(first: str) -> None:
     assert "private provider payload" not in saved.model_dump_json()
     if first == "renewed":
         assert saved.turns[-1].risk_level == "CRISIS"
+        assert trace.after.last_risk_at == trace.at
     else:
         assert saved.turns[-1].risk_level == "ELEVATED"
     if first in {"timeout", "invalid", "rate_limited", "unavailable", "error"}:
@@ -161,7 +173,7 @@ async def test_replay_cli_checks_recorded_outcomes(
     capsys.readouterr()
     assert await replay_main([str(tmp_path)]) == int(changed != "none")
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert len(rows) == 13
+    assert len(rows) == 18
     assert sum(not row["matches"] for row in rows) == int(changed != "none")
 
 
@@ -200,7 +212,9 @@ async def test_replay_rejects_incomplete_or_altered_conversations(
 ) -> None:
     outcome = await run_suite(SUITE, split="dev", reps=1, output_dir=tmp_path)
     row = next(
-        row for row in outcome.results if row.case_id == "crisis-recovery-and-safe-tap"
+        row
+        for row in outcome.results
+        if row.case_id == "crisis-clear-recovery-and-safe-tap"
     )
     if damage == "empty":
         row.turns.clear()
@@ -229,6 +243,6 @@ async def test_replay_rejects_incomplete_or_altered_conversations(
         "".join(row.model_dump_json() + "\n" for row in outcome.results)
     )
     capsys.readouterr()
-    with pytest.raises(ValueError, match=r"crisis-recovery-and-safe-tap.*rep 1"):
+    with pytest.raises(ValueError, match=r"crisis-clear-recovery-and-safe-tap.*rep 1"):
         await replay_main([str(tmp_path)])
     assert capsys.readouterr().out == ""
