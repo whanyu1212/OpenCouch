@@ -10,6 +10,8 @@
 
 # Node
 node_modules/
+apps/docs/.astro/
+apps/docs/dist/
 
 # Python
 __pycache__/

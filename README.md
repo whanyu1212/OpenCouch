@@ -17,6 +17,11 @@ betting on. The previous implementation lives on `main` for reference.
 |---|---|
 | `apps/agent` | Python agent service: FastAPI + [Pydantic AI](https://pydantic.dev/docs/ai/), served over [AG-UI](https://docs.ag-ui.com) |
 | `apps/web` | Next.js frontend using `@ag-ui/client` |
+| `apps/docs` | Astro Starlight docs for the rewrite; preview with `pnpm dev:docs` |
+
+The new documentation is developed locally at `http://localhost:4321/OpenCouch/`.
+CI checks it on PRs and `develop`; only `main` publishes to GitHub Pages.
+See [the docs README](apps/docs/README.md) for build and preview commands.
 
 ## Local development
 
