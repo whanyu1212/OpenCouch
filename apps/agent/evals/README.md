@@ -302,6 +302,9 @@ worst replies get cut off.
 
 ### Screening traces and offline risk replay (HY-428)
 
+The [HY-428 findings](runner/HY428.md) compare the resource rubrics on identical
+replies and explain the live crisis-recovery mismatch from recorded evidence.
+
 New multi-turn recordings include a `risk_trace` on each completed turn: exact
 synthetic Jev inputs and question definitions, raw probabilities or safe failure
 classes, scripted/live/fake provenance, timestamps, submitted check-in answers,

@@ -93,6 +93,14 @@ async def test_fake_readings_are_explicit_and_missing_evidence_is_rejected() -> 
     assert trace is not None and trace.calls[0].source == "fake"
     assert isinstance(trace.calls[0], ScreeningSuccess)
     assert (await replay_turn(turn)).risk.level == RiskLevel.NONE
+    original = list(trace.calls)
+    trace.calls.clear()
+    with pytest.raises(ValueError, match="inputs/questions changed"):
+        await replay_turn(turn)
+    trace.calls = [*original, *original]
+    with pytest.raises(ValueError, match="inputs/questions changed"):
+        await replay_turn(turn)
+    trace.calls = original
     trace.calls[0].questions = "changed questions"
     with pytest.raises(ValueError, match="inputs/questions changed"):
         await replay_turn(turn)
@@ -129,20 +137,44 @@ async def test_screening_deadline_is_recorded_without_swallowing_cancellation() 
         await task
 
 
-@pytest.mark.parametrize("changed", [False, True])
+@pytest.mark.parametrize("changed", ["none", "score", "offer"])
 async def test_replay_cli_checks_recorded_outcomes(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], changed: bool
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], changed: str
 ) -> None:
     outcome = await run_suite(SUITE, split="dev", reps=1, output_dir=tmp_path)
-    if changed:
+    if changed == "score":
         trace = outcome.results[0].turns[0].risk_trace
         assert trace is not None
         trace.after = replace(trace.after, score=99)
+    elif changed == "offer":
+        trace = next(
+            turn.risk_trace
+            for row in outcome.results
+            for turn in row.turns
+            if turn.risk_trace is not None and turn.risk_trace.after.check_in_offer
+        )
+        trace.after = replace(trace.after, check_in_offer=None)
+    if changed != "none":
         (tmp_path / "results.jsonl").write_text(
             "".join(row.model_dump_json() + "\n" for row in outcome.results)
         )
     capsys.readouterr()
-    assert await replay_main([str(tmp_path)]) == int(changed)
+    assert await replay_main([str(tmp_path)]) == int(changed != "none")
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert len(rows) == 13
-    assert sum(not row["matches"] for row in rows) == int(changed)
+    assert sum(not row["matches"] for row in rows) == int(changed != "none")
+
+
+async def test_replay_keeps_an_unoffered_safe_tap_in_crisis() -> None:
+    case = next(
+        case
+        for case in load_suite(SUITE)
+        if case.id == "crisis-masking-early-tap-stays-crisis"
+    )
+    model = TestModel(custom_output_text="Please call 995.", call_tools=[])
+    row = await play_case(case, coach_model=model, crisis_model=model)
+    last = row.turns[-1]
+    assert last.risk_trace is not None and last.risk_trace.before.check_in_offer is None
+    decision = await replay_turn(last)
+    assert decision.risk == last.risk_trace.after
+    assert decision.risk.level is RiskLevel.CRISIS
