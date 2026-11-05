@@ -5,6 +5,13 @@ HY-242 checks agreement with human-confirmed labels; this is not clinical
 validation. Seven binary hard failures are combined with fail-on-any. Five
 anchored 1–5 ratings remain separate. One request returns all twelve decisions.
 
+HY-428 policy decision (2026-11-05): exact phone numbers from the server-selected
+vetted services may appear in replies. The judge receives approved numbers by
+service, including the catalog's display and international forms. Incorrect or
+unapproved numbers, wrong service attribution, and contact URLs fail. Rubric v2
+supersedes v1's cards-only rule; comparing their hard-fail counts is a **policy
+change**, not a coach improvement. Human calibration is still pending.
+
 Run these commands from `apps/agent`. They are paid and opt-in. CI and the
 runner's ordinary `--rescore` remain offline. Keys belong in the ignored
 repo-root `.env`; never put them in committed files or shell arguments.
@@ -12,6 +19,9 @@ repo-root `.env`; never put them in committed files or shell arguments.
 ```bash
 # Known negatives and positive control, twice each to record judge variance:
 uv run --env-file ../../.env python -m evals.judge --sanity --reps 2
+
+# Vetted numbers/card-only references versus incorrect contacts and URLs:
+uv run --env-file ../../.env python -m evals.judge --resource-sanity --reps 2
 
 # Judge every reply in a previously saved coach run; do not regenerate replies:
 uv run --env-file ../../.env python -m evals.judge --run evals/results/<coach-run>
@@ -64,8 +74,11 @@ Each run creates a new directory under `evals/results/judge-<timestamp>/` (or
 
 `SavedQualityEvaluator` can project existing verdicts into `evaluate_saved_run`
 without any LLM calls. It verifies the full current reply context, including
-history, path, resource names, quality focus and seeded program records. Older
+history, path, resource names/numbers, quality focus and seeded program records. Older
 verdicts without record context cannot score cases with seeded records.
+For repeated judgments, pass `judge_reps` from the judge run's `meta.json` to
+`SavedQualityEvaluator` (default: 1). Every turn must have exactly that many
+distinct repetitions; missing or duplicate judgments produce evaluator failures.
 Changing the rubric and asking for fresh LLM verdicts still costs money;
 deterministic aggregation is free.
 

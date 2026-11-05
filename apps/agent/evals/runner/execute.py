@@ -2,7 +2,7 @@
 
 import json
 import time
-from collections.abc import AsyncGenerator, Mapping
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -21,7 +21,6 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from starlette.requests import Request
 from starlette.responses import StreamingResponse
-from typesafe_sdk import Noul
 
 from evals.runner.cases import (
     ConversationCase,
@@ -37,6 +36,7 @@ from evals.runner.runs import (
     SavedRunRow,
     TurnRecord,
 )
+from evals.runner.tracing import RecordingJev, RiskTrace
 from opencouch_agent.coach import CoachDeps, build_coach_agent
 from opencouch_agent.program.models import ProgramPosition
 from opencouch_agent.program.records import InMemoryRecordStore, RecordStore
@@ -44,14 +44,12 @@ from opencouch_agent.safety import JevClient
 from opencouch_agent.safety.audit import InMemoryCrisisAuditLog
 from opencouch_agent.safety.crisis import CrisisResponder, build_crisis_agent
 from opencouch_agent.safety.crisis_resources import load_shipped_catalog
-from opencouch_agent.safety.screening import user_check_state
 from opencouch_agent.sessions import InMemorySessionStore
 from opencouch_agent.turn import TurnAgents, run_turn
 
 DEFAULT_BASE_TIME: Final = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 DEFAULT_TURN_STEP: Final = timedelta(minutes=1)
 DEFAULT_TURN_TIMEOUT: Final = timedelta(seconds=60)
-_LATEST_MARKER: Final = user_check_state([], "").rsplit("\n\n", 1)[1]
 
 
 class ServedModelMismatchError(RuntimeError):
@@ -163,29 +161,6 @@ def _served_matches(expected: str, served: str) -> bool:
     return expected == "test" and served.startswith("function:")
 
 
-class _TimedJev:
-    """Measures gate time and overrides readings when a scripted turn provides one."""
-
-    def __init__(self, inner: JevClient | None) -> None:
-        self._inner = inner
-        self.override: Mapping[str, float] | None = None
-        self.last_ms: int = 0
-
-    async def ask(self, state: str, questions: Mapping[str, Noul]) -> dict[str, float]:
-        start = time.perf_counter()
-        try:
-            if self.override is not None:
-                reading = self.override
-                return {name: reading.get(name, 0.0) for name in questions}
-            if self._inner is not None:
-                return await self._inner.ask(state, questions)
-            latest = state.rsplit(_LATEST_MARKER, 1)[-1]
-            _ = latest
-            return dict.fromkeys(questions, 0.0)
-        finally:
-            self.last_ms = round((time.perf_counter() - start) * 1000)
-
-
 @dataclass
 class _StreamFold:
     reply: list[str] = field(default_factory=list)
@@ -238,7 +213,7 @@ async def play_case(
             build_crisis_agent(crisis_recorder), load_shipped_catalog()
         ),
     )
-    timed_jev = _TimedJev(jev)
+    timed_jev = RecordingJev(jev)
 
     if coach is not None:
         with coach:
@@ -282,7 +257,7 @@ async def _play_turns(
     thread_id: str,
     user_id: str,
     agents: TurnAgents,
-    timed_jev: _TimedJev,
+    timed_jev: RecordingJev,
     coach_recorder: ModelRecorder,
     crisis_recorder: ModelRecorder,
     store: InMemorySessionStore,
@@ -344,7 +319,7 @@ async def _run_one_turn(
     thread_id: str,
     user_id: str,
     agents: TurnAgents,
-    timed_jev: _TimedJev,
+    timed_jev: RecordingJev,
     coach_recorder: ModelRecorder,
     crisis_recorder: ModelRecorder,
     store: InMemorySessionStore,
@@ -354,6 +329,8 @@ async def _run_one_turn(
 ) -> TurnRecord:
     timed_jev.override = script.jev_reading if script.jev_reading else None
     timed_jev.last_ms = 0
+    timed_jev.calls.clear()
+    session_before = await store.load(thread_id)
     coach_recorder.take_calls()
     crisis_recorder.take_calls()
     coach_recorder.take_error()
@@ -417,6 +394,14 @@ async def _run_one_turn(
         gate_ms=timed_jev.last_ms,
         model_calls=model_calls,
         truncated=truncated,
+        risk_trace=RiskTrace(
+            at=at,
+            before=session_before.risk,
+            after=session_after.risk,
+            history=session_before.history,
+            submitted_check_in=script.check_in,
+            calls=list(timed_jev.calls),
+        ),
     )
 
 

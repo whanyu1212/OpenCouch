@@ -27,6 +27,7 @@ from evals.judge.models import (
     QualityVerdict,
 )
 from evals.judge.providers import JudgeRoute
+from evals.judge.resource_controls import RESOURCE_CONTROLS, resource_jobs
 from evals.judge.run import judge_jobs
 from evals.judge.summary import sanity_passed, summarize
 from evals.runner import (
@@ -163,7 +164,7 @@ async def test_saved_judgments_record_variance_and_rescore_without_model_calls(
         for line in (output / "results.jsonl").read_text().splitlines()
     ]
     rescored = await evaluate_saved_run(
-        run_dir, evaluators=[SavedQualityEvaluator(rows)]
+        run_dir, evaluators=[SavedQualityEvaluator(rows, judge_reps=2)]
     )
     assert calls == 26
     assert all(
@@ -186,6 +187,28 @@ async def test_judge_errors_are_saved_without_quality_scores(tmp_path: Path) -> 
     summary = json.loads((outcome.output_dir / "summary.json").read_text())
     assert summary["by_judge"] == {}
     assert summary["judge_errors"] == 1
+
+
+@pytest.mark.parametrize("damage", ["missing_repeat", "duplicate_repeat"])
+async def test_repeated_judgments_require_exact_coverage(
+    tmp_path: Path, damage: str
+) -> None:
+    run_dir = tmp_path / "source"
+    await run_suite(SUITE, split="dev", reps=1, output_dir=run_dir)
+    outcome = await judge_jobs(
+        load_jobs(run_dir), _client(lambda _: _verdict()), tmp_path / "judge", reps=2
+    )
+    if damage == "missing_repeat":
+        rows = [row for row in outcome.judgments if row.judge_rep == 1]
+    else:
+        rows = [*outcome.judgments, outcome.judgments[0]]
+    report = await evaluate_saved_run(
+        run_dir, evaluators=[SavedQualityEvaluator(rows, judge_reps=2)]
+    )
+    assert not report.all_passed
+    failed = [case for case in report.report.cases if case.evaluator_failures]
+    assert failed
+    assert all(not case.scores for case in failed)
 
 
 async def test_pairwise_runs_both_blind_orders_and_maps_winners(tmp_path: Path) -> None:
@@ -319,7 +342,15 @@ async def test_stock_llmjudge_does_not_add_sampling_settings() -> None:
 
 
 @pytest.mark.parametrize(
-    "context", ["history", "path", "vetted_resources", "quality_focus", "records"]
+    "context",
+    [
+        "history",
+        "path",
+        "vetted_resources",
+        "vetted_phone_numbers",
+        "quality_focus",
+        "records",
+    ],
 )
 async def test_cached_verdict_rejects_changed_context(
     tmp_path: Path, context: str
@@ -340,6 +371,8 @@ async def test_cached_verdict_rejects_changed_context(
         target.input.path = "crisis" if target.input.path == "coach" else "coach"
     elif context == "vetted_resources":
         target.input.vetted_resources = ["A different resource"]
+    elif context == "vetted_phone_numbers":
+        target.input.vetted_phone_numbers = {"Wrong service": ["123"]}
     elif context == "records":
         # Old cached verdicts have no record context and must not score seeded cases.
         target.input = JudgeInput.model_validate(
@@ -409,3 +442,34 @@ async def test_cli_returns_nonzero_for_unscorable_judge_requests(
     )
     monkeypatch.setattr("evals.judge.__main__.build_routes", lambda *args, **kwargs: [])
     assert await main(["--sanity", "--output-dir", str(tmp_path / "bad")]) == 1
+
+
+@pytest.mark.parametrize("miss_negative", [False, True])
+async def test_resource_controls_check_catalog_context_and_fail_missed_negatives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, miss_negative: bool
+) -> None:
+    jobs = resource_jobs()
+    by_reply = {reply: failed for reply, failed in RESOURCE_CONTROLS.values()}
+
+    def answer(payload: dict[str, object]) -> object:
+        candidate = JudgeInput.model_validate(payload["data"])
+        assert candidate.vetted_phone_numbers["Samaritans of Singapore (SOS)"] == [
+            "1767",
+            "6591511767",
+            "9151 1767",
+        ]
+        assert "National mindline 1771" not in candidate.vetted_phone_numbers
+        verdict = QualityVerdict.model_validate(_verdict())
+        verdict.hard_failures.invented_resource.failed = (
+            by_reply[candidate.candidate_reply] and not miss_negative
+        )
+        return verdict.model_dump()
+
+    monkeypatch.setattr(
+        "evals.judge.__main__.JudgeClient", lambda *args, **kwargs: _client(answer)
+    )
+    monkeypatch.setattr("evals.judge.__main__.build_routes", lambda *args, **kwargs: [])
+    assert {job.case_id for job in jobs} == set(RESOURCE_CONTROLS)
+    assert await main(
+        ["--resource-sanity", "--output-dir", str(tmp_path / "controls")]
+    ) == int(miss_negative)

@@ -195,16 +195,20 @@ class RepPassRateReportEvaluator(
         self, ctx: ReportEvaluatorContext[ConversationCase, SavedRunRow, dict[str, Any]]
     ) -> ScalarResult:
         """Summarise overall pass rate and interval across completed runs."""
-        total = len(ctx.report.cases)
+        scorable = [case for case in ctx.report.cases if not case.evaluator_failures]
+        unscorable = len(ctx.report.cases) - len(scorable)
+        total = len(scorable)
         passed = sum(
             1
-            for case in ctx.report.cases
+            for case in scorable
             if all(res.value is True for res in case.assertions.values())
         )
         rate = passed / total if total else 0.0
         low, high = wilson_interval(passed, total)
+        suffix = f"; {unscorable} unscorable" if unscorable else ""
+        title = f"Pass rate ({passed}/{total}, 95% CI [{low:.2f}, {high:.2f}]){suffix}"
         return ScalarResult(
-            title=f"Pass rate ({passed}/{total}, 95% CI [{low:.2f}, {high:.2f}])",
+            title=title,
             value=round(rate * 100.0, 1),
             unit="%",
         )
