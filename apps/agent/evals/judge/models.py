@@ -87,6 +87,7 @@ class JudgeInput(BaseModel):
     quality_focus: str | None = None
     incognito: bool = False
     vetted_resources: list[str] = Field(default_factory=list)
+    vetted_phone_numbers: dict[str, list[str]] = Field(default_factory=dict)
     records: RecordsSeed = Field(default_factory=RecordsSeed)
 
 

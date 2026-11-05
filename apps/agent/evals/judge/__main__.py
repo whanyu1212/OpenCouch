@@ -12,6 +12,7 @@ from evals.judge.evaluator import SavedQualityEvaluator
 from evals.judge.jobs import JudgeJob, load_jobs, sanity_jobs
 from evals.judge.models import Route
 from evals.judge.providers import build_routes
+from evals.judge.resource_controls import resource_controls_passed, resource_jobs
 from evals.judge.run import judge_jobs
 from evals.judge.summary import sanity_passed
 from evals.runner.runs import load_run_meta
@@ -25,6 +26,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     mode.add_argument("--run", type=Path, help="saved coach run to judge")
     mode.add_argument(
         "--sanity", action="store_true", help="judge known negatives/control"
+    )
+    mode.add_argument(
+        "--resource-sanity", action="store_true", help="check vetted-contact controls"
     )
     parser.add_argument(
         "--compare", type=Path, help="second saved run; judge both orders"
@@ -54,7 +58,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def _inputs(args: argparse.Namespace) -> tuple[list[JudgeJob], list[JudgeJob] | None]:
-    jobs = sanity_jobs() if args.sanity else load_jobs(args.run)
+    if args.resource_sanity:
+        jobs = resource_jobs()
+    else:
+        jobs = sanity_jobs() if args.sanity else load_jobs(args.run)
     alternatives = None
     if args.compare is not None:
         if (
@@ -102,6 +109,8 @@ async def main(argv: list[str] | None = None) -> int:
     print(f"Saved judge run -> {output}")
     if outcome.errors:
         return 1
+    if args.resource_sanity:
+        return int(not resource_controls_passed(outcome.judgments))
     return int(args.sanity and not sanity_passed(outcome.judgments))
 
 

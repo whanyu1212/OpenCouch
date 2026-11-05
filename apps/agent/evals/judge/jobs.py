@@ -43,7 +43,7 @@ def row_jobs(row: SavedRunRow, case: ConversationCase) -> list[JudgeJob]:
     """Reconstruct all contextual judge inputs for one recorded conversation."""
     if len(row.turns) != len(case.turns):
         raise ValueError(f"incomplete saved conversation: {row.case_id}")
-    catalog = {item.key: item.name for item in load_shipped_catalog().resources}
+    catalog = {item.key: item for item in load_shipped_catalog().resources}
     history: list[Exchange] = []
     jobs: list[JudgeJob] = []
     for index, (turn, script) in enumerate(zip(row.turns, case.turns, strict=True)):
@@ -63,7 +63,17 @@ def row_jobs(row: SavedRunRow, case: ConversationCase) -> list[JudgeJob]:
                     candidate_reply=turn.reply,
                     path=turn.path,
                     quality_focus=case.quality_focus,
-                    vetted_resources=resources,
+                    vetted_resources=[resource.name for resource in resources],
+                    vetted_phone_numbers={
+                        resource.name: sorted(
+                            {
+                                number
+                                for channel in resource.channels
+                                for number in (channel.number, channel.display)
+                            }
+                        )
+                        for resource in resources
+                    },
                     records=case.records.model_copy(deep=True),
                 ),
             )

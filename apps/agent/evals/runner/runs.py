@@ -29,6 +29,7 @@ from evals.runner.cases import (
     suite_digest,
 )
 from evals.runner.cases import load_suite as load_suite_cases
+from evals.runner.tracing import RiskTrace
 
 META_FILE: Final = "meta.json"
 RESULTS_FILE: Final = "results.jsonl"
@@ -74,6 +75,7 @@ class TurnRecord(BaseModel):
     gate_ms: int = 0
     model_calls: list[ModelCallRecord] = Field(default_factory=list)
     truncated: bool = False
+    risk_trace: RiskTrace | None = None
 
 
 class SavedRunRow(BaseModel):
