@@ -58,6 +58,15 @@ async def test_recorded_risk_replays_after_serialization(first: str) -> None:
         for case in load_suite(SUITE)
         if case.id == "crisis-clear-recovery-and-safe-tap"
     )
+    # Retain the short timeline that tests a renewed-risk block on the final tap.
+    case = case.model_copy(
+        update={
+            "turns": [
+                *case.turns[:3],
+                case.turns[-1].model_copy(update={"minutes": 15}),
+            ]
+        }
+    )
     model = TestModel(
         custom_output_text="Please ask your sister to stay with you.", call_tools=[]
     )
@@ -75,10 +84,11 @@ async def test_recorded_risk_replays_after_serialization(first: str) -> None:
     trace = saved.turns[1].risk_trace
     assert trace is not None and trace.calls[0].source == "live"
     assert "private provider payload" not in saved.model_dump_json()
-    assert saved.turns[-1].risk_level == "ELEVATED"
     if first == "renewed":
+        assert saved.turns[-1].risk_level == "CRISIS"
         assert trace.after.last_risk_at == trace.at
-        assert saved.turns[2].risk_level == "CRISIS"
+    else:
+        assert saved.turns[-1].risk_level == "ELEVATED"
     if first in {"timeout", "invalid", "rate_limited", "unavailable", "error"}:
         assert trace.after.unscreened
         assert trace.after.level is RiskLevel.CRISIS
