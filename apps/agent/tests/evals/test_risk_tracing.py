@@ -178,3 +178,57 @@ async def test_replay_keeps_an_unoffered_safe_tap_in_crisis() -> None:
     decision = await replay_turn(last)
     assert decision.risk == last.risk_trace.after
     assert decision.risk.level is RiskLevel.CRISIS
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "empty",
+        "missing",
+        "extra",
+        "duplicate",
+        "reordered",
+        "index",
+        "user",
+        "trace",
+        "tap",
+        "time",
+    ],
+)
+async def test_replay_rejects_incomplete_or_altered_conversations(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], damage: str
+) -> None:
+    outcome = await run_suite(SUITE, split="dev", reps=1, output_dir=tmp_path)
+    row = next(
+        row for row in outcome.results if row.case_id == "crisis-recovery-and-safe-tap"
+    )
+    if damage == "empty":
+        row.turns.clear()
+    elif damage == "missing":
+        row.turns.pop(1)
+    elif damage == "extra":
+        row.turns.append(row.turns[-1])
+    elif damage == "duplicate":
+        row.turns[1] = row.turns[0]
+    elif damage == "reordered":
+        row.turns.reverse()
+    elif damage == "index":
+        row.turns[0].turn_index = 99
+    elif damage == "user":
+        row.turns[0].user = "Different input"
+    elif damage == "trace":
+        row.turns[0].risk_trace = None
+    else:
+        trace = row.turns[-1].risk_trace
+        assert trace is not None
+        if damage == "tap":
+            trace.submitted_check_in = None
+        else:
+            trace.at = trace.at.replace(year=2027)
+    (tmp_path / "results.jsonl").write_text(
+        "".join(row.model_dump_json() + "\n" for row in outcome.results)
+    )
+    capsys.readouterr()
+    with pytest.raises(ValueError, match=r"crisis-recovery-and-safe-tap.*rep 1"):
+        await replay_main([str(tmp_path)])
+    assert capsys.readouterr().out == ""

@@ -8,13 +8,17 @@ import asyncio
 import json
 from collections.abc import Mapping
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 
 import httpx2
 from pydantic_ai.messages import ModelRequest, UserPromptPart
 from typesafe_sdk import Noul, TypeSafeAPIConnectionError, TypeSafeRateLimitError
 
+from evals.runner.cases import ConversationCase
+from evals.runner.execute import DEFAULT_BASE_TIME, DEFAULT_TURN_STEP
 from evals.runner.runs import (
+    SavedRunRow,
     TurnRecord,
     load_meta_cases,
     load_run_meta,
@@ -121,6 +125,31 @@ async def replay_turn(turn: TurnRecord) -> GateDecision:
     return decision
 
 
+def _validate_conversation(row: SavedRunRow, case: ConversationCase) -> None:
+    context = f"Case {row.case_id!r}, rep {row.rep}"
+    if len(row.turns) != len(case.turns):
+        raise ValueError(
+            f"{context}: expected {len(case.turns)} turns, got {len(row.turns)}"
+        )
+    at = DEFAULT_BASE_TIME
+    for index, (turn, script) in enumerate(zip(row.turns, case.turns, strict=True)):
+        if script.minutes is not None:
+            at = DEFAULT_BASE_TIME + timedelta(minutes=script.minutes)
+        elif index > 0:
+            at += DEFAULT_TURN_STEP
+        if turn.turn_index != index or turn.user != script.user:
+            raise ValueError(
+                f"{context}, turn {index}: index or user differs from script"
+            )
+        trace = turn.risk_trace
+        if trace is None:
+            raise ValueError(f"{context}, turn {index}: missing risk trace")
+        if trace.submitted_check_in != script.check_in or trace.at != at:
+            raise ValueError(
+                f"{context}, turn {index}: check-in or time differs from script"
+            )
+
+
 async def main(argv: list[str] | None = None) -> int:
     """Print per-turn replay agreement and diagnostic risk state; fail on mismatch."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -129,7 +158,11 @@ async def main(argv: list[str] | None = None) -> int:
     meta = load_run_meta(args.run_dir)
     rows = read_saved_runs(args.run_dir)
     errors = read_error_rows(args.run_dir)
-    validate_run_rows(meta, load_meta_cases(meta, args.run_dir), rows, errors)
+    cases = load_meta_cases(meta, args.run_dir)
+    validate_run_rows(meta, cases, rows, errors)
+    cases_by_id = {case.id: case for case in cases}
+    for row in rows:
+        _validate_conversation(row, cases_by_id[row.case_id])
     matched = True
     for row in rows:
         for turn in row.turns:
