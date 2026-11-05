@@ -2,6 +2,10 @@
   "name": "opencouch",
   "private": true,
   "scripts": {
+    "dev:docs": "pnpm --filter docs dev",
+    "check:docs": "pnpm --filter docs check",
+    "build:docs": "pnpm --filter docs build",
+    "preview:docs": "pnpm --filter docs preview",
     "dev:web": "pnpm --filter web dev",
     "build:web": "pnpm --filter web build",
     "lint:web": "pnpm --filter web lint",
