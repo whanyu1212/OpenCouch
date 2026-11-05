@@ -180,6 +180,13 @@ Recorded on every live run, from the API's own usage data, never estimated:
 
 ## The judge
 
+The opt-in implementation is in [`evals.judge`](judge/README.md). It judges saved
+replies, records repeat variance, and compares two runs in both blind orders.
+Direct Anthropic is primary; explicit credit exhaustion falls back to the same
+Opus through Vercel Gateway, then to configurable direct OpenAI. Scores remain
+advisory until HY-242 calibration. See the module README for commands and the
+initial $0.21 sanity pilot.
+
 - **Model:** `claude-opus-5-5`, through Pydantic AI's Anthropic provider,
   billed to Claude API credits (`ANTHROPIC_API_KEY`). It's from a different
   vendor than the coach (`gpt-6.1-sol`): judges tend to prefer replies that
@@ -315,12 +322,14 @@ Carried over from FirstRead:
 | Tier | What | When | Cost |
 |---|---|---|---|
 | CI | Behaviour cases on the test model; gate logic on recorded Jev answers | Every PR | Free |
-| Pre-merge | Dev split, live model, 3 reps, judge, diff against baseline | PRs that touch prompts, tools or the model | About $15 per run (estimate) |
+| Pre-merge | Dev split, live model, 3 reps, judge, diff against baseline | PRs that touch prompts, tools or the model | About $20–35 per run (estimate) |
 | Periodic | Holdout split, BHH test set, latency report | Before releases, or weekly | Similar, plus Jev at about $0.04 per 1,000 checks |
 
 The pre-merge estimate: 40 conversations × about 5 turns × 3 reps is 600
-coach turns at roughly $0.01, plus about $5–8 of judging. Measure the real
-cost on the first baseline run and update this table.
+coach turns at a provisional $0.01, plus about $16 of judging at the initial
+HY-240 pilot's $0.026 per reply. Budget $20–35 for longer histories and judge
+outputs; judging twice or pairwise comparisons adds calls. Measure the full
+run's real cost in HY-241 and update this table.
 
 ## Issues
 
