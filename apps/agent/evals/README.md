@@ -304,6 +304,8 @@ worst replies get cut off.
 
 The [HY-428 findings](runner/HY428.md) compare the resource rubrics on identical
 replies and explain the live crisis-recovery mismatch from recorded evidence.
+The [HY-429 recovery review](crisis/RECOVERY.md) separates ambiguous recovery
+from a clearer, owner-reviewed case and audits historical versus new risk.
 
 New multi-turn recordings include a `risk_trace` on each completed turn: exact
 synthetic Jev inputs and question definitions, raw probabilities or safe failure

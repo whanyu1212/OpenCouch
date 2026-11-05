@@ -92,7 +92,7 @@ async def test_oracle_baseline_passes_and_null_baseline_fails(
 
     assert oracle.all_passed
     assert oracle.errors == []
-    assert len(oracle.results) == 8  # 4 dev cases * 2 reps
+    assert len(oracle.results) == 10  # 5 dev cases * 2 reps
 
     assert not null.all_passed
     assert any(
@@ -147,7 +147,7 @@ async def test_rescore_evaluates_each_saved_repetition_once(tmp_path: Path) -> N
     run_dir = tmp_path / "partial-run"
     live = await run_suite(COACH_SUITE_PATH, split="dev", reps=3, output_dir=run_dir)
     case_ids = [case.id for case in load_suite(COACH_SUITE_PATH, split="dev")]
-    retained_reps = [{1, 3}, {2}, set(), {1, 2, 3}]
+    retained_reps = [{1, 3}, {2}, set(), {1, 2, 3}, set()]
     results = [
         row
         for row in live.results
@@ -258,9 +258,9 @@ async def test_served_model_mismatch_is_recorded_in_errors_jsonl(
     )
 
     assert outcome.results == []
-    assert len(outcome.errors) == 4
+    assert len(outcome.errors) == 5
     assert all(e.failure_class == "served_model_mismatch" for e in outcome.errors)
-    assert len(read_error_rows(run_dir)) == 4
+    assert len(read_error_rows(run_dir)) == 5
     assert read_saved_runs(run_dir) == []
     assert not outcome.all_passed
 

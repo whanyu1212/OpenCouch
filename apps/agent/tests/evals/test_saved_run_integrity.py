@@ -27,7 +27,7 @@ async def test_evaluator_errors_cannot_report_success(tmp_path: Path) -> None:
     assert all(case.evaluator_failures for case in outcome.report.cases)
     assert not outcome.all_passed
     assert "Pass rate (0/0" in outcome.report.render()
-    assert "4 unscorable" in outcome.report.render()
+    assert "5 unscorable" in outcome.report.render()
 
 
 @pytest.mark.parametrize(
