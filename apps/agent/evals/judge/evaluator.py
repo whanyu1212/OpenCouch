@@ -17,10 +17,11 @@ class SavedQualityEvaluator(Evaluator[ConversationCase, SavedRunRow, dict[str, A
     """Read verdicts without model calls; quality scores are not CI assertions."""
 
     judgments: list[Judgment]
+    judge_reps: int = 1
 
     def build_serialization_arguments(self) -> dict[str, Any]:
         """Keep full transcripts out of the evaluator's report specification."""
-        return {}
+        return {"judge_reps": self.judge_reps}
 
     def evaluate(
         self, ctx: EvaluatorContext[ConversationCase, SavedRunRow, dict[str, Any]]
@@ -31,7 +32,15 @@ class SavedQualityEvaluator(Evaluator[ConversationCase, SavedRunRow, dict[str, A
             for row in self.judgments
             if row.case_id == ctx.output.case_id and row.rep == ctx.output.rep
         ]
-        if {row.turn_index for row in rows} != set(range(len(ctx.output.turns))):
+        expected_repetitions = {
+            (turn, rep)
+            for turn in range(len(ctx.output.turns))
+            for rep in range(1, self.judge_reps + 1)
+        }
+        if self.judge_reps < 1 or (
+            len(rows) != len(expected_repetitions)
+            or {(row.turn_index, row.judge_rep) for row in rows} != expected_repetitions
+        ):
             raise ValueError("judge coverage incomplete; see judge errors.jsonl")
         results: dict[str, float] = {}
         expected = row_jobs(ctx.output, ctx.inputs)

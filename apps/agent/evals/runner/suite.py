@@ -33,6 +33,7 @@ from evals.runner.runs import (
     portable_path,
     read_error_rows,
     read_saved_runs,
+    validate_run_rows,
     write_run_files,
 )
 from opencouch_agent.coach import CoachDeps
@@ -58,12 +59,17 @@ class SuiteRunOutcome:
     @property
     def all_passed(self) -> bool:
         """Whether every run passed all assertions with no infra errors."""
-        if self.errors or not self.report.cases:
+        if (
+            self.errors
+            or not self.report.cases
+            or self.report.failures
+            or self.report.report_evaluator_failures
+        ):
             return False
         return all(
-            res.value is True
+            not case.evaluator_failures
+            and all(res.value is True for res in case.assertions.values())
             for case in self.report.cases
-            for res in case.assertions.values()
         )
 
 
@@ -223,13 +229,10 @@ async def evaluate_saved_run(
             if a saved row has no matching case in the suite.
     """
     meta = load_run_meta(run_dir)
-    cases = (
-        load_suite(suite_path, split=meta.split)
-        if suite_path is not None
-        else load_meta_cases(meta, run_dir)
-    )
+    cases = load_meta_cases(meta, run_dir, suite_path=suite_path)
     saved_rows = read_saved_runs(run_dir)
     saved_errors = read_error_rows(run_dir)
+    validate_run_rows(meta, cases, saved_rows, saved_errors)
 
     by_case: dict[str, list[SavedRunRow]] = defaultdict(list)
     for row in sorted(saved_rows, key=lambda item: (item.case_id, item.rep)):

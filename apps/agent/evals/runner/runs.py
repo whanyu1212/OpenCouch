@@ -167,20 +167,49 @@ def _jsonl_lines(path: Path) -> list[str]:
     ]
 
 
-def load_meta_cases(meta: SuiteRunMeta, run_dir: Path) -> list[ConversationCase]:
+def load_meta_cases(
+    meta: SuiteRunMeta, run_dir: Path, *, suite_path: Path | None = None
+) -> list[ConversationCase]:
     """Load the suite cases referenced by `meta`, verifying `suite_digest`.
 
     Raises:
         ValueError: If the suite file changed since `run_dir` was recorded.
     """
-    path = resolve_path(meta.suite_path)
+    path = suite_path if suite_path is not None else resolve_path(meta.suite_path)
     cases = load_suite_cases(path, split=meta.split)
     if suite_digest(cases) != meta.suite_digest:
         raise ValueError(
-            f"{meta.suite_path} changed since {run_dir} was recorded "
+            f"{path} changed since {run_dir} was recorded "
             f"(expected digest {meta.suite_digest}). Record a new run."
         )
     return cases
+
+
+def validate_run_rows(
+    meta: SuiteRunMeta,
+    cases: Sequence[ConversationCase],
+    results: Sequence[SavedRunRow],
+    errors: Sequence[ErrorRow],
+) -> None:
+    """Require exactly one result or infrastructure error per scheduled repetition.
+
+    Raises:
+        ValueError: If a saved run has missing, duplicate or unexpected repetitions.
+    """
+    expected = {(case.id, rep) for case in cases for rep in range(1, meta.reps + 1)}
+    seen: set[tuple[str, int]] = set()
+    rows: list[SavedRunRow | ErrorRow] = [*results, *errors]
+    for row in rows:
+        identity = (row.case_id, row.rep)
+        if identity not in expected:
+            raise ValueError(f"Unexpected saved run repetition: {identity}")
+        if identity in seen:
+            raise ValueError(f"Duplicate saved run repetition: {identity}")
+        seen.add(identity)
+    if missing := expected - seen:
+        raise ValueError(
+            f"Incomplete saved run; missing repetitions: {sorted(missing)}"
+        )
 
 
 __all__ = [
@@ -201,5 +230,6 @@ __all__ = [
     "read_error_rows",
     "read_saved_runs",
     "resolve_path",
+    "validate_run_rows",
     "write_run_files",
 ]

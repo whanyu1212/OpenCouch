@@ -93,7 +93,7 @@ async def main(argv: list[str] | None = None) -> int:
             args.run,
             evaluators=[
                 *default_evaluators(),
-                SavedQualityEvaluator(outcome.judgments),
+                SavedQualityEvaluator(outcome.judgments, judge_reps=args.reps),
             ],
         )
         (output / "report.txt").write_text(report.report.render(include_reasons=True))

@@ -163,7 +163,7 @@ async def test_saved_judgments_record_variance_and_rescore_without_model_calls(
         for line in (output / "results.jsonl").read_text().splitlines()
     ]
     rescored = await evaluate_saved_run(
-        run_dir, evaluators=[SavedQualityEvaluator(rows)]
+        run_dir, evaluators=[SavedQualityEvaluator(rows, judge_reps=2)]
     )
     assert calls == 26
     assert all(
@@ -186,6 +186,28 @@ async def test_judge_errors_are_saved_without_quality_scores(tmp_path: Path) -> 
     summary = json.loads((outcome.output_dir / "summary.json").read_text())
     assert summary["by_judge"] == {}
     assert summary["judge_errors"] == 1
+
+
+@pytest.mark.parametrize("damage", ["missing_repeat", "duplicate_repeat"])
+async def test_repeated_judgments_require_exact_coverage(
+    tmp_path: Path, damage: str
+) -> None:
+    run_dir = tmp_path / "source"
+    await run_suite(SUITE, split="dev", reps=1, output_dir=run_dir)
+    outcome = await judge_jobs(
+        load_jobs(run_dir), _client(lambda _: _verdict()), tmp_path / "judge", reps=2
+    )
+    if damage == "missing_repeat":
+        rows = [row for row in outcome.judgments if row.judge_rep == 1]
+    else:
+        rows = [*outcome.judgments, outcome.judgments[0]]
+    report = await evaluate_saved_run(
+        run_dir, evaluators=[SavedQualityEvaluator(rows, judge_reps=2)]
+    )
+    assert not report.all_passed
+    failed = [case for case in report.report.cases if case.evaluator_failures]
+    assert failed
+    assert all(not case.scores for case in failed)
 
 
 async def test_pairwise_runs_both_blind_orders_and_maps_winners(tmp_path: Path) -> None:

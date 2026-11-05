@@ -66,6 +66,9 @@ Each run creates a new directory under `evals/results/judge-<timestamp>/` (or
 without any LLM calls. It verifies the full current reply context, including
 history, path, resource names, quality focus and seeded program records. Older
 verdicts without record context cannot score cases with seeded records.
+For repeated judgments, pass `judge_reps` from the judge run's `meta.json` to
+`SavedQualityEvaluator` (default: 1). Every turn must have exactly that many
+distinct repetitions; missing or duplicate judgments produce evaluator failures.
 Changing the rubric and asking for fresh LLM verdicts still costs money;
 deterministic aggregation is free.
 

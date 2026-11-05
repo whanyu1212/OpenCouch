@@ -9,7 +9,9 @@ from evals.runner.runs import (
     SavedRunRow,
     load_meta_cases,
     load_run_meta,
+    read_error_rows,
     read_saved_runs,
+    validate_run_rows,
 )
 from opencouch_agent.safety.crisis_resources import load_shipped_catalog
 
@@ -27,17 +29,13 @@ class JudgeJob:
 def load_jobs(run_dir: Path) -> list[JudgeJob]:
     """Load inputs, verifying suite digest and the recorded conversation shape."""
     meta = load_run_meta(run_dir)
-    cases = {case.id: case for case in load_meta_cases(meta, run_dir)}
+    cases = load_meta_cases(meta, run_dir)
+    rows = read_saved_runs(run_dir)
+    validate_run_rows(meta, cases, rows, read_error_rows(run_dir))
+    by_id = {case.id: case for case in cases}
     jobs: list[JudgeJob] = []
-    pairs: set[tuple[str, int]] = set()
-    for row in read_saved_runs(run_dir):
-        pair = (row.case_id, row.rep)
-        if pair in pairs:
-            raise ValueError(f"duplicate saved repetition: {pair}")
-        pairs.add(pair)
-        if row.case_id not in cases:
-            raise ValueError(f"saved case not in suite: {row.case_id}")
-        jobs.extend(row_jobs(row, cases[row.case_id]))
+    for row in rows:
+        jobs.extend(row_jobs(row, by_id[row.case_id]))
     return jobs
 
 
