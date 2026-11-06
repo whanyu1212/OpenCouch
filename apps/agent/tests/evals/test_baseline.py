@@ -2,12 +2,14 @@
 
 import hashlib
 import json
+import subprocess
 from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
 from pydantic import BaseModel
 
+from evals.baseline import report
 from evals.baseline.__main__ import main
 from evals.baseline.compare import comparison
 from evals.baseline.cost import coach_cost
@@ -395,8 +397,45 @@ def test_judge_metadata_fields_checked_independently(
         build_report(run, judge=judge)
 
 
-def test_prompt_provenance_uses_recorded_revision() -> None:
-    assert prompt_digest("907f239") is not None
+def test_prompt_provenance_uses_recorded_revision(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent_root = tmp_path / "apps" / "agent"
+    expected = hashlib.sha256()
+    for name in report.PROMPT_FILES:
+        path = agent_root / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"recorded prompt\n")
+        expected.update(name.encode() + b"\0recorded prompt\n")
+    subprocess.run(["git", "init", str(tmp_path)], check=True, capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            "Recorded prompts",
+        ],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+    )
+    revision = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    monkeypatch.setattr(report, "AGENT_ROOT", agent_root)
+    (agent_root / report.PROMPT_FILES[0]).write_text("uncommitted prompt change")
+    assert prompt_digest(revision) == expected.hexdigest()
     assert prompt_digest("0000000") is None
     assert prompt_digest("HEAD") is None
 
