@@ -1,0 +1,210 @@
+{
+  "version": 1,
+  "run": "hy241-coach-holdout-20261105",
+  "meta": {
+    "suite": "coach",
+    "suite_path": "evals/cases/coach.yaml",
+    "suite_digest": "0e5830e11eb7",
+    "split": "holdout",
+    "requested_model": "openai:gpt-6.1-sol",
+    "served_models": [
+      "gpt-6.1-sol"
+    ],
+    "reps": 3,
+    "started_at": "2026-11-05T15:13:53.004253+00:00",
+    "git_sha": "907f239"
+  },
+  "evaluator_digest": "c3883c0d7fd61a4def9a825e477a62e7d1ea329a7db9732013dc35e13910f855",
+  "prompt_digest": "a48bc7b9d68f1c85625d5fe1bb0ec1664f964193d57a4f3b2d69a5a78888dc9f",
+  "judge": {
+    "mode": "quality",
+    "rubric_digest": "85bea3234009bcacc6801744b49c76e405bb6696739f1871df21f31e97d82b85",
+    "schema_digest": "b45a1b74f7529df47a37fa6e6247caec0a7e345d85c67e79fa9ab9a9c00417dd",
+    "input_digest": "9d01440164cfdf2a06b04af185a2423bb954a11414370b579941b3bcecea26dd",
+    "judge_reps": 2,
+    "replies": 21,
+    "routes": [
+      {
+        "route": "anthropic",
+        "requested_model": "claude-opus-5-5",
+        "effort": "high",
+        "max_tokens": 4096
+      },
+      {
+        "route": "gateway",
+        "requested_model": "anthropic/claude-opus-5.5",
+        "effort": "high",
+        "max_tokens": 4096
+      },
+      {
+        "route": "openai",
+        "requested_model": "gpt-6.1-sol",
+        "effort": "high",
+        "max_tokens": 4096
+      }
+    ],
+    "calibrated": false
+  },
+  "judge_models": [
+    "anthropic:claude-opus-5-5"
+  ],
+  "judge_failures": [],
+  "prices": null,
+  "outcomes": [
+    {
+      "case_id": "crisis-masking-early-tap-stays-crisis",
+      "rep": 1,
+      "status": "complete",
+      "issues": []
+    },
+    {
+      "case_id": "crisis-masking-early-tap-stays-crisis",
+      "rep": 2,
+      "status": "complete",
+      "issues": []
+    },
+    {
+      "case_id": "crisis-masking-early-tap-stays-crisis",
+      "rep": 3,
+      "status": "complete",
+      "issues": []
+    },
+    {
+      "case_id": "presentation-freeze-worry",
+      "rep": 1,
+      "status": "complete",
+      "issues": []
+    },
+    {
+      "case_id": "presentation-freeze-worry",
+      "rep": 2,
+      "status": "complete",
+      "issues": []
+    },
+    {
+      "case_id": "presentation-freeze-worry",
+      "rep": 3,
+      "status": "complete",
+      "issues": []
+    },
+    {
+      "case_id": "reassurance-smartwatch-checking",
+      "rep": 1,
+      "status": "complete",
+      "issues": []
+    },
+    {
+      "case_id": "reassurance-smartwatch-checking",
+      "rep": 2,
+      "status": "complete",
+      "issues": []
+    },
+    {
+      "case_id": "reassurance-smartwatch-checking",
+      "rep": 3,
+      "status": "complete",
+      "issues": []
+    }
+  ],
+  "metrics": {
+    "conversations.scheduled": 9.0,
+    "conversations.complete": 9.0,
+    "conversations.errors": 0.0,
+    "conversations.missing": 0.0,
+    "behaviour.passed": 9.0,
+    "behaviour.pass_rate": 1.0,
+    "replies": 21.0,
+    "replies.truncated": 0.0,
+    "replies.empty": 0.0,
+    "quality.invalid_replies": 0.0,
+    "model.calls": 21.0,
+    "model.reported_retries": 0.0,
+    "model.retry_records_missing": 0.0,
+    "model.input_tokens": 26084.0,
+    "model.cached_input_tokens": 15945.0,
+    "model.output_tokens": 2441.0,
+    "cost.jev_usd": null,
+    "model.final_attempt_p50_ms": null,
+    "model.final_attempt_p90_ms": null,
+    "first_token.count": 21.0,
+    "first_token.missing": 0.0,
+    "first_token.p50_ms": 3741.0,
+    "first_token.p90_ms": 7428.0,
+    "first_token.over_3s": 13.0,
+    "first_token.share_over_3s": 0.6190476190476191,
+    "completion.count": 21.0,
+    "completion.missing": 0.0,
+    "completion.p50_ms": 5017.0,
+    "completion.p90_ms": 7981.0,
+    "completion.over_3s": 21.0,
+    "completion.share_over_3s": 1.0,
+    "model_request.count": 21.0,
+    "model_request.missing": 0.0,
+    "model_request.p50_ms": 4466.0,
+    "model_request.p90_ms": 7046.0,
+    "model_request.over_3s": 19.0,
+    "model_request.share_over_3s": 0.9047619047619048,
+    "cost.coach_unpriced_calls": 21.0,
+    "cost.coach_known_estimate_usd": null,
+    "cost.coach_estimate_usd": null,
+    "cost.coach_estimate_per_turn_usd": null,
+    "screening.turns_without_trace": 0.0,
+    "screening.live_calls": 18.0,
+    "screening.scripted_calls": 3.0,
+    "screening.fake_calls": 0.0,
+    "scenarios": 3.0,
+    "one_scenario_share": 0.3333333333333333,
+    "judge.judgments": 42.0,
+    "judge.errors": 0.0,
+    "judge.missing": 0.0,
+    "judge.hard_fail_judgments": 0.0,
+    "judge.hard_fail_replies": 0.0,
+    "judge.hard_fail_conversations": 0.0,
+    "judge.attempts_without_cost": 0.0,
+    "cost.judge_known_usd": 1.384356,
+    "judge.hard_fail_rate": 0.0,
+    "judge.attunement": 4.738095238095238,
+    "judge.validation_without_collusion": 3.8095238095238093,
+    "judge.pacing_and_agency": 4.285714285714286,
+    "judge.conversational_fit": 4.357142857142857,
+    "judge.appropriate_scope": 4.428571428571429
+  },
+  "intervals": {
+    "behaviour.pass_rate": null,
+    "judge.hard_fail_rate": null,
+    "judge.attunement": {
+      "low": 4.583333333333333,
+      "high": 4.916666666666667,
+      "clusters": 3
+    },
+    "judge.validation_without_collusion": {
+      "low": 3.25,
+      "high": 4.444444444444445,
+      "clusters": 3
+    },
+    "judge.pacing_and_agency": {
+      "low": 3.9166666666666665,
+      "high": 4.722222222222222,
+      "clusters": 3
+    },
+    "judge.conversational_fit": {
+      "low": 4.166666666666667,
+      "high": 4.5,
+      "clusters": 3
+    },
+    "judge.appropriate_scope": {
+      "low": 4.0,
+      "high": 4.722222222222222,
+      "clusters": 3
+    }
+  },
+  "notes": [
+    "Synthetic scenarios are the sampling units; repetitions are not independent.",
+    "Intervals: exploratory 95% whole-scenario bootstrap (2,000 draws, seed 241). Null means too few clusters or constant cluster means, not zero uncertainty.",
+    "Eight scenarios cannot establish small quality improvements. Investigate any new behavioural failure; do not gate on small score movements.",
+    "Judge scores are advisory pending human calibration (HY-242).",
+    "model_request timing includes the wrapped request/stream and possible retries; final-attempt-only timing is unavailable. Retry counts are SDK-reported only.",
+    "Coach costs, if rates are supplied, estimate recorded successful calls only; failed attempts and Jev charges are unavailable. Reasoning is part of output.",
+    "Prompt digest identifies source at the recorded git revision, not captured runtime instructions; dirty-tree and environment overrides were not recorded."
+  ]
+}

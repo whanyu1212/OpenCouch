@@ -39,6 +39,28 @@ Human calibration is still pending (HY-242). Zero judge hard failures do not
 override failed behaviour checks or demonstrate clinical safety. Repetitions
 share scenarios; 150 judgments are not 150 independent cases.
 
+## Offline baseline comparison
+
+From `apps/agent`, compare an already-recorded dev run and its matching judgments:
+
+```sh
+uv run python -m evals.baseline compare evals/results/CANDIDATE \
+  --judge evals/results/CANDIDATE-JUDGE
+```
+
+The command makes no model calls. It prints absolute metrics, deltas and named
+failures against the versioned dev snapshot. Exit 1 means a new deterministic
+failure or incomplete conversation/judge coverage; exit 2 means invalid or
+incompatible evidence. Judge scores remain advisory. Holdout uses a separate
+snapshot and cannot be compared directly with dev.
+
+Intervals resample whole scenarios, not individual turns or judgments. Five dev
+scenarios cannot establish small gains; null intervals do not mean certainty.
+Coach/Jev costs and isolated final-attempt timing were not recorded and remain
+unavailable. Explicit versioned token rates can estimate recorded coach-call cost.
+See the [baseline guide](https://github.com/whanyu1212/OpenCouch/blob/develop/apps/agent/evals/baseline/README.md)
+for snapshot reproduction, rate inputs and interpretation.
+
 ## Reproduce a run
 
 From `apps/agent`, use the test model without paid calls:

@@ -46,7 +46,8 @@ def _append(path: Path, row: BaseModel) -> None:
         stream.write(row.model_dump_json() + "\n")
 
 
-def _job_digest(jobs: Sequence[JudgeJob]) -> str:
+def job_digest(jobs: Sequence[JudgeJob]) -> str:
+    """Identify the ordered reply inputs linked by a saved judge run."""
     data = [
         {
             "case_id": job.case_id,
@@ -72,8 +73,8 @@ def _prepare_output(
         (output_dir / name).touch()
     metadata = {
         "rubric_digest": rubric_digest(),
-        "input_digest": _job_digest(jobs),
-        "comparison_input_digest": _job_digest(alternatives)
+        "input_digest": job_digest(jobs),
+        "comparison_input_digest": job_digest(alternatives)
         if alternatives is not None
         else None,
         "schema_digest": hashlib.sha256(
