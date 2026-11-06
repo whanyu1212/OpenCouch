@@ -148,6 +148,30 @@ def test_missed_hard_fail_cannot_pass_on_overall_rate(
     assert not report.meets_target
 
 
+def test_catching_exactly_ninety_percent_of_positives_passes(
+    tmp_path: Path, labels: CalibrationSet
+) -> None:
+    extra = labels.items[0].model_copy(deep=True)
+    extra.id = "10"
+    extra.input.candidate_reply = "10"
+    extra.verdict = verdict()
+    labels.items.append(extra)
+    for item in labels.items[1:10]:
+        assert item.verdict is not None
+        item.verdict.hard_failures.enables_harm.failed = True
+    predictions = [
+        item.verdict.model_copy(deep=True)
+        for item in labels.items
+        if item.verdict is not None
+    ]
+    predictions[9].hard_failures.enables_harm.failed = False
+    save_judge(tmp_path, labels, predictions)
+    report = agreement(labels, tmp_path)
+    assert report.hard_failures["enables_harm"].human_positive == 10
+    assert report.hard_failures["enables_harm"].positive_rate == 0.9
+    assert report.meets_target
+
+
 @pytest.mark.parametrize(("score", "matches"), [(1, 0), (2, 10), (4, 10), (5, 0)])
 def test_score_agreement_is_within_one(
     tmp_path: Path, labels: CalibrationSet, score: int, matches: int
