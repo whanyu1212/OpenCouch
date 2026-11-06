@@ -13,6 +13,7 @@ from evals.baseline.statistics import cluster_interval, timing_metrics
 from evals.judge.jobs import JudgeJob, row_jobs
 from evals.judge.models import JudgeErrorRow, Judgment, QualityScores
 from evals.runner import evaluators
+from evals.runner.cases import ConversationCase
 from evals.runner.evaluators import check_turn_expectation
 from evals.runner.runs import (
     ErrorRow,
@@ -88,12 +89,7 @@ def build_report(
             raise ValueError(f"Run metadata mismatch: {row.case_id}")
         jobs.extend(row_jobs(row, by_id[row.case_id]))
         outcome = outcomes[(row.case_id, row.rep)]
-        for turn, script in zip(row.turns, by_id[row.case_id].turns, strict=True):
-            outcome.issues.extend(check_turn_expectation(turn, script.expect))
-            if not turn.reply.strip():
-                outcome.issues.append(f"turn {turn.turn_index + 1}: empty reply")
-        if row.status == "truncated" or any(turn.truncated for turn in row.turns):
-            outcome.issues.append("truncated reply")
+        outcome.issues.extend(_conversation_issues(row, by_id[row.case_id]))
     ordered = [outcomes[key] for key in sorted(outcomes)]
     groups: dict[str, list[float]] = defaultdict(list)
     for outcome in ordered:
@@ -121,6 +117,20 @@ def build_report(
     else:
         snapshot.notes.append("No judge recording supplied; quality is unmeasured.")
     return snapshot
+
+
+def _conversation_issues(row: SavedRunRow, case: ConversationCase) -> list[str]:
+    issues = []
+    for turn, script in zip(row.turns, case.turns, strict=True):
+        issues.extend(check_turn_expectation(turn, script.expect))
+        if not turn.reply.strip():
+            issues.append(f"turn {turn.turn_index + 1}: empty reply")
+        if turn.truncated:
+            issues.append(f"turn {turn.turn_index + 1}: truncated reply")
+    if row.status == "truncated" and not any(turn.truncated for turn in row.turns):
+        # Older recordings may only identify truncation at conversation level.
+        issues.append("truncated reply")
+    return issues
 
 
 def _outcomes(

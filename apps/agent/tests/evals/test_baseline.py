@@ -206,6 +206,57 @@ def test_failure_and_incomplete_run_are_not_hidden(
 
 
 @pytest.mark.parametrize(
+    "truncated_turns,regressed",
+    [([0], False), ([0, 1], True), ([1], True), ([], False)],
+)
+def test_truncation_comparison_preserves_turn_identity(
+    recording: tuple[Path, Path], truncated_turns: list[int], regressed: bool
+) -> None:
+    run, _ = recording
+    suite = run.parent / "suite.yaml"
+    cases = load_suite(suite)
+    for case in cases:
+        case.turns.append(case.turns[0].model_copy(deep=True))
+    suite.write_text(json.dumps([case.model_dump(mode="json") for case in cases]))
+    meta = SuiteRunMeta.model_validate_json((run / "meta.json").read_text())
+    meta.suite_digest = suite_digest(cases)
+    rows = read_rows(run / "results.jsonl", SavedRunRow)
+    for row in rows:
+        row.turns.append(row.turns[0].model_copy(update={"turn_index": 1}, deep=True))
+    rows[0].turns[0].truncated = True
+    rows[0].status = "truncated"
+    write_run_files(run, meta, rows, [], "")
+    baseline = build_report(run)
+    baseline_path = run.parent / "baseline.json"
+    baseline_path.write_text(baseline.model_dump_json())
+
+    for turn in rows[0].turns:
+        turn.truncated = turn.turn_index in truncated_turns
+    rows[0].status = "truncated" if truncated_turns else "ok"
+    write_rows(run / "results.jsonl", rows)
+    candidate = build_report(run)
+    text, failed = comparison(baseline, candidate)
+    assert failed is regressed
+    assert main(["compare", str(run), "--baseline", str(baseline_path)]) == int(
+        regressed
+    )
+    if 1 in truncated_turns:
+        assert "turn 2: truncated reply" in text
+
+
+def test_status_only_truncation_still_fails(recording: tuple[Path, Path]) -> None:
+    run, _ = recording
+    baseline = build_report(run)
+    rows = read_rows(run / "results.jsonl", SavedRunRow)
+    rows[0].status = "truncated"
+    write_rows(run / "results.jsonl", rows)
+    candidate = build_report(run)
+    assert candidate.metrics["behaviour.passed"] == 3
+    assert comparison(baseline, candidate)[1]
+    assert not comparison(candidate, candidate)[1]
+
+
+@pytest.mark.parametrize(
     "corruption", ["duplicate", "foreign", "altered_user", "short"]
 )
 def test_invalid_conversations_rejected(
