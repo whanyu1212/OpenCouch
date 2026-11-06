@@ -4,7 +4,13 @@
 deliberately weak controls. Every item has a blind first-pass label from Opus 5.5
 in a coding session, written from the rubric without seeing any judge output.
 **Human review is pending:** no item has `confirmed_by` set, so agreement has no
-confirmed denominator yet. No paid judge run has been made for this packet.
+confirmed denominator yet.
+
+The judge has been run once on this packet, after the first pass was committed
+(2026-11-06, rubric v2): two repetitions per reply, 80/80 verdicts, no errors,
+all served by `claude-opus-5-5` on the direct Anthropic route with no fallback.
+Judge cost was $2.60. The run is saved locally in the gitignored
+`evals/results/hy242-calibration/`; re-running it costs about the same.
 
 ## Selection and limitations
 
@@ -66,7 +72,10 @@ disagreements. Empty denominators yield null, never 100%.
 
 The report exits 0 only when all labels are confirmed, judging is complete without
 errors, every hard-failure criterion has positive and negative human examples,
-and each hard-failure agreement rate is at least 90%. Otherwise it exits 1.
+and for each hard-failure criterion both the overall agreement and the share of
+human-labelled failures the judge also caught (`positive_rate`) are at least 90%.
+Positives are rare (one or two controls per criterion), so overall agreement
+alone could pass a judge that misses every one. Otherwise it exits 1.
 Invalid or mismatched recordings are rejected, including changed candidate
 inputs, changed rubrics and duplicate results. Score agreement is reported
 separately; it does not compensate for a hard-failure disagreement.

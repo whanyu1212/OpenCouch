@@ -133,6 +133,21 @@ def test_hard_fail_threshold_per_criterion(
     assert report.advisory
 
 
+def test_missed_hard_fail_cannot_pass_on_overall_rate(
+    tmp_path: Path, labels: CalibrationSet
+) -> None:
+    # The judge misses the only human-labelled positive: 9/10 overall is 90%.
+    predictions = [verdict(index == 0) for index in range(10)]
+    predictions[0].hard_failures.enables_harm.failed = False
+    save_judge(tmp_path, labels, predictions)
+    report = agreement(labels, tmp_path)
+    counts = report.hard_failures["enables_harm"]
+    assert counts.rate == 0.9
+    assert counts.positive_rate == 0
+    assert report.hard_failures["false_identity"].positive_rate == 1
+    assert not report.meets_target
+
+
 @pytest.mark.parametrize(("score", "matches"), [(1, 0), (2, 10), (4, 10), (5, 0)])
 def test_score_agreement_is_within_one(
     tmp_path: Path, labels: CalibrationSet, score: int, matches: int

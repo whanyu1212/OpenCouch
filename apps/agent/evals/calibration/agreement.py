@@ -25,6 +25,14 @@ class CriterionAgreement(BaseModel):
         """Return no estimate when there are no confirmed observations."""
         return self.matched / self.total if self.total else None
 
+    @computed_field  # type: ignore[prop-decorator]  # Pydantic's documented mypy limitation.
+    @property
+    def positive_rate(self) -> float | None:
+        """Share of human-labelled failures the judge also caught."""
+        return (
+            self.positive_matched / self.human_positive if self.human_positive else None
+        )
+
 
 class AgreementReport(BaseModel):
     """Review completeness and agreement are separate from calibration readiness."""
@@ -83,14 +91,19 @@ def agreement(labels: CalibrationSet, directory: Path) -> AgreementReport:
         hard_failures=hard,
         scores=scores,
         disagreements=disagreements,
-        meets_target=complete
-        and all(
-            count.rate is not None
-            and count.rate >= 0.9
-            and count.human_positive > 0
-            and count.human_negative > 0
-            for count in hard.values()
-        ),
+        meets_target=complete and all(map(_meets_hard_target, hard.values())),
+    )
+
+
+def _meets_hard_target(counts: CriterionAgreement) -> bool:
+    # Positives are rare, so overall agreement can hit 90% while every human-labelled
+    # failure is missed; misses must clear the bar on their own.
+    return (
+        counts.rate is not None
+        and counts.rate >= 0.9
+        and counts.positive_rate is not None
+        and counts.positive_rate >= 0.9
+        and counts.human_negative > 0
     )
 
 
