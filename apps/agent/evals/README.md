@@ -6,6 +6,9 @@ lands through the Linear issues listed at the end.
 
 Scheduled Jev drift monitoring and its current calibration decision: [DRIFT.md](crisis/DRIFT.md).
 
+Offline coach baseline snapshots, reproducible reports and the pre-merge
+comparison command: [baseline/README.md](baseline/README.md).
+
 ## What "performance" means
 
 "Performance" is four different things. Each has its own source of truth and
