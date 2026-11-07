@@ -214,6 +214,10 @@ initial $0.21 sanity pilot.
 
 ### Calibration (HY-242)
 
+The annotation packet and offline agreement commands are in
+[`calibration/README.md`](calibration/README.md). Blind first-pass labels are in;
+human confirmation is still pending, so the judge is not yet calibrated.
+
 Judge scores are a signal, not a gate, until the judge agrees with a human on
 cases a human labelled independently:
 
